@@ -1,0 +1,32 @@
+{
+  "input": {
+    "id": "msg_abc123",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-3-5-sonnet-20240620",
+    "content": [
+      {"type": "text", "text": "The capital of France is "},
+      {"type": "text", "text": "Paris."}
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {"input_tokens": 25, "output_tokens": 8}
+  },
+  "expected_response": {
+    "id": "msg_abc123",
+    "object": "chat.completion",
+    "model": "claude-3-5-sonnet-20240620",
+    "choices": [
+      {
+        "index": 0,
+        "message": {"role": "assistant", "content": "The capital of France is Paris."},
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 25,
+      "completion_tokens": 8,
+      "total_tokens": 33
+    }
+  }
+}

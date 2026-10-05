@@ -1,0 +1,150 @@
+# Pricing for provider `cohere`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["cohere/embed-v4.0"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 128000
+
+[command]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+[command-a-03-2025]
+input_cost_per_token = 2.500000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 256000
+max_output_tokens = 8000
+
+[command-light]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+[command-nightly]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+[command-r]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 4096
+
+[command-r-08-2024]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 4096
+
+[command-r-plus]
+input_cost_per_token = 2.500000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 128000
+max_output_tokens = 4096
+
+[command-r-plus-08-2024]
+input_cost_per_token = 2.500000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 128000
+max_output_tokens = 4096
+
+[command-r7b-12-2024]
+input_cost_per_token = 3.750000e-8
+output_cost_per_token = 1.500000e-7
+max_input_tokens = 128000
+max_output_tokens = 4096
+
+["embed-english-light-v2.0"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 1024
+
+["embed-english-light-v3.0"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 512
+
+["embed-english-v2.0"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 4096
+
+["embed-english-v3.0"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 512
+
+["embed-multilingual-light-v3.0"]
+input_cost_per_token = 1.000000e-4
+output_cost_per_token = 0.0
+max_input_tokens = 512
+
+["embed-multilingual-v2.0"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 768
+
+["embed-multilingual-v3.0"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 512
+
+["rerank-english-v2.0"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+["rerank-english-v3.0"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+["rerank-multilingual-v2.0"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+["rerank-multilingual-v3.0"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+["rerank-v3.5"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 4096
+max_output_tokens = 4096
+["c4ai-aya-expanse-32b"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 128000
+max_output_tokens = 4000
+
+["command-a-plus-05-2026"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 128000
+max_output_tokens = 64000
+
+["rerank-v4.0-fast"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 32768
+max_output_tokens = 32768
+
+["rerank-v4.0-pro"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 32768
+max_output_tokens = 32768

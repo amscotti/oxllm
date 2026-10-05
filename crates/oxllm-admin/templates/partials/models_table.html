@@ -1,0 +1,107 @@
+{% from "partials/list_status.html" import list_notice %}
+{% if created %}
+<div class="ox-flash ox-flash-success" hx-swap-oob="true" id="flash">{{ created }}</div>
+{% endif %}
+<div id="models-panel">
+  <div class="ox-card">
+    <div class="ox-card-header">
+      <h3>Configured Models</h3>
+      <span style="font-size: .78rem; color: var(--ox-muted);">{{ models | default(value=[]) | length }} models{% if models_truncated %} shown (incomplete){% endif %}</span>
+    </div>
+    {{ list_notice("models", models, models_truncated) }}
+    <div style="padding: .5rem 1rem 0;">
+      <input type="text" placeholder="Search models..." oninput="filterModelsTable(this)" class="ox-input" style="margin-bottom:1rem;width:100%;max-width:300px">
+      <script>
+      function filterModelsTable(input) {
+        const filter = input.value.toLowerCase();
+        const table = input.closest('#models-panel').querySelector('table');
+        if (!table) return;
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+          tr.style.display = tr.textContent.toLowerCase().includes(filter) ? '' : 'none';
+        });
+      }
+      </script>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="ox-table">
+        <thead>
+          <tr>
+            <th>Model Name</th>
+            <th>Provider</th>
+            <th>Upstream model</th>
+            <th>Input / 1K tok</th>
+            <th>Output / 1K tok</th>
+            <th>Max input</th>
+            <th>Max output</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% set model_list = models | default(value=[]) %}
+          {% if model_list | length > 0 %}
+          {% for model in model_list %}
+          <tr id="model-row-{{ model.model_name | default(model.id | default(loop.index)) }}">
+            <td><strong>{{ model.model_name | default(model.id | default("—")) }}</strong></td>
+            <td>
+              {% set provider = model.provider | default(model.litellm_provider | default("unknown")) %}
+              {% if provider == "openai" %}<span class="ox-badge" style="background: rgba(16,163,127,.1); color: #10a37f;">OpenAI</span>
+              {% elif provider == "anthropic" %}<span class="ox-badge" style="background: rgba(217,119,87,.1); color: #d97757;">Anthropic</span>
+              {% elif provider == "cohere" %}<span class="ox-badge" style="background: rgba(57,139,247,.1); color: #398bf7;">Cohere</span>
+              {% elif provider == "xai" %}<span class="ox-badge" style="background: rgba(108,92,231,.12); color: #6c5ce7;">xAI</span>
+              {% else %}<span class="ox-badge ox-badge-warn">{{ provider }}</span>{% endif %}
+            </td>
+            <td><span class="ox-code">{{ model.provider_model | default("—") }}</span></td>
+            <td>
+              {% if model.input_cost_per_token is number %}
+                ${{ "%.4f"|format(model.input_cost_per_token * 1000.0) }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {% if model.output_cost_per_token is number %}
+                ${{ "%.4f"|format(model.output_cost_per_token * 1000.0) }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {% if model.max_input_tokens is number %}{{ model.max_input_tokens }}{% else %}—{% endif %}
+            </td>
+            <td>
+              {% if model.max_output_tokens is number %}{{ model.max_output_tokens }}{% else %}—{% endif %}
+            </td>
+            <td>
+              <div class="ox-row-actions">
+                {# Only DB-backed rows carry model_id (the models-table primary
+                   key). The proxy's /model/delete only accepts that id, so a
+                   delete button on YAML-configured rows could never succeed.
+                   The id is percent-encoded: a raw value containing `/`
+                   (e.g. openai/gpt-4o) would split the route path and 404. #}
+                {% if model.model_id %}
+                <button class="ox-btn ox-btn-danger ox-btn-sm"
+                        hx-post="/models/{{ model.model_id | urlencode_path }}/delete"
+                        hx-target="#models-panel"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete model {{ model.model_name | default(model.id | default('')) }}? Keys that reference it will stop routing."
+                        aria-label="Delete" title="Delete model">✕</button>
+                {% else %}
+                <span class="ox-badge" title="Configured in the proxy's config file — edit the config to remove it">config</span>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+          {% else %}
+          <tr><td colspan="8">
+            <div class="ox-empty">
+              <div class="ox-empty-icon">🤖</div>
+              No models configured.
+            </div>
+          </td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

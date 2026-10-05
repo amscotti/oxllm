@@ -1,0 +1,14 @@
+apiVersion: v2
+name: oxllm
+description: A fast, type-safe Rust proxy gateway for LLM APIs
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - llm
+  - proxy
+  - gateway
+  - openai
+  - anthropic
+maintainers:
+  - name: oxllm maintainers

@@ -1,0 +1,136 @@
+{% from "partials/list_status.html" import list_notice %}
+{% if created %}
+<div class="ox-flash ox-flash-success" hx-swap-oob="true" id="flash">{{ created }}</div>
+{% endif %}
+<div id="teams-panel"
+     x-data="{ editing: null }">
+  <div class="ox-card">
+    <div class="ox-card-header">
+      <h3>Teams</h3>
+      <span style="font-size: .72rem; color: var(--text-muted); font-family: var(--font-mono);">{{ teams | default([]) | length }} teams{% if teams_truncated %} shown (incomplete){% endif %}</span>
+    </div>
+    {{ list_notice("teams", teams, teams_truncated) }}
+    <div style="padding: .5rem 1rem 0;">
+      <input type="text" placeholder="Search teams..." oninput="filterTeamsTable(this)" class="ox-input" style="margin-bottom:1rem;width:100%;max-width:300px">
+      <script>
+      function filterTeamsTable(input) {
+        const filter = input.value.toLowerCase();
+        const table = input.closest('#teams-panel').querySelector('table');
+        if (!table) return;
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+          tr.style.display = tr.textContent.toLowerCase().includes(filter) ? '' : 'none';
+        });
+      }
+      </script>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="ox-table">
+        <thead>
+          <tr>
+            <th>Team ID</th>
+            <th>Name</th>
+            <th>Max Budget</th>
+            <th>Duration</th>
+            <th>RPM</th>
+            <th>TPM</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if teams %}
+          {% for team in teams %}
+          <tr id="team-row-{{ team.team_id }}">
+            <td><span class="ox-code">{{ team.team_id }}</span></td>
+            <td>{{ team.team_name | default("—") }}</td>
+            <td>
+              {% if team.max_budget %}
+              <div class="ox-budget-cell">
+                <div class="ox-budget-text">
+                  ${{ "%.2f"|format(team.budget_spend | default(0.0)) }} / ${{ "%.2f"|format(team.max_budget) }}
+                </div>
+                <div class="ox-budget-bar" title="{{ team.budget_spend_pct | default(0.0) }}% utilized">
+                  <div class="ox-budget-fill ox-budget-fill-{{ team.budget_spend_tier | default("ok") }}"
+                       style="width: {{ team.budget_spend_pct | default(0.0) }}%"></div>
+                </div>
+              </div>
+              {% else %}
+              <span style="color: var(--text-muted);">—</span>
+              {% endif %}
+            </td>
+            <td>{{ team.budget_duration | default("—") }}</td>
+            <td>{{ team.rpm | default("—") }}</td>
+            <td>{{ team.tpm | default("—") }}</td>
+            <td>
+              <div class="ox-row-actions">
+                <button class="ox-btn ox-btn-sm"
+                        @click="editing = {{ loop.index }}; $nextTick(() => { document.querySelectorAll('.ox-edit-row').forEach(function(el){ if (window.htmx) htmx.process(el); }); })"
+                        aria-label="Edit" title="Edit team">✎</button>
+                <button class="ox-btn ox-btn-danger ox-btn-sm"
+                        hx-post="/teams/{{ team.team_id | urlencode_path }}/delete"
+                        hx-target="#teams-panel"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete team {{ team.team_id }}?"
+                        aria-label="Delete" title="Delete team">✕</button>
+              </div>
+            </td>
+          </tr>
+
+          <template x-if="editing === {{ loop.index }}">
+            <tr class="ox-edit-row">
+              <td colspan="7">
+                <div class="ox-edit-panel" @keydown.escape.window="editing = null">
+                  <div class="ox-edit-header">
+                    <span>Edit: <strong>{{ team.team_name | default(team.team_id) }}</strong></span>
+                    <button class="ox-btn ox-btn-sm" @click="editing = null">✕ Close</button>
+                  </div>
+                  <form hx-post="/teams/{{ team.team_id | urlencode_path }}/update"
+                        hx-target="#teams-panel"
+                        hx-swap="outerHTML"
+                        class="ox-form-grid" style="margin-top: .75rem;">
+                    <div class="ox-input">
+                      <label>Team Name</label>
+                      <input type="text" name="team_name" value="{{ team.team_name | default("") }}" required>
+                    </div>
+                    <div class="ox-input">
+                      <label>Max Budget</label>
+                      <input type="number" step="0.01" name="max_budget" value="{{ team.max_budget | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>Duration</label>
+                      <input type="text" name="budget_duration" value="{{ team.budget_duration | default("") }}" placeholder="30d">
+                    </div>
+                    <div class="ox-input">
+                      <label>RPM</label>
+                      <input type="number" name="rpm" value="{{ team.rpm | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>TPM</label>
+                      <input type="number" name="tpm" value="{{ team.tpm | default("") }}">
+                    </div>
+                    <div class="ox-input" style="grid-column: 1 / -1;">
+                      <label>Allowed Models</label>
+                      <input type="text" name="models" value="{{ team.models | default("") }}" placeholder="gpt-4o, claude-* (blank = all)">
+                    </div>
+                    <div class="ox-form-actions" style="grid-column: 1 / -1;">
+                      <button type="submit" class="ox-btn ox-btn-primary">Save</button>
+                      <button type="button" class="ox-btn" @click="editing = null">Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          </template>
+          {% endfor %}
+          {% else %}
+          <tr><td colspan="7">
+            <div class="ox-empty">
+              <div class="ox-empty-icon">⬢</div>
+              No teams yet.
+            </div>
+          </td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

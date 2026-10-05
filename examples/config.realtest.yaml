@@ -1,0 +1,49 @@
+model_list:
+  - model_name: gpt-4o-mini
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: claude-sonnet
+    oxllm_params:
+      model: anthropic/claude-sonnet-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: grok
+    oxllm_params:
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
+
+  # Same logical model, two upstream providers — simple_shuffle load-balances.
+  - model_name: deepseek-v4-flash
+    oxllm_params:
+      model: deepseek/deepseek-v4-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
+      weight: 3   # prefer direct DeepSeek 3:1
+
+  - model_name: deepseek-v4-flash
+    oxllm_params:
+      model: fireworks_ai/accounts/fireworks/models/deepseek-v4-flash
+      api_key: os.environ/FIREWORKS_API_KEY
+      weight: 1
+      input_cost_per_token: 0.00000014
+      output_cost_per_token: 0.00000028
+
+  - model_name: deepseek-v4-pro
+    oxllm_params:
+      model: deepseek/deepseek-v4-pro
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: fireworks-glm
+    oxllm_params:
+      model: fireworks_ai/accounts/fireworks/models/glm-5p2
+      api_key: os.environ/FIREWORKS_API_KEY
+      input_cost_per_token: 0.0000014
+      output_cost_per_token: 0.0000044
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY
+  allow_private_api_base: true
+
+oxllm_settings:
+  routing_strategy: simple_shuffle

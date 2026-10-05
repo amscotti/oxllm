@@ -1,0 +1,22 @@
+[package]
+name = "oxllm-cache-redis"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Redis cache implementation for oxllm"
+
+[dependencies]
+oxllm-core.workspace = true
+redis = { workspace = true, optional = true, features = ["script"] }
+tokio = { workspace = true, optional = true }
+async-trait.workspace = true
+tracing.workspace = true
+
+[features]
+default = []
+redis = ["dep:redis", "dep:tokio"]
+
+[dev-dependencies]
+oxllm-core.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["net", "io-util"] }

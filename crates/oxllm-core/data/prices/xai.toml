@@ -1,0 +1,666 @@
+# Pricing for provider `xai` (xAI / Grok).
+
+["xai/grok-4.6"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 6.0000000000e-6
+cache_read_input_token_cost = 5.0000000000e-7
+max_input_tokens = 500000
+max_output_tokens = 500000
+input_cost_per_token_above_200k_tokens = 4.0000000000e-6
+output_cost_per_token_above_200k_tokens = 1.2000000000e-5
+cache_read_input_token_cost_above_200k_tokens = 1.0000000000e-6
+
+["xai/grok-4.6-latest"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 6.0000000000e-6
+cache_read_input_token_cost = 5.0000000000e-7
+max_input_tokens = 500000
+max_output_tokens = 500000
+input_cost_per_token_above_200k_tokens = 4.0000000000e-6
+output_cost_per_token_above_200k_tokens = 1.2000000000e-5
+cache_read_input_token_cost_above_200k_tokens = 1.0000000000e-6
+
+["xai/grok-2"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 1.0000000000e-5
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-2-1212"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 1.0000000000e-5
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-2-latest"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 1.0000000000e-5
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-2-vision"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 1.0000000000e-5
+max_input_tokens = 32768
+max_output_tokens = 32768
+input_cost_per_image = 2.0000000000e-6
+
+["xai/grok-2-vision-1212"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 1.0000000000e-5
+max_input_tokens = 32768
+max_output_tokens = 32768
+input_cost_per_image = 2.0000000000e-6
+
+["xai/grok-2-vision-latest"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 1.0000000000e-5
+max_input_tokens = 32768
+max_output_tokens = 32768
+input_cost_per_image = 2.0000000000e-6
+
+["xai/grok-3"]
+input_cost_per_token = 3.0000000000e-6
+output_cost_per_token = 1.5000000000e-5
+cache_read_input_token_cost = 7.5000000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-beta"]
+input_cost_per_token = 3.0000000000e-6
+output_cost_per_token = 1.5000000000e-5
+cache_read_input_token_cost = 7.5000000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-fast-beta"]
+input_cost_per_token = 5.0000000000e-6
+output_cost_per_token = 2.5000000000e-5
+cache_read_input_token_cost = 1.2500000000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-fast-latest"]
+input_cost_per_token = 5.0000000000e-6
+output_cost_per_token = 2.5000000000e-5
+cache_read_input_token_cost = 1.2500000000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-latest"]
+input_cost_per_token = 3.0000000000e-6
+output_cost_per_token = 1.5000000000e-5
+cache_read_input_token_cost = 7.5000000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-mini"]
+input_cost_per_token = 3.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 7.5000000000e-8
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-mini-beta"]
+input_cost_per_token = 3.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 7.5000000000e-8
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-mini-fast"]
+input_cost_per_token = 6.0000000000e-7
+output_cost_per_token = 4.0000000000e-6
+cache_read_input_token_cost = 1.5000000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-mini-fast-beta"]
+input_cost_per_token = 6.0000000000e-7
+output_cost_per_token = 4.0000000000e-6
+cache_read_input_token_cost = 1.5000000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-mini-fast-latest"]
+input_cost_per_token = 6.0000000000e-7
+output_cost_per_token = 4.0000000000e-6
+cache_read_input_token_cost = 1.5000000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-3-mini-latest"]
+input_cost_per_token = 3.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 7.5000000000e-8
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-4"]
+input_cost_per_token = 3.0000000000e-6
+output_cost_per_token = 1.5000000000e-5
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["xai/grok-4-0709"]
+input_cost_per_token = 3.0000000000e-6
+output_cost_per_token = 1.5000000000e-5
+max_input_tokens = 256000
+max_output_tokens = 256000
+input_cost_per_token_above_128k_tokens = 6.0000000000e-6
+output_cost_per_token_above_128k_tokens = 3.0000000000e-5
+
+["xai/grok-4-1-fast"]
+input_cost_per_token = 2.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 5.0000000000e-8
+max_input_tokens = 2000000
+max_output_tokens = 2000000
+input_cost_per_token_above_128k_tokens = 4.0000000000e-7
+output_cost_per_token_above_128k_tokens = 1.0000000000e-6
+
+["xai/grok-4-1-fast-non-reasoning"]
+input_cost_per_token = 2.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 5.0000000000e-8
+max_input_tokens = 2000000
+max_output_tokens = 2000000
+input_cost_per_token_above_128k_tokens = 4.0000000000e-7
+output_cost_per_token_above_128k_tokens = 1.0000000000e-6
+
+["xai/grok-4-1-fast-non-reasoning-latest"]
+input_cost_per_token = 2.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 5.0000000000e-8
+max_input_tokens = 2000000
+max_output_tokens = 2000000
+input_cost_per_token_above_128k_tokens = 4.0000000000e-7
+output_cost_per_token_above_128k_tokens = 1.0000000000e-6
+
+["xai/grok-4-1-fast-reasoning"]
+input_cost_per_token = 2.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 5.0000000000e-8
+max_input_tokens = 2000000
+max_output_tokens = 2000000
+input_cost_per_token_above_128k_tokens = 4.0000000000e-7
+output_cost_per_token_above_128k_tokens = 1.0000000000e-6
+
+["xai/grok-4-1-fast-reasoning-latest"]
+input_cost_per_token = 2.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 5.0000000000e-8
+max_input_tokens = 2000000
+max_output_tokens = 2000000
+input_cost_per_token_above_128k_tokens = 4.0000000000e-7
+output_cost_per_token_above_128k_tokens = 1.0000000000e-6
+
+["xai/grok-4-fast-non-reasoning"]
+input_cost_per_token = 2.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 5.0000000000e-8
+max_input_tokens = 2000000
+max_output_tokens = 2000000
+input_cost_per_token_above_128k_tokens = 4.0000000000e-7
+output_cost_per_token_above_128k_tokens = 1.0000000000e-6
+
+["xai/grok-4-fast-reasoning"]
+input_cost_per_token = 2.0000000000e-7
+output_cost_per_token = 5.0000000000e-7
+cache_read_input_token_cost = 5.0000000000e-8
+max_input_tokens = 2000000
+max_output_tokens = 2000000
+input_cost_per_token_above_128k_tokens = 4.0000000000e-7
+output_cost_per_token_above_128k_tokens = 1.0000000000e-6
+
+["xai/grok-4-latest"]
+input_cost_per_token = 3.0000000000e-6
+output_cost_per_token = 1.5000000000e-5
+max_input_tokens = 256000
+max_output_tokens = 256000
+input_cost_per_token_above_128k_tokens = 6.0000000000e-6
+output_cost_per_token_above_128k_tokens = 3.0000000000e-5
+
+["xai/grok-4.20-0309-non-reasoning"]
+input_cost_per_token = 1.2500000000e-6
+output_cost_per_token = 2.5000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.5000000000e-6
+output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+
+["xai/grok-4.20-0309-reasoning"]
+input_cost_per_token = 1.2500000000e-6
+output_cost_per_token = 2.5000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.5000000000e-6
+output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+
+["xai/grok-4.20-beta-0309-non-reasoning"]
+input_cost_per_token = 1.2500000000e-6
+output_cost_per_token = 2.5000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.5000000000e-6
+output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+
+["xai/grok-4.20-beta-0309-reasoning"]
+input_cost_per_token = 1.2500000000e-6
+output_cost_per_token = 2.5000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.5000000000e-6
+output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+
+["xai/grok-4.20-multi-agent-0309"]
+input_cost_per_token = 1.2500000000e-6
+output_cost_per_token = 2.5000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.5000000000e-6
+output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+
+["xai/grok-4.20-multi-agent-beta-0309"]
+input_cost_per_token = 1.2500000000e-6
+output_cost_per_token = 2.5000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.5000000000e-6
+output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+
+["xai/grok-4.3"]
+input_cost_per_token = 1.2500000000e-6
+output_cost_per_token = 2.5000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.5000000000e-6
+output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+
+["xai/grok-4.3-latest"]
+input_cost_per_token = 1.2500000000e-6
+output_cost_per_token = 2.5000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.5000000000e-6
+output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+
+["xai/grok-4.5"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 6.0000000000e-6
+cache_read_input_token_cost = 3.0000000000e-7
+max_input_tokens = 500000
+max_output_tokens = 500000
+cache_read_input_token_cost_above_200k_tokens = 6.0000000000e-7
+input_cost_per_token_above_200k_tokens = 4.0000000000e-6
+output_cost_per_token_above_200k_tokens = 1.2000000000e-5
+
+["xai/grok-4.5-latest"]
+input_cost_per_token = 2.0000000000e-6
+output_cost_per_token = 6.0000000000e-6
+cache_read_input_token_cost = 3.0000000000e-7
+max_input_tokens = 500000
+max_output_tokens = 500000
+cache_read_input_token_cost_above_200k_tokens = 6.0000000000e-7
+input_cost_per_token_above_200k_tokens = 4.0000000000e-6
+output_cost_per_token_above_200k_tokens = 1.2000000000e-5
+
+["xai/grok-beta"]
+input_cost_per_token = 5.0000000000e-6
+output_cost_per_token = 1.5000000000e-5
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["xai/grok-build-0.1"]
+input_cost_per_token = 1.0000000000e-6
+output_cost_per_token = 2.0000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.0000000000e-6
+output_cost_per_token_above_200k_tokens = 4.0000000000e-6
+
+["xai/grok-code-fast"]
+input_cost_per_token = 1.0000000000e-6
+output_cost_per_token = 2.0000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.0000000000e-6
+output_cost_per_token_above_200k_tokens = 4.0000000000e-6
+
+["xai/grok-code-fast-1"]
+input_cost_per_token = 1.0000000000e-6
+output_cost_per_token = 2.0000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.0000000000e-6
+output_cost_per_token_above_200k_tokens = 4.0000000000e-6
+
+["xai/grok-code-fast-1-0825"]
+input_cost_per_token = 1.0000000000e-6
+output_cost_per_token = 2.0000000000e-6
+cache_read_input_token_cost = 2.0000000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
+input_cost_per_token_above_200k_tokens = 2.0000000000e-6
+output_cost_per_token_above_200k_tokens = 4.0000000000e-6
+
+["xai/grok-vision-beta"]
+input_cost_per_token = 5.0000000000e-6
+output_cost_per_token = 1.5000000000e-5
+max_input_tokens = 8192
+max_output_tokens = 8192
+input_cost_per_image = 5.0000000000e-6
+["xai/grok-4.20"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-0309"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-beta"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-beta-0309"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-beta-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-beta-latest-non-reasoning"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-beta-latest-reasoning"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-beta-non-reasoning"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-beta-reasoning"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-experimental-beta-0304"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-experimental-beta-0304-non-reasoning"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-experimental-beta-0304-reasoning"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-experimental-beta-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-experimental-beta-non-reasoning-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-experimental-beta-reasoning-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-non-reasoning"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-non-reasoning-gv2"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-non-reasoning-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-reasoning"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-reasoning-gv2"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.20-reasoning-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+
+["xai/grok-4.7"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 500000
+max_output_tokens = 500000
+cache_read_input_token_cost = 5.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 1.000000e-6
+input_cost_per_token_above_200k_tokens = 4.000000e-6
+output_cost_per_token_above_200k_tokens = 1.200000e-5
+
+["xai/grok-build-latest"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 500000
+max_output_tokens = 500000
+cache_read_input_token_cost = 3.000000e-7
+cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
+input_cost_per_token_above_200k_tokens = 4.000000e-6
+output_cost_per_token_above_200k_tokens = 1.200000e-5
+
+["xai/grok-voice-transcribe-1.0"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 2.778000e-5
+
+["xai/grok-voice-transcribe-2.0"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 2.778000e-5
+
+["xai/grok-4.20-multi-agent"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+
+["xai/grok-4.20-multi-agent-beta-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+
+["xai/grok-4.20-multi-agent-experimental-beta-0304"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+
+["xai/grok-4.20-multi-agent-experimental-beta-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6
+
+["xai/grok-4.20-multi-agent-latest"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 1000000
+cache_read_input_token_cost = 2.000000e-7
+output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
+input_cost_per_token_above_200k_tokens = 2.500000e-6

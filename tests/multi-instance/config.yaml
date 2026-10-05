@@ -1,0 +1,92 @@
+# oxllm shared config for the 3-instance + Redis stress test.
+# oxllm-a, oxllm-b, oxllm-c all mount this file read-only so they run
+# identical deployments (config parity).
+#
+# Upstream is the mock-llm container — never a real provider, so sustained
+# load is free, fast, and deterministic. The `openai/` provider slug honours
+# `api_base` overrides and speaks the exact OpenAI shape the mock implements.
+#
+# Per-deployment pricing overrides (input_cost_per_token / output_cost_per_token)
+# make the JSON spend logs show real cost values without needing real-priced
+# models in the embedded price table.
+
+general_settings:
+  master_key: "sk-stress-master-key"
+  database_url: "postgres://postgres:oxllm@postgres:5432/oxllm"
+  allow_private_api_base: true
+  log_format: "json"
+
+oxllm_settings:
+  drop_params: true
+  cache_ttl_secs: 60
+  cache:
+    type: "redis"
+    redis_url: "redis://redis:6379"
+    semantic_cache:
+      enabled: true
+      embedding_model: "openai/mock-embed"
+      api_base: "http://mock-llm:9000/v1"
+      api_key: "mock-key"
+      similarity_threshold: 0.50
+      max_entries: 10000
+      ttl_secs: 3600
+      redis_url: "redis://redis:6379"
+
+# Two deployments with distinct upstream model names so routing decisions
+# are visible in the response `model` field. Pricing overrides ($0.50/M
+# input, $1.50/M output) make spend logs show real cost data.
+# `max_budget: 1.0` / `budget_duration: 1mo` is a generous monthly cap that
+# stays out of the way of soak runs — no scenario in scenarios.py drives
+# budget enforcement against this stack; drop it to something tiny (e.g.
+# $0.001 with a short duration) if you add one.
+# `rpm: 100` configures a per-DEPLOYMENT request cap (dep_rpm:{deployment}
+# counter, shared across replicas via Redis). mock-group has two deployments,
+# so the fleet-rate-limit scenario (scenarios.py) asserts ~200 successes
+# (2 x 100) out of a 250-request burst — a broken shared counter (local
+# per-replica) would allow all 250 through.
+model_list:
+  - model_name: mock-group
+    oxllm_params:
+      model: "openai/mock-llama-3-a"
+      api_base: "http://mock-llm:9000/v1"
+      api_key: "mock-key"
+      weight: 1
+      rpm: 100
+      max_budget: 1.0
+      budget_duration: "1mo"
+      input_cost_per_token: 5.0e-7
+      output_cost_per_token: 1.5e-6
+  - model_name: mock-group
+    oxllm_params:
+      model: "openai/mock-llama-3-b"
+      api_base: "http://mock-llm:9000/v1"
+      api_key: "mock-key"
+      weight: 1
+      rpm: 100
+      max_budget: 1.0
+      budget_duration: "1mo"
+      input_cost_per_token: 5.0e-7
+      output_cost_per_token: 1.5e-6
+
+  # Unthrottled model for throughput + cache scenarios (no RPM/budget).
+  - model_name: mock-unthrottled
+    oxllm_params:
+      model: "openai/mock-llama-3"
+      api_base: "http://mock-llm:9000/v1"
+      api_key: "mock-key"
+      input_cost_per_token: 5.0e-7
+      output_cost_per_token: 1.5e-6
+
+  - model_name: mock-embed
+    oxllm_params:
+      model: "openai/mock-embed"
+      api_base: "http://mock-llm:9000/v1"
+      api_key: "mock-key"
+
+router_settings:
+  # session_affinity so scenarios.py invariant 5 can verify deterministic
+  # sticky routing across replicas (same x-oxllm-session-id -> same
+  # deployment on A and B). Requests WITHOUT a session id fall back to
+  # SimpleShuffle, so the spread-dependent invariants (fleet rpm across both
+  # mock-group deployments) keep their behavior.
+  routing_strategy: "session_affinity"

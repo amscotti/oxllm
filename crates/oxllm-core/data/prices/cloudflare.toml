@@ -1,0 +1,197 @@
+# Pricing for provider `cloudflare`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["cloudflare/@cf/aisingapore/gemma-sea-lion-v4-27b-it"]
+input_cost_per_token = 3.510000e-7
+output_cost_per_token = 5.550000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cloudflare/@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"]
+input_cost_per_token = 4.970000e-7
+output_cost_per_token = 4.881000e-6
+max_input_tokens = 80000
+max_output_tokens = 80000
+
+["cloudflare/@cf/google/gemma-2b-it-lora"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["cloudflare/@cf/google/gemma-4-26b-a4b-it"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["cloudflare/@cf/google/gemma-7b-it-lora"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 3500
+max_output_tokens = 3500
+
+["cloudflare/@cf/ibm-granite/granite-4.0-h-micro"]
+input_cost_per_token = 1.700000e-8
+output_cost_per_token = 1.120000e-7
+max_input_tokens = 131000
+max_output_tokens = 131000
+
+["cloudflare/@cf/meta-llama/llama-2-7b-chat-hf-lora"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["cloudflare/@cf/meta/llama-2-7b-chat-fp16"]
+input_cost_per_token = 1.923000e-6
+output_cost_per_token = 1.923000e-6
+max_input_tokens = 3072
+max_output_tokens = 3072
+
+["cloudflare/@cf/meta/llama-2-7b-chat-int8"]
+input_cost_per_token = 1.923000e-6
+output_cost_per_token = 1.923000e-6
+max_input_tokens = 2048
+max_output_tokens = 2048
+
+["cloudflare/@cf/meta/llama-3.1-8b-instruct-fp8"]
+input_cost_per_token = 1.520000e-7
+output_cost_per_token = 2.870000e-7
+max_input_tokens = 32000
+max_output_tokens = 32000
+
+["cloudflare/@cf/meta/llama-3.2-11b-vision-instruct"]
+input_cost_per_token = 4.850000e-8
+output_cost_per_token = 6.760000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cloudflare/@cf/meta/llama-3.2-1b-instruct"]
+input_cost_per_token = 2.700000e-8
+output_cost_per_token = 2.010000e-7
+max_input_tokens = 60000
+max_output_tokens = 60000
+
+["cloudflare/@cf/meta/llama-3.2-3b-instruct"]
+input_cost_per_token = 5.090000e-8
+output_cost_per_token = 3.350000e-7
+max_input_tokens = 80000
+max_output_tokens = 80000
+
+["cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
+input_cost_per_token = 2.930000e-7
+output_cost_per_token = 2.253000e-6
+max_input_tokens = 24000
+max_output_tokens = 24000
+
+["cloudflare/@cf/meta/llama-4-scout-17b-16e-instruct"]
+input_cost_per_token = 2.700000e-7
+output_cost_per_token = 8.500000e-7
+max_input_tokens = 131000
+max_output_tokens = 131000
+
+["cloudflare/@cf/meta/llama-guard-3-8b"]
+input_cost_per_token = 4.840000e-7
+output_cost_per_token = 3.000000e-8
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["cloudflare/@cf/mistral/mistral-7b-instruct-v0.1"]
+input_cost_per_token = 1.923000e-6
+output_cost_per_token = 1.923000e-6
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["cloudflare/@cf/mistral/mistral-7b-instruct-v0.2-lora"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 15000
+max_output_tokens = 15000
+
+["cloudflare/@cf/mistralai/mistral-small-3.1-24b-instruct"]
+input_cost_per_token = 3.510000e-7
+output_cost_per_token = 5.550000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cloudflare/@cf/moonshotai/kimi-k2.6"]
+input_cost_per_token = 9.500000e-7
+output_cost_per_token = 4.000000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.600000e-7
+
+["cloudflare/@cf/moonshotai/kimi-k2.7-code"]
+input_cost_per_token = 9.500000e-7
+output_cost_per_token = 4.000000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.900000e-7
+
+["cloudflare/@cf/nvidia/nemotron-3-120b-a12b"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["cloudflare/@cf/openai/gpt-oss-120b"]
+input_cost_per_token = 3.500000e-7
+output_cost_per_token = 7.500000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cloudflare/@cf/openai/gpt-oss-20b"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct"]
+input_cost_per_token = 6.600000e-7
+output_cost_per_token = 1.000000e-6
+max_input_tokens = 32768
+max_output_tokens = 32768
+
+["cloudflare/@cf/qwen/qwen3-30b-a3b-fp8"]
+input_cost_per_token = 5.090000e-8
+output_cost_per_token = 3.350000e-7
+max_input_tokens = 32768
+max_output_tokens = 32768
+
+["cloudflare/@cf/qwen/qwq-32b"]
+input_cost_per_token = 6.600000e-7
+output_cost_per_token = 1.000000e-6
+max_input_tokens = 24000
+max_output_tokens = 24000
+
+["cloudflare/@cf/zai-org/glm-4.7-flash"]
+input_cost_per_token = 6.050000e-8
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["cloudflare/@cf/zai-org/glm-5.2"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 2.600000e-7
+
+["cloudflare/@hf/thebloke/codellama-7b-instruct-awq"]
+input_cost_per_token = 1.923000e-6
+output_cost_per_token = 1.923000e-6
+max_input_tokens = 4096
+max_output_tokens = 4096
+["cloudflare/@cf/openai/whisper"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 7.500000e-6
+
+["cloudflare/@cf/openai/whisper-large-v3-turbo"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 8.500000e-6

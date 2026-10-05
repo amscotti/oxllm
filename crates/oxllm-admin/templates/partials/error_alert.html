@@ -1,0 +1,14 @@
+<div class="ox-flash ox-flash-error" id="ox-error-alert" role="alert" aria-live="assertive">
+  <span style="flex:1;">⚠️ {{ message }}</span>
+  <button type="button"
+          onclick="this.parentElement.style.display='none'"
+          aria-label="Dismiss alert"
+          style="float:right;background:none;border:none;cursor:pointer;color:inherit;opacity:0.7;font-size:1rem;line-height:1;padding:0 .25rem;margin-left:.5rem;">×</button>
+</div>
+<script>
+    (function () {
+        var el = document.getElementById('ox-error-alert');
+        if (!el) return;
+        setTimeout(function () { el.style.display = 'none'; }, 5000);
+    })();
+</script>

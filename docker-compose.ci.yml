@@ -1,0 +1,6 @@
+# Image overrides for the runtime smoke job. Layer after the base + admin files.
+services:
+  oxllm:
+    image: oxllm:ci
+  oxllm-admin:
+    image: oxllm-admin:ci

@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-cohere-1",
+  "finish_reason": "COMPLETE",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The capital of France is Paris."
+      }
+    ]
+  },
+  "usage": {
+    "billed_units": {
+      "input_tokens": 12,
+      "output_tokens": 8
+    },
+    "tokens": {
+      "input_tokens": 14,
+      "output_tokens": 9
+    }
+  }
+}

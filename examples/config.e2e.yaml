@@ -1,0 +1,51 @@
+model_list:
+  # === OpenAI ===
+  - model_name: gpt-4o-mini
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # === Anthropic ===
+  - model_name: claude
+    oxllm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku
+    oxllm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # === Bedrock ===
+  - model_name: bedrock-claude
+    oxllm_params:
+      model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+      aws_access_key_id: os.environ/BEDROCK_AWS_ACCESS_KEY_ID
+      aws_secret_access_key: os.environ/BEDROCK_AWS_SECRET_ACCESS_KEY
+      aws_region: us-east-1
+
+  - model_name: bedrock-claude-converse
+    oxllm_params:
+      model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+      aws_access_key_id: os.environ/BEDROCK_AWS_ACCESS_KEY_ID
+      aws_secret_access_key: os.environ/BEDROCK_AWS_SECRET_ACCESS_KEY
+      aws_region: us-east-1
+      use_converse_api: true
+
+  - model_name: bedrock-titan
+    oxllm_params:
+      model: bedrock/amazon.titan-text-express-v1
+      aws_access_key_id: os.environ/BEDROCK_AWS_ACCESS_KEY_ID
+      aws_secret_access_key: os.environ/BEDROCK_AWS_SECRET_ACCESS_KEY
+      aws_region: us-east-1
+
+  - model_name: bedrock-llama
+    oxllm_params:
+      model: bedrock/meta.llama3-8b-instruct-v1:0
+      aws_access_key_id: os.environ/BEDROCK_AWS_ACCESS_KEY_ID
+      aws_secret_access_key: os.environ/BEDROCK_AWS_SECRET_ACCESS_KEY
+      aws_region: us-east-1
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY
+  allow_private_api_base: true

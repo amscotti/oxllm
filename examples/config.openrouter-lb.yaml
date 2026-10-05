@@ -1,0 +1,118 @@
+# OpenRouter-focused config for load-balancing + embeddings/images smoke tests.
+# Secrets via .env (os.environ/…).
+
+model_list:
+  # --- Load-balanced chat: same client model_name, different providers -----
+  # simple_shuffle picks among these by weight (OpenAI + xAI work with current
+  # .env; OpenRouter is included and will be used when the key is valid).
+  - model_name: lb-chat
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 90
+      weight: 2
+
+  - model_name: lb-chat
+    oxllm_params:
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
+      timeout: 90
+      weight: 2
+
+  - model_name: lb-chat
+    oxllm_params:
+      model: openrouter/openai/gpt-4o-mini
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 90
+      weight: 1
+      http_referer: https://github.com/oxllm
+      x_title: oxllm-lb-test
+
+  - model_name: lb-chat
+    oxllm_params:
+      model: openrouter/google/gemini-2.0-flash-001
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 90
+      weight: 1
+      http_referer: https://github.com/oxllm
+      x_title: oxllm-lb-test
+
+  # Explicit multi-provider alias (same idea as lb-chat)
+  - model_name: lb-multi
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 90
+      weight: 1
+
+  - model_name: lb-multi
+    oxllm_params:
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
+      timeout: 90
+      weight: 1
+
+  - model_name: lb-multi
+    oxllm_params:
+      model: openrouter/openai/gpt-4o-mini
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 90
+      weight: 1
+      http_referer: https://github.com/oxllm
+      x_title: oxllm-lb-test
+
+  # --- Embeddings ---------------------------------------------------------
+  - model_name: or-embed
+    oxllm_params:
+      model: openrouter/openai/text-embedding-3-small
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 60
+      http_referer: https://github.com/oxllm
+      x_title: oxllm-lb-test
+
+  - model_name: oai-embed
+    oxllm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+
+  # --- Image generation (OpenAI-compatible /v1/images/generations) --------
+  # Routed as hooked-raw passthrough to the deployment's api_base.
+  - model_name: or-image
+    oxllm_params:
+      # OpenRouter image-capable chat model (OpenAI-style /images may not apply)
+      model: openrouter/google/gemini-3.1-flash-image
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+      timeout: 120
+      http_referer: https://github.com/oxllm
+      x_title: oxllm-lb-test
+
+  # Keep existing aliases for other smokes
+  - model_name: gpt-4o
+    oxllm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+
+  - model_name: grok-4.5
+    oxllm_params:
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
+      timeout: 120
+
+oxllm_settings:
+  drop_params: true
+  num_retries: 2
+  request_timeout: 90
+  routing_strategy: simple_shuffle
+  cache:
+    type: redis
+    host: 127.0.0.1
+    port: 6379
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY
+  # Required: the Redis cache above runs on loopback, which is rejected
+  # unless this is set. Keep it `false` for public-only deployments.
+  allow_private_api_base: true

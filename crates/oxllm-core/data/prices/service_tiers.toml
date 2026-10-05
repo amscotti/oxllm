@@ -1,0 +1,378 @@
+# Service-specific rates overlay the standard model rows.
+# Costs are USD per token; context thresholds follow standard pricing rules.
+# Google Flex/Batch prices: https://ai.google.dev/gemini-api/docs/pricing
+# and https://cloud.google.com/vertex-ai/generative-ai/pricing .
+# Batch prices are final rates, never an additional discount on Flex.
+# OpenAI Batch prices: https://developers.openai.com/api/docs/pricing
+
+["gpt-6.1-sol"]
+flex = { input_cost_per_token = 1e-6, output_cost_per_token = 5e-6, cache_read_input_token_cost = 5e-8, cache_creation_input_token_cost = 1.25e-6, input_cost_per_token_above_272k_tokens = 2e-6, output_cost_per_token_above_272k_tokens = 7.5e-6, cache_read_input_token_cost_above_272k_tokens = 1e-7, cache_creation_input_token_cost_above_272k_tokens = 2.5e-6 }
+priority = { input_cost_per_token = 4e-6, output_cost_per_token = 2e-5, cache_read_input_token_cost = 2e-7, cache_creation_input_token_cost = 5e-6, input_cost_per_token_above_272k_tokens = 8e-6, output_cost_per_token_above_272k_tokens = 3e-5, cache_read_input_token_cost_above_272k_tokens = 4e-7, cache_creation_input_token_cost_above_272k_tokens = 1e-5 }
+
+["azure/eu/gpt-4.1"]
+aliases = ["azure/us/gpt-4.1", "azure/us/gpt-4.1-2025-04-14"]
+priority = { cache_read_input_token_cost = 9.63e-7, input_cost_per_token = 3.85e-6, output_cost_per_token = 1.54e-5 }
+
+["azure/eu/gpt-4.1-mini"]
+aliases = ["azure/us/gpt-4.1-mini", "azure/us/gpt-4.1-mini-2025-04-14"]
+priority = { cache_read_input_token_cost = 1.93e-7, input_cost_per_token = 7.7e-7, output_cost_per_token = 3.08e-6 }
+
+["azure/eu/gpt-5"]
+aliases = ["azure/us/gpt-5", "azure/eu/gpt-5.1", "azure/us/gpt-5.1", "azure/eu/gpt-5-2025-08-07", "azure/us/gpt-5-2025-08-07"]
+priority = { cache_read_input_token_cost = 2.75e-7, input_cost_per_token = 2.75e-6, output_cost_per_token = 2.2e-5 }
+
+["azure/eu/gpt-5-mini"]
+aliases = ["azure/us/gpt-5-mini", "azure/eu/gpt-5-mini-2025-08-07", "azure/us/gpt-5-mini-2025-08-07"]
+priority = { cache_read_input_token_cost = 4.95e-8, input_cost_per_token = 4.95e-7, output_cost_per_token = 3.96e-6 }
+
+["azure/eu/gpt-5.2"]
+aliases = ["azure/us/gpt-5.2", "azure/eu/gpt-5.3-codex", "azure/us/gpt-5.3-codex"]
+priority = { cache_read_input_token_cost = 3.85e-7, input_cost_per_token = 3.85e-6, output_cost_per_token = 3.08e-5 }
+
+["azure/eu/gpt-5.4"]
+aliases = ["azure/us/gpt-5.4", "azure/eu/gpt-5.4-2026-03-05", "azure/us/gpt-5.4-2026-03-05"]
+priority = { cache_read_input_token_cost = 5.5e-7, input_cost_per_token = 5.5e-6, output_cost_per_token = 3.3e-5 }
+
+["azure/eu/gpt-5.4-mini"]
+aliases = ["azure/us/gpt-5.4-mini"]
+priority = { cache_read_input_token_cost = 1.65e-7, input_cost_per_token = 1.65e-6, output_cost_per_token = 9.9e-6 }
+
+["azure/eu/gpt-5.5"]
+aliases = ["azure/us/gpt-5.5", "azure/eu/gpt-5.5-2026-04-23", "azure/eu/gpt-5.5-2026-04-24", "azure/us/gpt-5.5-2026-04-23", "azure/us/gpt-5.5-2026-04-24"]
+priority = { cache_read_input_token_cost = 1.375e-6, input_cost_per_token = 1.375e-5, output_cost_per_token = 8.25e-5 }
+
+["azure/eu/gpt-5.6"]
+aliases = ["azure/us/gpt-5.6", "azure/eu/gpt-5.6-sol", "azure/us/gpt-5.6-sol"]
+priority = { cache_creation_input_token_cost = 1.1e-5, cache_creation_input_token_cost_above_272k_tokens = 2.2e-5, cache_read_input_token_cost = 8.8e-7, cache_read_input_token_cost_above_272k_tokens = 1.76e-6, input_cost_per_token = 8.8e-6, input_cost_per_token_above_272k_tokens = 1.76e-5, output_cost_per_token = 4.4e-5, output_cost_per_token_above_272k_tokens = 6.6e-5 }
+
+["azure/eu/gpt-5.6-luna"]
+aliases = ["azure/us/gpt-5.6-luna"]
+priority = { cache_creation_input_token_cost = 5.5e-7, cache_creation_input_token_cost_above_272k_tokens = 1.1e-6, cache_read_input_token_cost = 4.4e-8, cache_read_input_token_cost_above_272k_tokens = 8.8e-8, input_cost_per_token = 4.4e-7, input_cost_per_token_above_272k_tokens = 8.8e-7, output_cost_per_token = 2.64e-6, output_cost_per_token_above_272k_tokens = 3.96e-6 }
+
+["azure/eu/gpt-5.6-terra"]
+aliases = ["azure/us/gpt-5.6-terra"]
+priority = { cache_creation_input_token_cost = 5.5e-6, cache_creation_input_token_cost_above_272k_tokens = 1.1e-5, cache_read_input_token_cost = 4.4e-7, cache_read_input_token_cost_above_272k_tokens = 8.8e-7, input_cost_per_token = 4.4e-6, input_cost_per_token_above_272k_tokens = 8.8e-6, output_cost_per_token = 2.64e-5, output_cost_per_token_above_272k_tokens = 3.96e-5 }
+
+["azure/gpt-5"]
+aliases = ["azure/gpt-5.1", "azure/gpt-5-2025-08-07", "azure/gpt-5.1-2025-11-13", "azure/gpt-5.1-codex-2025-11-13", "azure/global/gpt-5.1"]
+priority = { cache_read_input_token_cost = 2.5e-7, input_cost_per_token = 2.5e-6, output_cost_per_token = 2e-5 }
+
+["gpt-4.1"]
+aliases = ["gpt-4.1-2025-04-14", "azure/gpt-4.1", "azure/gpt-4.1-2025-04-14"]
+priority = { cache_read_input_token_cost = 8.75e-7, input_cost_per_token = 3.5e-6, output_cost_per_token = 1.4e-5 }
+
+["gpt-4.1-mini"]
+aliases = ["gpt-4.1-mini-2025-04-14", "azure/gpt-4.1-mini", "azure/gpt-4.1-mini-2025-04-14"]
+priority = { cache_read_input_token_cost = 1.75e-7, input_cost_per_token = 7e-7, output_cost_per_token = 2.8e-6 }
+
+["azure/gpt-5-mini"]
+aliases = ["azure/gpt-5-mini-2025-08-07", "azure/gpt-5.1-codex-mini-2025-11-13"]
+priority = { cache_read_input_token_cost = 4.5e-8, input_cost_per_token = 4.5e-7, output_cost_per_token = 3.6e-6 }
+
+["gpt-5.3-codex"]
+aliases = ["azure/gpt-5.2", "azure/gpt-5.3-codex", "azure/gpt-5.2-2025-12-11"]
+priority = { cache_read_input_token_cost = 3.5e-7, input_cost_per_token = 3.5e-6, output_cost_per_token = 2.8e-5 }
+
+["azure/gpt-5.4"]
+aliases = ["azure/gpt-5.4-2026-03-05"]
+flex = { cache_read_input_token_cost_above_272k_tokens = 2.5e-7, input_cost_per_token = 1.25e-6, input_cost_per_token_above_272k_tokens = 2.5e-6, output_cost_per_token = 7.5e-6, output_cost_per_token_above_272k_tokens = 1.125e-5 }
+priority = { cache_read_input_token_cost = 5e-7, cache_read_input_token_cost_above_272k_tokens = 1e-6, input_cost_per_token = 5e-6, input_cost_per_token_above_272k_tokens = 1e-5, output_cost_per_token = 3e-5, output_cost_per_token_above_272k_tokens = 4.5e-5 }
+
+["gpt-5.4-mini"]
+aliases = ["gpt-5.4-mini-2026-03-17", "azure/gpt-5.4-mini", "azure/gpt-5.4-mini-2026-03-17"]
+flex = { cache_read_input_token_cost = 3.75e-8, input_cost_per_token = 3.75e-7, output_cost_per_token = 2.25e-6 }
+priority = { cache_read_input_token_cost = 1.5e-7, input_cost_per_token = 1.5e-6, output_cost_per_token = 9e-6 }
+
+["gpt-5.4-nano"]
+aliases = ["gpt-5.4-nano-2026-03-17", "azure/gpt-5.4-nano", "azure/gpt-5.4-nano-2026-03-17"]
+flex = { cache_read_input_token_cost = 1e-8, input_cost_per_token = 1e-7, output_cost_per_token = 6.25e-7 }
+
+["gpt-5.4-pro"]
+aliases = ["gpt-5.4-pro-2026-03-05", "azure/gpt-5.4-pro", "azure/gpt-5.4-pro-2026-03-05"]
+flex = { input_cost_per_token = 1.5e-5, input_cost_per_token_above_272k_tokens = 3e-5, output_cost_per_token = 9e-5, output_cost_per_token_above_272k_tokens = 0.000135 }
+
+["azure/gpt-5.5"]
+aliases = ["azure/gpt-5.5-2026-04-23", "azure/gpt-5.5-2026-04-24"]
+flex = { cache_read_input_token_cost = 2.5e-7, input_cost_per_token = 2.5e-6, input_cost_per_token_above_272k_tokens = 5e-6 }
+priority = { cache_read_input_token_cost = 1.25e-6, cache_read_input_token_cost_above_272k_tokens = 2e-6, input_cost_per_token = 1.25e-5, input_cost_per_token_above_272k_tokens = 2e-5, output_cost_per_token = 7.5e-5, output_cost_per_token_above_272k_tokens = 9e-5 }
+
+["azure/gpt-5.6"]
+priority = { cache_creation_input_token_cost = 1e-5, cache_creation_input_token_cost_above_272k_tokens = 2e-5, cache_read_input_token_cost = 8e-7, cache_read_input_token_cost_above_272k_tokens = 1.6e-6, input_cost_per_token = 8e-6, input_cost_per_token_above_272k_tokens = 1.6e-5, output_cost_per_token = 4e-5, output_cost_per_token_above_272k_tokens = 6e-5 }
+
+["gpt-5.6-luna"]
+aliases = ["azure/gpt-5.6-luna", "azure/gpt-5.6-luna-2026-07-09"]
+flex = { cache_creation_input_token_cost = 1.25e-7, cache_creation_input_token_cost_above_272k_tokens = 2.5e-7, cache_read_input_token_cost = 1e-8, cache_read_input_token_cost_above_272k_tokens = 2e-8, input_cost_per_token = 1e-7, input_cost_per_token_above_272k_tokens = 2e-7, output_cost_per_token = 6e-7, output_cost_per_token_above_272k_tokens = 9e-7 }
+priority = { cache_creation_input_token_cost = 5e-7, cache_creation_input_token_cost_above_272k_tokens = 1e-6, cache_read_input_token_cost = 4e-8, cache_read_input_token_cost_above_272k_tokens = 8e-8, input_cost_per_token = 4e-7, input_cost_per_token_above_272k_tokens = 8e-7, output_cost_per_token = 2.4e-6, output_cost_per_token_above_272k_tokens = 3.6e-6 }
+
+["gpt-5.6"]
+aliases = ["gpt-5.6-sol", "azure/gpt-5.6-sol", "azure/gpt-5.6-sol-2026-07-09"]
+flex = { cache_creation_input_token_cost = 2.5e-6, cache_creation_input_token_cost_above_272k_tokens = 5e-6, cache_read_input_token_cost = 2e-7, cache_read_input_token_cost_above_272k_tokens = 4e-7, input_cost_per_token = 2e-6, input_cost_per_token_above_272k_tokens = 4e-6, output_cost_per_token = 1e-5, output_cost_per_token_above_272k_tokens = 1.5e-5 }
+priority = { cache_creation_input_token_cost = 1e-5, cache_creation_input_token_cost_above_272k_tokens = 2e-5, cache_read_input_token_cost = 8e-7, cache_read_input_token_cost_above_272k_tokens = 1.6e-6, input_cost_per_token = 8e-6, input_cost_per_token_above_272k_tokens = 1.6e-5, output_cost_per_token = 4e-5, output_cost_per_token_above_272k_tokens = 6e-5 }
+
+["gpt-5.6-terra"]
+aliases = ["azure/gpt-5.6-terra", "azure/gpt-5.6-terra-2026-07-09"]
+flex = { cache_creation_input_token_cost = 1.25e-6, cache_creation_input_token_cost_above_272k_tokens = 2.5e-6, cache_read_input_token_cost = 1e-7, cache_read_input_token_cost_above_272k_tokens = 2e-7, input_cost_per_token = 1e-6, input_cost_per_token_above_272k_tokens = 2e-6, output_cost_per_token = 6e-6, output_cost_per_token_above_272k_tokens = 9e-6 }
+priority = { cache_creation_input_token_cost = 5e-6, cache_creation_input_token_cost_above_272k_tokens = 1e-5, cache_read_input_token_cost = 4e-7, cache_read_input_token_cost_above_272k_tokens = 8e-7, input_cost_per_token = 4e-6, input_cost_per_token_above_272k_tokens = 8e-6, output_cost_per_token = 2.4e-5, output_cost_per_token_above_272k_tokens = 3.6e-5 }
+
+["azure_ai/gpt-5.4"]
+aliases = ["azure_ai/gpt-5.4-2026-03-05"]
+priority = { cache_read_input_token_cost = 5e-7, cache_read_input_token_cost_above_272k_tokens = 1e-6, input_cost_per_token = 5e-6, input_cost_per_token_above_272k_tokens = 1e-5, output_cost_per_token = 3e-5, output_cost_per_token_above_272k_tokens = 4.5e-5 }
+
+["azure_ai/gpt-5.4-mini"]
+aliases = ["azure_ai/gpt-5.4-mini-2026-03-17"]
+priority = { cache_read_input_token_cost = 1.5e-7, input_cost_per_token = 1.5e-6, output_cost_per_token = 9e-6 }
+
+["azure_ai/gpt-5.4-nano"]
+aliases = ["azure_ai/gpt-5.4-nano-2026-03-17"]
+priority = { cache_read_input_token_cost = 4e-8, input_cost_per_token = 4e-7, output_cost_per_token = 2.5e-6 }
+
+["azure_ai/gpt-5.4-pro"]
+aliases = ["azure_ai/gpt-5.4-pro-2026-03-05"]
+priority = { cache_read_input_token_cost = 6e-6, cache_read_input_token_cost_above_272k_tokens = 1.2e-5, input_cost_per_token = 6e-5, input_cost_per_token_above_272k_tokens = 0.00012, output_cost_per_token = 0.00036, output_cost_per_token_above_272k_tokens = 0.00054 }
+
+["azure_ai/gpt-5.5"]
+aliases = ["azure_ai/gpt-5.5-2026-04-23", "azure_ai/gpt-5.5-2026-04-24"]
+priority = { cache_read_input_token_cost = 1e-6, cache_read_input_token_cost_above_272k_tokens = 2e-6, input_cost_per_token = 1e-5, input_cost_per_token_above_272k_tokens = 2e-5, output_cost_per_token = 6e-5, output_cost_per_token_above_272k_tokens = 9e-5 }
+
+["fireworks_ai/deepseek-v4p1-flash"]
+aliases = ["fireworks_ai/deepseek-v4-flash-0731", "fireworks_ai/deepseek-v4-flash-vision-exp", "fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash", "fireworks_ai/accounts/fireworks/models/deepseek-v4-flash-0731", "fireworks_ai/accounts/fireworks/models/deepseek-v4-flash-vision-exp"]
+priority = { cache_read_input_token_cost = 8.75e-9, input_cost_per_token = 2.75e-7, output_cost_per_token = 8.25e-7 }
+
+["fireworks_ai/accounts/fireworks/models/minimax-m2p7"]
+aliases = ["fireworks_ai/accounts/fireworks/models/deepseek-v4-pro"]
+priority = { cache_read_input_token_cost = 6e-7, input_cost_per_token = 1.2e-6, output_cost_per_token = 1.2e-6 }
+
+["fireworks_ai/deepseek-v4-pro-0813"]
+aliases = ["fireworks_ai/accounts/fireworks/models/deepseek-v4-pro-0813"]
+priority = { cache_read_input_token_cost = 5.5e-8, input_cost_per_token = 1.65e-6, output_cost_per_token = 4.95e-6 }
+
+["fireworks_ai/glm-5p2"]
+aliases = ["fireworks_ai/accounts/fireworks/models/glm-5p2"]
+priority = { cache_read_input_token_cost = 1.75e-7, input_cost_per_token = 1.75e-6, output_cost_per_token = 5.5e-6 }
+
+["fireworks_ai/glm-5p3"]
+aliases = ["fireworks_ai/accounts/fireworks/models/glm-5p3"]
+priority = { cache_read_input_token_cost = 3.25e-7, input_cost_per_token = 1.75e-6, output_cost_per_token = 5.5e-6 }
+
+["fireworks_ai/glm-5p3-flash"]
+aliases = ["fireworks_ai/accounts/fireworks/models/glm-5p3-flash"]
+priority = { cache_read_input_token_cost = 3.75e-8, input_cost_per_token = 1.875e-7, output_cost_per_token = 6.25e-7 }
+
+["fireworks_ai/gpt-oss-120b"]
+aliases = ["fireworks_ai/accounts/fireworks/models/gpt-oss-120b"]
+priority = { cache_read_input_token_cost = 1.8e-8, input_cost_per_token = 1.8e-7, output_cost_per_token = 7.2e-7 }
+
+["fireworks_ai/kimi-k2p6"]
+aliases = ["fireworks_ai/accounts/fireworks/models/kimi-k2p6"]
+priority = { cache_read_input_token_cost = 2.2e-7, input_cost_per_token = 1.5e-6, output_cost_per_token = 6e-6 }
+
+["fireworks_ai/kimi-k2p7-code"]
+aliases = ["fireworks_ai/accounts/fireworks/models/kimi-k2p7-code"]
+priority = { cache_read_input_token_cost = 2.85e-7, input_cost_per_token = 1.425e-6, output_cost_per_token = 6e-6 }
+
+["fireworks_ai/kimi-k3"]
+aliases = ["fireworks_ai/accounts/fireworks/models/kimi-k3"]
+priority = { cache_read_input_token_cost = 3.75e-7, input_cost_per_token = 3.75e-6, output_cost_per_token = 1.875e-5 }
+
+["fireworks_ai/minimax-m3"]
+aliases = ["fireworks_ai/accounts/fireworks/models/minimax-m3"]
+priority = { cache_read_input_token_cost = 9e-8, input_cost_per_token = 4.5e-7, output_cost_per_token = 1.8e-6 }
+
+["fireworks_ai/muse-glimmer-30b"]
+aliases = ["fireworks_ai/accounts/fireworks/models/muse-glimmer-30b"]
+priority = { cache_read_input_token_cost = 6e-8, input_cost_per_token = 5.25e-7, output_cost_per_token = 2.25e-6 }
+
+["fireworks_ai/qwen3p8-max"]
+aliases = ["fireworks_ai/accounts/fireworks/models/qwen3p8-max"]
+priority = { cache_read_input_token_cost = 3.75e-7, input_cost_per_token = 3e-6, output_cost_per_token = 9e-6 }
+
+["fireworks_ai/deepseek-v4p1-flash-us"]
+aliases = ["fireworks_ai/accounts/fireworks/routers/deepseek-v4p1-flash-us"]
+priority = { cache_read_input_token_cost = 1.125e-8, input_cost_per_token = 5.625e-7, output_cost_per_token = 2.25e-6 }
+
+["fireworks_ai/kimi-k3-us"]
+aliases = ["fireworks_ai/accounts/fireworks/routers/kimi-k3-us"]
+priority = { cache_read_input_token_cost = 5.625e-7, input_cost_per_token = 5.625e-6, output_cost_per_token = 2.8125e-5 }
+
+["gemini-2.5-flash"]
+flex = { cache_read_input_token_cost = 3e-8, input_cost_per_audio_token = 5e-7, input_cost_per_token = 1.5e-7, output_cost_per_token = 1.25e-6 }
+priority = { cache_read_input_token_cost = 5.4e-8, input_cost_per_audio_token = 1.8e-6, input_cost_per_token = 5.4e-7, output_cost_per_token = 4.5e-6 }
+
+["gemini-2.5-flash-image"]
+aliases = ["vertex_ai/gemini-2.5-flash-image"]
+flex = { input_cost_per_token = 1.5e-7, output_cost_per_token = 1.25e-6 }
+
+["gemini-2.5-flash-lite"]
+flex = { cache_read_input_token_cost = 1e-8, input_cost_per_token = 5e-8, output_cost_per_token = 2e-7 }
+priority = { cache_read_input_token_cost = 1.8e-8, input_cost_per_audio_token = 5.4e-7, input_cost_per_token = 1.8e-7, output_cost_per_token = 7.2e-7 }
+
+["gemini-2.5-pro"]
+aliases = ["gemini/gemini-2.5-pro"]
+flex = { cache_read_input_token_cost = 1.25e-7, input_cost_per_token = 6.25e-7, input_cost_per_token_above_200k_tokens = 1.25e-6, output_cost_per_token = 5e-6, output_cost_per_token_above_200k_tokens = 7.5e-6 }
+priority = { cache_read_input_token_cost = 2.25e-7, cache_read_input_token_cost_above_200k_tokens = 4.5e-7, input_cost_per_token = 2.25e-6, input_cost_per_token_above_200k_tokens = 4.5e-6, output_cost_per_token = 1.8e-5, output_cost_per_token_above_200k_tokens = 2.7e-5 }
+
+["gemini-3-flash-preview"]
+aliases = ["gemini/gemini-3-flash-preview", "vertex_ai/gemini-3-flash-preview"]
+flex = { cache_read_input_token_cost = 5e-8, input_cost_per_token = 2.5e-7, output_cost_per_token = 1.5e-6 }
+priority = { cache_read_input_token_cost = 9e-8, input_cost_per_audio_token = 1.8e-6, input_cost_per_token = 9e-7, output_cost_per_token = 5.4e-6 }
+
+["gemini-3-pro-image"]
+aliases = ["vertex_ai/gemini-3-pro-image"]
+flex = { cache_read_input_token_cost = 1e-7, input_cost_per_token = 1e-6, output_cost_per_token = 6e-6 }
+priority = { cache_read_input_token_cost = 3.6e-7, cache_read_input_token_cost_above_200k_tokens = 7.2e-7, input_cost_per_token = 3.6e-6, input_cost_per_token_above_200k_tokens = 7.2e-6, output_cost_per_token = 2.16e-5, output_cost_per_token_above_200k_tokens = 3.24e-5 }
+
+["gemini-3-pro-image-preview"]
+aliases = ["vertex_ai/gemini-3-pro-preview", "vertex_ai/gemini-3-pro-image-preview", "vertex_ai/gemini-3.1-pro-preview-customtools"]
+priority = { cache_read_input_token_cost = 3.6e-7, cache_read_input_token_cost_above_200k_tokens = 7.2e-7, input_cost_per_token = 3.6e-6, input_cost_per_token_above_200k_tokens = 7.2e-6, output_cost_per_token = 2.16e-5, output_cost_per_token_above_200k_tokens = 3.24e-5 }
+
+["gemini-3.1-flash-image"]
+aliases = ["vertex_ai/gemini-3.1-flash-image"]
+flex = { cache_read_input_token_cost = 2.5e-8, input_cost_per_token = 2.5e-7, output_cost_per_token = 1.5e-6 }
+
+["gemini-3.1-flash-lite"]
+aliases = ["vertex_ai/gemini-3.1-flash-lite"]
+flex = { cache_read_input_token_cost = 1.25e-8, input_cost_per_token = 1.25e-7, output_cost_per_token = 7.5e-7 }
+priority = { cache_read_input_token_cost = 4.5e-8, input_cost_per_audio_token = 9e-7, input_cost_per_token = 4.5e-7, output_cost_per_token = 2.7e-6 }
+
+["gemini-3.1-flash-lite-image"]
+aliases = ["vertex_ai/gemini-3.1-flash-lite-image"]
+flex = { cache_read_input_token_cost = 1.25e-8, input_cost_per_token = 1.25e-7, output_cost_per_token = 7.5e-7 }
+
+["gemini-pro-latest"]
+aliases = ["gemini-3.1-pro-preview", "gemini/gemini-pro-latest", "gemini/gemini-3.1-pro-preview", "vertex_ai/gemini-3.1-pro-preview", "gemini/gemini-3.1-pro-preview-customtools"]
+flex = { cache_read_input_token_cost = 2e-7, input_cost_per_token = 1e-6, input_cost_per_token_above_200k_tokens = 2e-6, output_cost_per_token = 6e-6, output_cost_per_token_above_200k_tokens = 9e-6 }
+priority = { cache_read_input_token_cost = 3.6e-7, cache_read_input_token_cost_above_200k_tokens = 7.2e-7, input_cost_per_token = 3.6e-6, input_cost_per_token_above_200k_tokens = 7.2e-6, output_cost_per_token = 2.16e-5, output_cost_per_token_above_200k_tokens = 3.24e-5 }
+
+["gemini-3.5-flash"]
+aliases = ["vertex_ai/gemini-3.5-flash"]
+flex = { cache_read_input_token_cost = 7.5e-8, input_cost_per_token = 7.5e-7, output_cost_per_token = 4.5e-6 }
+priority = { cache_read_input_token_cost = 2.7e-7, input_cost_per_audio_token = 2.7e-6, input_cost_per_token = 2.7e-6, output_cost_per_token = 1.62e-5 }
+
+["gemini-3.5-flash-lite"]
+aliases = ["vertex_ai/gemini-3.5-flash-lite"]
+flex = { cache_read_input_token_cost = 1.5e-8, input_cost_per_token = 1.5e-7, output_cost_per_token = 1.25e-6 }
+priority = { cache_read_input_token_cost = 5.4e-8, input_cost_per_token = 5.4e-7, output_cost_per_token = 4.5e-6 }
+
+["gemini-3.6-flash"]
+aliases = ["gemini-3.7-flash", "gemini-3.8-flash", "gemini-flash-latest", "gemini/gemini-3.6-flash", "gemini/gemini-3.7-flash", "gemini/gemini-3.8-flash", "gemini/gemini-flash-latest", "vertex_ai/gemini-3.6-flash", "vertex_ai/gemini-3.7-flash", "vertex_ai/gemini-3.8-flash"]
+flex = { cache_read_input_token_cost = 3.75e-8, input_cost_per_token = 3.75e-7, output_cost_per_token = 1.875e-6 }
+priority = { cache_read_input_token_cost = 1.35e-7, input_cost_per_token = 1.35e-6, output_cost_per_token = 6.75e-6 }
+
+["gemini-3.8-flash-cyber"]
+aliases = ["vertex_ai/gemini-3.8-flash-cyber"]
+flex = { cache_read_input_token_cost = 7.5e-8, input_cost_per_token = 7.5e-7, output_cost_per_token = 3.75e-6 }
+priority = { cache_read_input_token_cost = 2.7e-7, input_cost_per_token = 2.7e-6, output_cost_per_token = 1.35e-5 }
+
+["gemini-flash-lite-latest"]
+aliases = ["gemini/gemini-3.5-flash-lite", "gemini/gemini-flash-lite-latest"]
+flex = { cache_read_input_token_cost = 2e-8, input_cost_per_token = 1.5e-7, output_cost_per_token = 1.25e-6 }
+priority = { cache_read_input_token_cost = 5e-8, input_cost_per_token = 5.4e-7, output_cost_per_token = 4.5e-6 }
+
+["gemini/gemini-2.5-flash"]
+flex = { cache_read_input_token_cost = 3e-8, input_cost_per_audio_token = 5e-7, input_cost_per_token = 1.5e-7, output_cost_per_token = 1.25e-6 }
+priority = { cache_read_input_token_cost = 5.4e-8, input_cost_per_token = 5.4e-7, output_cost_per_token = 4.5e-6 }
+
+["gemini/gemini-2.5-flash-image"]
+flex = { input_cost_per_token = 1.5e-7 }
+priority = { input_cost_per_token = 5.4e-7 }
+
+["gemini/gemini-2.5-flash-lite"]
+flex = { cache_read_input_token_cost = 1e-8, input_cost_per_token = 5e-8, output_cost_per_token = 2e-7 }
+priority = { cache_read_input_token_cost = 1.8e-8, input_cost_per_token = 1.8e-7, output_cost_per_token = 7.2e-7 }
+
+["gemini/gemini-3-pro-image"]
+aliases = ["gemini/nano-banana-pro-preview", "gemini/gemini-3-pro-image-preview"]
+flex = { input_cost_per_token = 1e-6, output_cost_per_token = 6e-6 }
+priority = { input_cost_per_token = 3.6e-6, output_cost_per_token = 2.16e-5 }
+
+["gemini/gemini-3.1-flash-lite"]
+aliases = ["gemini/gemini-3.1-flash-lite-preview"]
+flex = { cache_read_input_token_cost = 1.25e-8, input_cost_per_token = 1.25e-7, output_cost_per_token = 7.5e-7 }
+priority = { cache_read_input_token_cost = 4.5e-8, input_cost_per_token = 4.5e-7, output_cost_per_token = 2.7e-6 }
+
+["gemini/gemini-3.5-flash"]
+flex = { cache_read_input_token_cost = 8e-8, input_cost_per_token = 7.5e-7, output_cost_per_token = 4.5e-6 }
+priority = { cache_read_input_token_cost = 2.7e-7, input_cost_per_audio_token = 2.7e-6, input_cost_per_token = 2.7e-6, output_cost_per_token = 1.62e-5 }
+
+["gemini/gemini-3.8-flash-lite-tts"]
+flex = { cache_read_input_token_cost = 2.5e-8, input_cost_per_token = 2.5e-7, output_cost_per_token = 3e-6 }
+priority = { cache_read_input_token_cost = 2.25e-7, input_cost_per_token = 9e-7, output_cost_per_token = 1.08e-5 }
+
+["gemini/gemini-3.8-flash-tts"]
+flex = { cache_read_input_token_cost = 2.5e-8, input_cost_per_token = 2.5e-7, output_cost_per_token = 4.5e-6 }
+priority = { cache_read_input_token_cost = 2.25e-7, input_cost_per_token = 9e-7, output_cost_per_token = 1.62e-5 }
+
+["gpt-4.1-nano"]
+aliases = ["gpt-4.1-nano-2025-04-14"]
+priority = { cache_read_input_token_cost = 5e-8, input_cost_per_token = 2e-7, output_cost_per_token = 8e-7 }
+
+["gpt-4o"]
+aliases = ["gpt-4o-2024-08-06", "gpt-4o-2024-11-20"]
+batches = { input_cost_per_token = 1.25e-6, output_cost_per_token = 5e-6 }
+priority = { cache_read_input_token_cost = 2.125e-6, input_cost_per_token = 4.25e-6, output_cost_per_token = 1.7e-5 }
+
+["gpt-4o-2024-05-13"]
+batches = { input_cost_per_token = 2.5e-6, output_cost_per_token = 7.5e-6 }
+priority = { input_cost_per_token = 8.75e-6, output_cost_per_token = 2.625e-5 }
+
+["gpt-4o-mini"]
+aliases = ["gpt-4o-mini-2024-07-18"]
+batches = { input_cost_per_token = 7.5e-8, output_cost_per_token = 3e-7 }
+priority = { cache_read_input_token_cost = 1.25e-7, input_cost_per_token = 2.5e-7, output_cost_per_token = 1e-6 }
+
+["gpt-5"]
+aliases = ["gpt-5.1", "gpt-5-2025-08-07", "gpt-5.1-2025-11-13"]
+flex = { cache_read_input_token_cost = 6.25e-8, input_cost_per_token = 6.25e-7, output_cost_per_token = 5e-6 }
+priority = { cache_read_input_token_cost = 2.5e-7, input_cost_per_token = 2.5e-6, output_cost_per_token = 2e-5 }
+
+["gpt-5-mini"]
+aliases = ["gpt-5-mini-2025-08-07"]
+flex = { cache_read_input_token_cost = 1.25e-8, input_cost_per_token = 1.25e-7, output_cost_per_token = 1e-6 }
+priority = { cache_read_input_token_cost = 4.5e-8, input_cost_per_token = 4.5e-7, output_cost_per_token = 3.6e-6 }
+
+["gpt-5-nano"]
+aliases = ["gpt-5-nano-2025-08-07"]
+flex = { cache_read_input_token_cost = 2.5e-9, input_cost_per_token = 2.5e-8, output_cost_per_token = 2e-7 }
+priority = { input_cost_per_token = 2.5e-6 }
+
+["gpt-5.2"]
+aliases = ["gpt-5.2-2025-12-11"]
+flex = { cache_read_input_token_cost = 8.75e-8, input_cost_per_token = 8.75e-7, output_cost_per_token = 7e-6 }
+priority = { cache_read_input_token_cost = 3.5e-7, input_cost_per_token = 3.5e-6, output_cost_per_token = 2.8e-5 }
+
+["gpt-5.4"]
+aliases = ["gpt-5.4-2026-03-05"]
+flex = { cache_read_input_token_cost = 1.3e-7, cache_read_input_token_cost_above_272k_tokens = 2.5e-7, input_cost_per_token = 1.25e-6, input_cost_per_token_above_272k_tokens = 2.5e-6, output_cost_per_token = 7.5e-6, output_cost_per_token_above_272k_tokens = 1.125e-5 }
+priority = { cache_read_input_token_cost = 5e-7, input_cost_per_token = 5e-6, output_cost_per_token = 3e-5 }
+
+["gpt-5.5"]
+aliases = ["gpt-5.5-2026-04-23"]
+flex = { cache_read_input_token_cost = 2.5e-7, cache_read_input_token_cost_above_272k_tokens = 5e-7, input_cost_per_token = 2.5e-6, input_cost_per_token_above_272k_tokens = 5e-6, output_cost_per_token = 1.5e-5, output_cost_per_token_above_272k_tokens = 2.25e-5 }
+priority = { cache_read_input_token_cost = 1.25e-6, input_cost_per_token = 1.25e-5, output_cost_per_token = 7.5e-5 }
+
+["gpt-5.5-pro"]
+aliases = ["gpt-5.5-pro-2026-04-23"]
+flex = { input_cost_per_token = 1.5e-5, output_cost_per_token = 9e-5 }
+
+["gpt-6-astra"]
+flex = { cache_creation_input_token_cost = 6.25e-6, cache_creation_input_token_cost_above_272k_tokens = 1.25e-5, cache_read_input_token_cost = 5e-7, cache_read_input_token_cost_above_272k_tokens = 1e-6, input_cost_per_token = 5e-6, input_cost_per_token_above_272k_tokens = 1e-5, output_cost_per_token = 2.5e-5, output_cost_per_token_above_272k_tokens = 3.75e-5 }
+priority = { cache_creation_input_token_cost = 2.5e-5, cache_creation_input_token_cost_above_272k_tokens = 5e-5, cache_read_input_token_cost = 2e-6, cache_read_input_token_cost_above_272k_tokens = 4e-6, input_cost_per_token = 2e-5, input_cost_per_token_above_272k_tokens = 4e-5, output_cost_per_token = 0.0001, output_cost_per_token_above_272k_tokens = 0.00015 }
+ultrafast = { cache_creation_input_token_cost = 7.5e-5, cache_creation_input_token_cost_above_272k_tokens = 0.00015, cache_read_input_token_cost = 6e-6, cache_read_input_token_cost_above_272k_tokens = 1.2e-5, input_cost_per_token = 6e-5, input_cost_per_token_above_272k_tokens = 0.00012, output_cost_per_token = 0.0003, output_cost_per_token_above_272k_tokens = 0.00045 }
+
+["gpt-6-luna"]
+flex = { cache_creation_input_token_cost = 6.25e-8, cache_creation_input_token_cost_above_272k_tokens = 1.25e-7, cache_read_input_token_cost = 5e-9, cache_read_input_token_cost_above_272k_tokens = 1e-8, input_cost_per_token = 5e-8, input_cost_per_token_above_272k_tokens = 1e-7, output_cost_per_token = 2.5e-7, output_cost_per_token_above_272k_tokens = 3.75e-7 }
+priority = { cache_creation_input_token_cost = 2.5e-7, cache_creation_input_token_cost_above_272k_tokens = 5e-7, cache_read_input_token_cost = 2e-8, cache_read_input_token_cost_above_272k_tokens = 4e-8, input_cost_per_token = 2e-7, input_cost_per_token_above_272k_tokens = 4e-7, output_cost_per_token = 1e-6, output_cost_per_token_above_272k_tokens = 1.5e-6 }
+
+["gpt-6-sol"]
+flex = { cache_creation_input_token_cost = 1.25e-6, cache_creation_input_token_cost_above_272k_tokens = 2.5e-6, cache_read_input_token_cost = 1e-7, cache_read_input_token_cost_above_272k_tokens = 2e-7, input_cost_per_token = 1e-6, input_cost_per_token_above_272k_tokens = 2e-6, output_cost_per_token = 5e-6, output_cost_per_token_above_272k_tokens = 7.5e-6 }
+priority = { cache_creation_input_token_cost = 5e-6, cache_creation_input_token_cost_above_272k_tokens = 1e-5, cache_read_input_token_cost = 4e-7, cache_read_input_token_cost_above_272k_tokens = 8e-7, input_cost_per_token = 4e-6, input_cost_per_token_above_272k_tokens = 8e-6, output_cost_per_token = 2e-5, output_cost_per_token_above_272k_tokens = 3e-5 }
+
+["o3"]
+aliases = ["o3-2025-04-16"]
+flex = { cache_read_input_token_cost = 2.5e-7, input_cost_per_token = 1e-6, output_cost_per_token = 4e-6 }
+priority = { cache_read_input_token_cost = 8.75e-7, input_cost_per_token = 3.5e-6, output_cost_per_token = 1.4e-5 }
+
+["o4-mini"]
+aliases = ["o4-mini-2025-04-16"]
+flex = { cache_read_input_token_cost = 1.38e-7, input_cost_per_token = 5.5e-7, output_cost_per_token = 2.2e-6 }
+priority = { cache_read_input_token_cost = 5e-7, input_cost_per_token = 2e-6, output_cost_per_token = 8e-6 }

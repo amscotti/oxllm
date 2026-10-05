@@ -1,0 +1,23 @@
+# Prometheus scrape config for the 3-instance stress test.
+# oxllm's /metrics endpoint requires the master key (it is auth-gated whenever
+# master_key is set), so we pass it as a bearer token on every scrape. The
+# built-in `instance` label (host:port) already distinguishes the oxllm
+# instances, so per-instance breakdown works out of the box.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: oxllm
+    metrics_path: /metrics
+    bearer_token: "sk-stress-master-key"
+    static_configs:
+      - targets: ["oxllm-a:4000", "oxllm-b:4001", "oxllm-c:4002"]
+        labels:
+          fleet: "stress"
+
+  - job_name: mock-llm
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mock-llm:9000"]

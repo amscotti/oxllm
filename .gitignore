@@ -1,0 +1,70 @@
+# Build artifacts
+/target/
+**/target/
+*.rlib
+*.rmeta
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Live-provider / local smoke helpers (load .env; not CI)
+scripts/smoke-local.sh
+scripts/test-claude-code-proxy.sh
+scripts/test-openrouter-lb.sh
+scripts/local/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+.fleet/
+
+# Coverage / profiling
+/coverage/
+/lcov.info
+*.profraw
+*.profdata
+/tmp/
+/tmp-cov/
+
+# Misc local
+*.log
+*.tmp
+.direnv/
+.venv/
+venv/
+**/__pycache__/
+*.pyc
+
+# Review session metrics (generated)
+review/metrics.tsv
+
+# Admin UI Playwright
+tests/admin-ui/node_modules/
+tests/admin-ui/test-results/
+tests/admin-ui/playwright-report/
+tests/admin-ui/playwright/.cache/
+
+# Git worktrees
+.worktrees/
+
+# Local runtime config (copy from examples/). Anchored to the repo root so
+# it does not swallow tests/multi-instance/config.yaml (the stress-stack
+# fixture the compose file mounts).
+/config.yaml
+
+# gaggle/review harness runtime state (scripts/review-loop.sh recreates it)
+.review/

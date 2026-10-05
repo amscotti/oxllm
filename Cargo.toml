@@ -1,0 +1,185 @@
+[package]
+name = "oxllm"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A fast, type-safe Rust proxy gateway for LLM APIs"
+
+[workspace]
+members = [
+	"crates/oxllm-core",
+	"crates/oxllm-providers",
+	"crates/oxllm-server",
+	"crates/oxllm-cache-redis",
+	"crates/oxllm-cache-s3",
+	"crates/oxllm-cache-gcs",
+	"crates/oxllm-cache-azure",
+	"crates/oxllm-db",
+	"crates/oxllm-admin",
+]
+
+[workspace.dependencies]
+# Internal crates
+oxllm-core = { path = "crates/oxllm-core" }
+oxllm-providers = { path = "crates/oxllm-providers" }
+oxllm-server = { path = "crates/oxllm-server" }
+oxllm-cache-redis = { path = "crates/oxllm-cache-redis", default-features = false }
+oxllm-cache-s3 = { path = "crates/oxllm-cache-s3", default-features = false }
+oxllm-cache-gcs = { path = "crates/oxllm-cache-gcs", default-features = false }
+oxllm-cache-azure = { path = "crates/oxllm-cache-azure", default-features = false }
+oxllm-db = { path = "crates/oxllm-db", default-features = false }
+oxllm-admin = { path = "crates/oxllm-admin" }
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
+
+# HTTP server + middleware
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "limit", "cors", "compression-gzip"] }
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "http2"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yml = "0.0.12"
+
+# Tokenization
+tiktoken-rs = "0.7"
+
+# Errors
+thiserror = "2"
+anyhow = "1"
+
+# Dyn-safe async trait (only for Hook)
+async-trait = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# IDs / time
+uuid = { version = "1", features = ["v4"] }
+jiff = "0.2"
+
+# Hashing / security
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+subtle = "2"
+base64 = "0.22"
+
+# Randomness
+rand = "0.9"
+rand_distr = "0.5"
+
+# Streaming utilities
+futures-util = "0.3"
+tokio-stream = "0.1"
+
+# In-memory cache
+moka = { version = "0.12", features = ["future"] }
+
+# Atomic config swap
+arc-swap = "1"
+
+# Metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
+# Redis (oxllm-cache-redis only)
+redis = { version = "0.29", features = ["tokio-comp", "connection-manager"], default-features = false }
+
+# Database (oxllm-db only)
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "any", "uuid", "time", "json"] }
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Config hot-reload
+notify = "8"
+
+# Test utilities
+httpmock = "0.7"
+proptest = "1"
+rand_chacha = "0.9"
+toml = "0.8"
+regex = "1"
+tempfile = "3"
+
+# URL / IP handling
+url = "2"
+percent-encoding = "2"
+ipnet = "2"
+serial_test = "3"
+
+# WebSocket (realtime)
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["rustls-tls-webpki-roots", "handshake"] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+
+# JWT auth (HMAC HS256/HS384/HS512 only).
+# jsonwebtoken 10.x requires a CryptoProvider to be selected via features —
+# HMAC is NOT usable with `features = []` (unlike 7.x/8.x). We use `aws_lc_rs`
+# rather than `rust_crypto` to avoid pulling the pure-Rust `rsa`/`p256`/`p384`
+# crates (aws-lc-rs is a C library, so no Rust `rsa` crate dependency).
+jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+
+# OpenTelemetry (feature-gated)
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", features = ["trace", "grpc-tonic"] }
+
+[dependencies]
+oxllm-server.workspace = true
+oxllm-admin = { workspace = true, optional = true }
+clap.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+sha2.workspace = true
+rand.workspace = true
+rustls.workspace = true
+
+[features]
+default = []
+db = ["oxllm-server/db"]
+admin = ["dep:oxllm-admin"]
+otel = ["oxllm-server/otel"]
+s3-cache = ["oxllm-server/s3-cache"]
+gcs-cache = ["oxllm-server/gcs-cache"]
+azure-cache = ["oxllm-server/azure-cache"]
+live-tests = []
+
+[dev-dependencies]
+# workspace-level integration tests
+httpmock.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+tokio-stream.workspace = true
+axum.workspace = true
+oxllm-server = { workspace = true, features = ["db"] }
+oxllm-core.workspace = true
+oxllm-providers.workspace = true
+oxllm-cache-redis = { workspace = true, features = ["redis"] }
+arc-swap.workspace = true
+jsonwebtoken.workspace = true
+tokio-tungstenite.workspace = true
+rustls.workspace = true
+futures-util.workspace = true
+toml.workspace = true
+serial_test.workspace = true
+regex.workspace = true
+
+[[bin]]
+name = "oxllm"
+path = "src/main.rs"
+
+[[bin]]
+name = "oxllm-admin"
+path = "src/bin/oxllm-admin.rs"
+required-features = ["admin"]

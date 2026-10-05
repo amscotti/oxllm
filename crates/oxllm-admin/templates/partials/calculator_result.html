@@ -1,0 +1,22 @@
+{% if error %}
+<div class="ox-stat-card" style="max-width: 320px; border-color: var(--ox-danger, #c0392b);">
+  <div class="ox-stat-label" style="color: var(--ox-danger, #c0392b);">Invalid input</div>
+  <div style="font-size: .9rem;">{{ error }}</div>
+</div>
+{% elif result %}
+<div class="ox-stat-card" style="max-width: 280px;">
+  <div class="ox-stat-label">Estimated cost</div>
+  <div class="ox-stat-value" style="font-size: 1.5rem;">
+    {% if result.cost is number %}
+    ${{ "%.8f"|format(result.cost) }}
+    {% elif result.cost %}
+    ${{ result.cost }}
+    {% else %}
+    <span class="ox-cost-missing">No price for model</span>
+    {% endif %}
+  </div>
+  <div class="ox-stat-sub">model <span class="ox-code">{{ result.model | default("—") }}</span></div>
+</div>
+{% else %}
+<p style="color: var(--ox-muted); font-size: .85rem; margin: 0;">Enter tokens and click Calculate.</p>
+{% endif %}

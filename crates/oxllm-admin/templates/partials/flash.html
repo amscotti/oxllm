@@ -1,0 +1,16 @@
+{% if flash %}
+<div class="ox-flash ox-flash-success" id="flash" role="status" aria-live="polite">
+    {{ flash }}
+    <button type="button"
+            onclick="this.parentElement.style.display='none'"
+            aria-label="Dismiss notification"
+            style="float:right;background:none;border:none;cursor:pointer;color:inherit;opacity:0.7;font-size:1rem;line-height:1;padding:0 .25rem;">×</button>
+</div>
+<script>
+    (function () {
+        var el = document.getElementById('flash');
+        if (!el) return;
+        setTimeout(function () { el.style.display = 'none'; }, 5000);
+    })();
+</script>
+{% endif %}

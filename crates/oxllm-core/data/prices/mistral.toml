@@ -1,0 +1,560 @@
+# Pricing for provider `mistral`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["mistral/codestral-2405"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 3.000000e-6
+max_input_tokens = 32000
+max_output_tokens = 8191
+
+["mistral/codestral-2508"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 9.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+cache_read_input_token_cost = 3.000000e-8
+
+["mistral/codestral-latest"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 9.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+cache_read_input_token_cost = 3.000000e-8
+
+["mistral/codestral-mamba-latest"]
+input_cost_per_token = 2.500000e-7
+output_cost_per_token = 2.500000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost = 2.500000e-8
+
+["mistral/devstral-2512"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["mistral/devstral-latest"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost = 4.000000e-8
+
+["mistral/devstral-medium-2507"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["mistral/devstral-medium-latest"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost = 4.000000e-8
+
+["mistral/devstral-small-2505"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["mistral/devstral-small-2507"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["mistral/devstral-small-latest"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost = 1.000000e-8
+
+["mistral/labs-devstral-small-2512"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["mistral/magistral-medium-1-2-2509"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 5.000000e-6
+max_input_tokens = 40000
+max_output_tokens = 40000
+
+["mistral/magistral-medium-2506"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 5.000000e-6
+max_input_tokens = 40000
+max_output_tokens = 40000
+
+["mistral/magistral-medium-2509"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 5.000000e-6
+max_input_tokens = 40000
+max_output_tokens = 40000
+
+["mistral/magistral-medium-latest"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/magistral-small-1-2-2509"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 40000
+max_output_tokens = 40000
+
+["mistral/magistral-small-2506"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 40000
+max_output_tokens = 40000
+
+["mistral/magistral-small-latest"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/ministral-3-14b-2512"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 2.000000e-8
+
+["mistral/ministral-3-3b-2512"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.000000e-8
+
+["mistral/ministral-3-8b-2512"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.500000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/ministral-8b-2512"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.500000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/ministral-8b-latest"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.500000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/mistral-large-2402"]
+input_cost_per_token = 4.000000e-6
+output_cost_per_token = 1.200000e-5
+max_input_tokens = 32000
+max_output_tokens = 8191
+
+["mistral/mistral-large-2407"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 9.000000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["mistral/mistral-large-2411"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["mistral/mistral-large-2512"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 5.000000e-8
+
+["mistral/mistral-large-3"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 5.000000e-8
+
+["mistral/mistral-large-latest"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 5.000000e-8
+
+["mistral/mistral-medium"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/mistral-medium-2312"]
+input_cost_per_token = 2.700000e-6
+output_cost_per_token = 8.100000e-6
+max_input_tokens = 32000
+max_output_tokens = 8191
+
+["mistral/mistral-medium-2505"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 8191
+
+["mistral/mistral-medium-2508"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["mistral/mistral-medium-2604"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/mistral-medium-3-1-2508"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["mistral/mistral-medium-3-5"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/mistral-medium-latest"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/mistral-small"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 32000
+max_output_tokens = 8191
+cache_read_input_token_cost = 1.000000e-8
+
+["mistral/mistral-small-3-2-2506"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 1.800000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["mistral/mistral-small-latest"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/mistral-tiny"]
+input_cost_per_token = 2.500000e-7
+output_cost_per_token = 2.500000e-7
+max_input_tokens = 32000
+max_output_tokens = 8191
+cache_read_input_token_cost = 2.500000e-8
+
+["mistral/open-codestral-mamba"]
+input_cost_per_token = 2.500000e-7
+output_cost_per_token = 2.500000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["mistral/open-mistral-7b"]
+input_cost_per_token = 2.500000e-7
+output_cost_per_token = 2.500000e-7
+max_input_tokens = 32000
+max_output_tokens = 8191
+
+["mistral/open-mistral-nemo"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+cache_read_input_token_cost = 3.000000e-8
+
+["mistral/open-mistral-nemo-2407"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["mistral/open-mixtral-8x22b"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 65336
+max_output_tokens = 8191
+
+["mistral/open-mixtral-8x7b"]
+input_cost_per_token = 7.000000e-7
+output_cost_per_token = 7.000000e-7
+max_input_tokens = 32000
+max_output_tokens = 8191
+
+["mistral/pixtral-12b-2409"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.500000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["mistral/pixtral-large-2411"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["mistral/pixtral-large-latest"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+cache_read_input_token_cost = 2.000000e-7
+
+["text-completion-codestral/codestral-2405"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+max_output_tokens = 8191
+
+["text-completion-codestral/codestral-latest"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+max_output_tokens = 8191
+
+["mistral/codestral-embed"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 8192
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/codestral-embed-2505"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 8192
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/mistral-embed"]
+input_cost_per_token = 1.0000000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 8192
+["mistral/glm-5-2"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.400000e-7
+
+["mistral/labs-leanstral-1-5"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 262144
+max_output_tokens = 131072
+
+["mistral/labs-leanstral-1-5-1"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 262144
+max_output_tokens = 131072
+
+["mistral/ministral-14b-2512"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 2.000000e-8
+
+["mistral/ministral-14b-latest"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 2.000000e-8
+
+["mistral/ministral-3b-2512"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.000000e-8
+
+["mistral/ministral-3b-latest"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.000000e-8
+
+["mistral/mistral-code-agent-latest"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+cache_read_input_token_cost = 4.000000e-8
+
+["mistral/mistral-code-fim-latest"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 9.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+cache_read_input_token_cost = 3.000000e-8
+
+["mistral/mistral-code-latest"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 9.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+cache_read_input_token_cost = 3.000000e-8
+
+["mistral/mistral-embed-2312"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 8192
+
+["mistral/mistral-medium-3"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/mistral-medium-3.5"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/mistral-moderation-2603"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 131072
+
+["mistral/mistral-small-2603"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/mistral-vibe-cli-fast"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-8
+
+["mistral/mistral-vibe-cli-latest"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/mistral-vibe-cli-with-tools"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.500000e-7
+
+["mistral/voxtral-mini-2602"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 5.000000e-5
+
+["mistral/voxtral-mini-latest"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 5.000000e-5
+
+["mistral/voxtral-mini-realtime-2602"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.000000e-4
+
+["mistral/voxtral-mini-realtime-latest"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.000000e-4
+
+["mistral/voxtral-mini-transcribe-realtime-2602"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.000000e-4
+
+["mistral/voxtral-mini-transcribe-realtime-latest"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.000000e-4
+
+["mistral/voxtral-small-2507"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 32768
+max_output_tokens = 32768
+cache_read_input_token_cost = 1.000000e-8
+
+["mistral/voxtral-small-latest"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 32768
+max_output_tokens = 32768
+cache_read_input_token_cost = 1.000000e-8
+
+["mistral/zai-glm-5"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.400000e-7
+
+["mistral/zai-glm-5-2"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.400000e-7
+
+["mistral/zai-glm-5-3"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.400000e-7
+
+["mistral/zai-glm-latest"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.400000e-7

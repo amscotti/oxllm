@@ -1,0 +1,15 @@
+# Allow-list: ignore everything by default, then re-add only the build inputs.
+# Keeps secrets (.env), local DBs (*.db), review artifacts, tests/, scripts/,
+# and any future local junk out of the Docker build context / layer cache.
+# `COPY . .` in the Dockerfile therefore can never leak them into a layer.
+*
+!rust-toolchain.toml
+!Cargo.toml
+!Cargo.lock
+!crates
+!crates/**
+!src
+!src/**
+!examples
+examples/*
+!examples/config.docker.yaml

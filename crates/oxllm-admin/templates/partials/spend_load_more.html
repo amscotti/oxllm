@@ -1,0 +1,13 @@
+{% set filters_qs = filters_qs | default("") %}
+{% set sort_by = sort_by | default("timestamp") %}
+{% set sort_order = sort_order | default("desc") %}
+{% if next_cursor %}
+<button type="button"
+        class="ox-btn"
+        hx-get="/spend?offset={{ next_cursor }}&sort_by={{ sort_by }}&sort_order={{ sort_order }}{% if filters_qs %}&{{ filters_qs }}{% endif %}"
+        hx-target="#spend-rows"
+        hx-swap="beforeend"
+        hx-indicator="this">Load more<span class="htmx-indicator"> …</span></button>
+{% else %}
+<small style="color: var(--ox-muted);">End of results</small>
+{% endif %}

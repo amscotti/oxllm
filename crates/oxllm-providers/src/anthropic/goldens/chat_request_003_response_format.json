@@ -1,0 +1,49 @@
+{
+  "input": {
+    "model": "claude-3-5-sonnet",
+    "messages": [
+      {"role": "system", "content": "Always respond as JSON."},
+      {"role": "user", "content": "Give me a user object"}
+    ],
+    "max_tokens": 256,
+    "temperature": 0,
+    "response_format": {
+      "type": "json_object",
+      "json_schema": {
+        "name": "user_object",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"}
+          },
+          "required": ["name"]
+        }
+      }
+    }
+  },
+  "expected_request": {
+    "model": "claude-3-5-sonnet",
+    "system": "Always respond as JSON.",
+    "messages": [
+      {"role": "user", "content": "Give me a user object"}
+    ],
+    "max_tokens": 256,
+    "temperature": 0,
+    "tools": [
+      {
+        "name": "json_tool_call",
+        "description": "Call this tool with the JSON object you want to return.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"}
+          },
+          "required": ["name"]
+        }
+      }
+    ],
+    "tool_choice": {"type": "tool", "name": "json_tool_call"}
+  }
+}

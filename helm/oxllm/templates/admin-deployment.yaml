@@ -1,0 +1,103 @@
+{{- if .Values.admin.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-admin
+  labels:
+    app.kubernetes.io/name: oxllm-admin
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oxllm-admin
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      annotations:
+        checksum/env: {{ include (print $.Template.BasePath "/env-secret.yaml") . | sha256sum }}
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        oxllm/rollout-revision: {{ .Values.rolloutRevision | quote }}
+      labels:
+        app.kubernetes.io/name: oxllm-admin
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if or .Values.serviceAccount.name .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Values.serviceAccount.name | default .Release.Name }}
+      {{- end }}
+      containers:
+        - name: admin
+          image: "{{ .Values.admin.image }}:{{ .Values.admin.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: OXLLM_PROXY_URL
+              value: "http://{{ .Release.Name }}:{{ .Values.service.port }}"
+            {{- if or (hasKey .Values.env "OXLLM_MASTER_KEY") (hasKey .Values.envSecretRefs "OXLLM_MASTER_KEY") }}
+            - name: OXLLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- with .Values.envSecretRefs.OXLLM_MASTER_KEY }}
+                  name: {{ .name }}
+                  key: {{ .key }}
+                  {{- else }}
+                  name: {{ .Release.Name }}-env
+                  key: OXLLM_MASTER_KEY
+                  {{- end }}
+            {{- end }}
+            - name: ADMIN_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- with .Values.admin.sessionSecretRef }}
+                  name: {{ required "admin.sessionSecretRef.name is required" .name }}
+                  key: {{ required "admin.sessionSecretRef.key is required" .key }}
+                  {{- else }}
+                  name: {{ .Release.Name }}-secrets
+                  key: admin-session-secret
+                  {{- end }}
+            - name: ADMIN_UI_PASSWORD
+              valueFrom:
+                {{- if .Values.admin.passwordSecret }}
+                secretKeyRef:
+                  name: {{ .Values.admin.passwordSecret }}
+                  key: password
+                {{- else }}
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: admin-ui-password
+                {{- end }}
+            - name: ADMIN_COOKIE_SECURE
+              value: {{ .Values.admin.cookieSecure | quote }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.admin.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,51 @@
+{
+  "input": {
+    "model": "claude-3-5-sonnet",
+    "messages": [
+      {"role": "user", "content": "search and email"},
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {"id": "call_1", "type": "function", "function": {"name": "my tool!@#", "arguments": "{}"}}
+        ]
+      }
+    ],
+    "max_tokens": 100,
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "my tool!@#",
+          "parameters": {"type": "object"}
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "my.tool!@#",
+          "parameters": {"type": "object"}
+        }
+      }
+    ],
+    "tool_choice": {"type": "function", "function": {"name": "my tool!@#"}}
+  },
+  "expected_request": {
+    "model": "claude-3-5-sonnet",
+    "messages": [
+      {"role": "user", "content": "search and email"},
+      {
+        "role": "assistant",
+        "content": [
+          {"type": "tool_use", "id": "call_1", "name": "my_tool___", "input": {}}
+        ]
+      }
+    ],
+    "max_tokens": 100,
+    "tools": [
+      {"name": "my_tool___", "input_schema": {"type": "object"}},
+      {"name": "my_tool____2", "input_schema": {"type": "object"}}
+    ],
+    "tool_choice": {"type": "tool", "name": "my_tool___"}
+  }
+}

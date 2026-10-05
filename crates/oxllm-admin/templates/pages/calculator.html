@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Cost calculator — oxllm Admin{% endblock %}
+{% block page_title %}Cost calculator{% endblock %}
+{% block nav_calculator %}active{% endblock %}
+{% block content %}
+{% from "partials/list_status.html" import list_notice %}
+<p class="ox-page-lead">Price a model and token counts without hitting a provider. Uses oxllm’s embedded price table.</p>
+{{ list_notice("models", models, models_truncated, models_unavailable) }}
+<div class="ox-card">
+  <div class="ox-card-header"><h3>Estimate</h3></div>
+  <div class="ox-card-body">
+    <form hx-post="/calculator/run"
+          hx-target="#calc-result"
+          hx-swap="innerHTML"
+          hx-indicator="#calc-spinner"
+          hx-disabled-elt="find button[type='submit']">
+      <div class="ox-form-grid">
+        <div class="ox-input">
+          <label for="calc_model">Model</label>
+          <input id="calc_model" type="text" name="model" list="model-list"
+                 value="{{ form_model | default("gpt-4o") }}" required placeholder="gpt-4o">
+          <datalist id="model-list">
+            {% for m in models | default([]) %}
+            <option value="{{ m.id | default(m.model_name | default("")) }}"></option>
+            {% endfor %}
+          </datalist>
+        </div>
+        <div class="ox-input">
+          <label for="calc_prompt">Prompt tokens</label>
+          <input id="calc_prompt" type="number" min="0" name="prompt_tokens"
+                 value="{{ form_prompt | default("1000") }}" required>
+        </div>
+        <div class="ox-input">
+          <label for="calc_completion">Completion tokens</label>
+          <input id="calc_completion" type="number" min="0" name="completion_tokens"
+                 value="{{ form_completion | default("500") }}" required>
+        </div>
+      </div>
+      <div class="ox-form-actions">
+        <button type="submit" class="ox-btn ox-btn-primary">Calculate</button>
+        <span id="calc-spinner" class="htmx-indicator ox-skeleton-inline">Calculating…</span>
+      </div>
+    </form>
+    <div id="calc-result" style="margin-top: 1.25rem;">
+      {% include "partials/calculator_result.html" %}
+    </div>
+  </div>
+</div>
+{% endblock %}

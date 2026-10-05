@@ -1,0 +1,117 @@
+# Pricing for provider `sambanova`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["sambanova/DeepSeek-R1"]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 7.000000e-6
+max_input_tokens = 32768
+max_output_tokens = 32768
+
+["sambanova/DeepSeek-R1-Distill-Llama-70B"]
+input_cost_per_token = 7.000000e-7
+output_cost_per_token = 1.400000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["sambanova/DeepSeek-V3-0324"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 4.500000e-6
+max_input_tokens = 32768
+max_output_tokens = 32768
+
+["sambanova/DeepSeek-V3.1"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 4.500000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["sambanova/DeepSeek-V3.2"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 4.500000e-6
+max_input_tokens = 32768
+max_output_tokens = 32768
+
+["sambanova/Llama-4-Maverick-17B-128E-Instruct"]
+input_cost_per_token = 6.300000e-7
+output_cost_per_token = 1.800000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["sambanova/Llama-4-Scout-17B-16E-Instruct"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 7.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["sambanova/Meta-Llama-3.1-405B-Instruct"]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 16384
+max_output_tokens = 16384
+
+["sambanova/Meta-Llama-3.1-8B-Instruct"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 16384
+max_output_tokens = 16384
+
+["sambanova/Meta-Llama-3.2-1B-Instruct"]
+input_cost_per_token = 4.000000e-8
+output_cost_per_token = 8.000000e-8
+max_input_tokens = 16384
+max_output_tokens = 16384
+
+["sambanova/Meta-Llama-3.2-3B-Instruct"]
+input_cost_per_token = 8.000000e-8
+output_cost_per_token = 1.600000e-7
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+["sambanova/Meta-Llama-3.3-70B-Instruct"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["sambanova/Meta-Llama-Guard-3-8B"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 16384
+max_output_tokens = 16384
+
+["sambanova/MiniMax-M2.7"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.400000e-6
+max_input_tokens = 196608
+max_output_tokens = 131072
+
+["sambanova/QwQ-32B"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.000000e-6
+max_input_tokens = 16384
+max_output_tokens = 16384
+
+["sambanova/Qwen2-Audio-7B-Instruct"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 0.0001
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+["sambanova/Qwen3-32B"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 8.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["sambanova/gemma-4-31B-it"]
+input_cost_per_token = 3.800000e-7
+output_cost_per_token = 1.150000e-6
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["sambanova/gpt-oss-120b"]
+input_cost_per_token = 2.200000e-7
+output_cost_per_token = 5.900000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072

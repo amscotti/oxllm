@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Projects — oxllm Admin{% endblock %}
+{% block page_title %}Projects{% endblock %}
+{% block nav_projects %}active{% endblock %}
+{% block content %}
+<div x-data="{ showForm: false }">
+  <div class="ox-page-toolbar">
+    <p class="ox-page-lead" style="margin: 0;">Sub-groupings within a team or org. Project budgets cap spend for a specific project or use-case.</p>
+    <button type="button" class="ox-btn ox-btn-primary" @click="showForm = !showForm" x-text="showForm ? 'Cancel' : '+ Create Project'">+ Create Project</button>
+  </div>
+  <div class="ox-card" x-show="showForm" x-cloak x-transition style="display: none;">
+    <div class="ox-card-header"><h3>New Project</h3></div>
+    <div class="ox-card-body">
+      {% include "partials/project_form.html" %}
+    </div>
+  </div>
+  {% include "partials/projects_table.html" %}
+</div>
+{% endblock %}

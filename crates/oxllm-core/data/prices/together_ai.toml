@@ -1,0 +1,515 @@
+# Pricing for provider `together_ai`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["together-ai-21.1b-41b"]
+input_cost_per_token = 8.000000e-7
+output_cost_per_token = 8.000000e-7
+
+["together-ai-4.1b-8b"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+
+["together-ai-41.1b-80b"]
+input_cost_per_token = 9.000000e-7
+output_cost_per_token = 9.000000e-7
+
+["together-ai-8.1b-21b"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 3.000000e-7
+
+["together-ai-81.1b-110b"]
+input_cost_per_token = 1.800000e-6
+output_cost_per_token = 1.800000e-6
+
+[together-ai-embedding-151m-to-350m]
+input_cost_per_token = 1.600000e-8
+output_cost_per_token = 0.0
+
+[together-ai-embedding-up-to-150m]
+input_cost_per_token = 8.000000e-9
+output_cost_per_token = 0.0
+
+[together-ai-up-to-4b]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+
+["together_ai/BAAI/bge-base-en-v1.5"]
+input_cost_per_token = 8.000000e-9
+output_cost_per_token = 0.0
+max_input_tokens = 512
+
+["together_ai/Qwen/Qwen3-235B-A22B-Instruct-2507-tput"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 262000
+
+["together_ai/Qwen/Qwen3-235B-A22B-Thinking-2507"]
+input_cost_per_token = 6.500000e-7
+output_cost_per_token = 3.000000e-6
+max_input_tokens = 256000
+
+["together_ai/Qwen/Qwen3-235B-A22B-fp8-tput"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 40000
+
+["together_ai/Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 262144
+
+["together_ai/Qwen/Qwen3-Next-80B-A3B-Instruct"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 262144
+
+["together_ai/Qwen/Qwen3-Next-80B-A3B-Thinking"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 262144
+
+["together_ai/Qwen/Qwen3.5-397B-A17B"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 3.600000e-6
+max_input_tokens = 262144
+cache_read_input_token_cost = 3.500000e-7
+
+["together_ai/baai/bge-base-en-v1.5"]
+input_cost_per_token = 8.000000e-9
+output_cost_per_token = 0.0
+max_input_tokens = 512
+
+["together_ai/deepseek-ai/DeepSeek-R1"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 7.000000e-6
+max_input_tokens = 128000
+max_output_tokens = 20480
+
+["together_ai/deepseek-ai/DeepSeek-R1-0528-tput"]
+input_cost_per_token = 5.500000e-7
+output_cost_per_token = 2.190000e-6
+max_input_tokens = 128000
+
+["together_ai/deepseek-ai/DeepSeek-V3"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 1.250000e-6
+max_input_tokens = 65536
+max_output_tokens = 8192
+
+["together_ai/deepseek-ai/DeepSeek-V3.1"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 1.700000e-6
+max_input_tokens = 131072
+max_output_tokens = 16384
+
+["together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo"]
+input_cost_per_token = 1.040000e-6
+output_cost_per_token = 1.040000e-6
+max_input_tokens = 131072
+
+["together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+
+["together_ai/meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"]
+input_cost_per_token = 2.700000e-7
+output_cost_per_token = 8.500000e-7
+
+["together_ai/meta-llama/Llama-4-Scout-17B-16E-Instruct"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 5.900000e-7
+max_input_tokens = 1048576
+
+["together_ai/meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo"]
+input_cost_per_token = 3.500000e-6
+output_cost_per_token = 3.500000e-6
+
+["together_ai/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"]
+input_cost_per_token = 8.800000e-7
+output_cost_per_token = 8.800000e-7
+max_input_tokens = 131072
+
+["together_ai/meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 1.800000e-7
+max_input_tokens = 131072
+
+["together_ai/mistralai/Mixtral-8x7B-Instruct-v0.1"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 32768
+
+["together_ai/moonshotai/Kimi-K2-Instruct"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 3.000000e-6
+
+["together_ai/moonshotai/Kimi-K2-Instruct-0905"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 3.000000e-6
+max_input_tokens = 262144
+
+["together_ai/moonshotai/Kimi-K2.5"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 2.800000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["together_ai/openai/gpt-oss-120b"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["together_ai/openai/gpt-oss-20b"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 131072
+
+["together_ai/zai-org/GLM-4.5-Air-FP8"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 1.100000e-6
+max_input_tokens = 131072
+
+["together_ai/zai-org/GLM-4.6"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.200000e-6
+max_input_tokens = 202752
+max_output_tokens = 200000
+
+["together_ai/zai-org/GLM-4.7"]
+input_cost_per_token = 4.500000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 202752
+max_output_tokens = 200000
+
+["together_ai/MiniMaxAI/MiniMax-M2.7"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 196608
+cache_read_input_token_cost = 6.000000e-8
+
+["together_ai/MiniMaxAI/MiniMax-M3"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 524288
+cache_read_input_token_cost = 6.000000e-8
+
+["together_ai/NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 32768
+
+["together_ai/Prism-ML/Ternary-Bonsai-27B"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+max_input_tokens = 262144
+
+["together_ai/Qwen/QwQ-32B"]
+input_cost_per_token = 1.200000e-6
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 131072
+
+["together_ai/Qwen/Qwen2-1.5B-Instruct"]
+input_cost_per_token = 2.000000e-8
+output_cost_per_token = 2.000000e-8
+max_input_tokens = 32768
+
+["together_ai/Qwen/Qwen2-72B-Instruct"]
+input_cost_per_token = 9.000000e-7
+output_cost_per_token = 9.000000e-7
+max_input_tokens = 32768
+
+["together_ai/Qwen/Qwen2-VL-72B-Instruct"]
+input_cost_per_token = 1.200000e-6
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 32768
+
+["together_ai/Qwen/Qwen2.5-14B-Instruct"]
+input_cost_per_token = 8.000000e-7
+output_cost_per_token = 8.000000e-7
+max_input_tokens = 32768
+
+["together_ai/Qwen/Qwen2.5-72B-Instruct"]
+input_cost_per_token = 1.200000e-6
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 32768
+
+["together_ai/Qwen/Qwen2.5-72B-Instruct-Turbo"]
+input_cost_per_token = 1.200000e-6
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 131072
+
+["together_ai/Qwen/Qwen2.5-7B-Instruct-Turbo"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 32768
+
+["together_ai/Qwen/Qwen2.5-Coder-32B-Instruct"]
+input_cost_per_token = 8.000000e-7
+output_cost_per_token = 8.000000e-7
+max_input_tokens = 16384
+
+["together_ai/Qwen/Qwen2.5-VL-72B-Instruct"]
+input_cost_per_token = 1.950000e-6
+output_cost_per_token = 8.000000e-6
+max_input_tokens = 32768
+
+["together_ai/Qwen/Qwen3-Coder-Next-FP8"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 262144
+
+["together_ai/Qwen/Qwen3-VL-32B-Instruct"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 262144
+
+["together_ai/Qwen/Qwen3-VL-8B-Instruct"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 6.800000e-7
+max_input_tokens = 262144
+
+["together_ai/Qwen/Qwen3.5-9B"]
+input_cost_per_token = 1.700000e-7
+output_cost_per_token = 2.500000e-7
+max_input_tokens = 262144
+
+["together_ai/Qwen/Qwen3.6-Plus"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 3.000000e-6
+max_input_tokens = 1000000
+
+["together_ai/Qwen/Qwen3.7-Max"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 4.500000e-6
+max_input_tokens = 1000000
+cache_read_input_token_cost = 3.000000e-7
+
+["together_ai/Qwen/Qwen3.7-Plus"]
+input_cost_per_token = 3.200000e-7
+output_cost_per_token = 1.280000e-6
+max_input_tokens = 1000000
+
+["together_ai/Qwen/Qwen3.8-2.4T-A95B"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 1010000
+cache_read_input_token_cost = 2.500000e-7
+
+["together_ai/Qwen/Qwen3.8-Flash"]
+input_cost_per_token = 9.000000e-8
+output_cost_per_token = 2.820000e-7
+max_input_tokens = 1000000
+
+["together_ai/arcee-ai/trinity-mini"]
+input_cost_per_token = 4.500000e-8
+output_cost_per_token = 1.500000e-7
+max_input_tokens = 128000
+
+["together_ai/arize-ai/qwen-2-1.5b-instruct"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 32768
+
+["together_ai/deepseek-ai/DeepSeek-R1-0528"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 7.000000e-6
+max_input_tokens = 163840
+
+["together_ai/deepseek-ai/DeepSeek-R1-Distill-Llama-70B"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 131072
+
+["together_ai/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 1.800000e-7
+max_input_tokens = 131072
+
+["together_ai/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"]
+input_cost_per_token = 1.600000e-6
+output_cost_per_token = 1.600000e-6
+max_input_tokens = 131072
+
+["together_ai/deepseek-ai/DeepSeek-V4-Flash-0731"]
+input_cost_per_token = 1.400000e-7
+output_cost_per_token = 2.800000e-7
+max_input_tokens = 1048576
+cache_read_input_token_cost = 3.000000e-8
+
+["together_ai/deepseek-ai/DeepSeek-V4-Pro-0813"]
+input_cost_per_token = 1.320000e-6
+output_cost_per_token = 3.960000e-6
+max_input_tokens = 1048576
+cache_read_input_token_cost = 1.300000e-7
+
+["together_ai/deepseek-ai/DeepSeek-V4.1-Flash"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+cache_read_input_token_cost = 6.000000e-9
+
+["together_ai/deepseek-ai/deepseek-coder-33b-instruct"]
+input_cost_per_token = 8.000000e-7
+output_cost_per_token = 8.000000e-7
+max_input_tokens = 16384
+
+["together_ai/google/gemma-2-27b-it"]
+input_cost_per_token = 8.000000e-7
+output_cost_per_token = 8.000000e-7
+max_input_tokens = 8192
+
+["together_ai/google/gemma-4-31B-it"]
+input_cost_per_token = 3.900000e-7
+output_cost_per_token = 9.700000e-7
+max_input_tokens = 262144
+
+["together_ai/meta-llama/Llama-3-8b-chat-hf"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 8192
+
+["together_ai/meta-llama/Llama-3.1-405B-Instruct"]
+input_cost_per_token = 3.500000e-6
+output_cost_per_token = 3.500000e-6
+max_input_tokens = 4096
+
+["together_ai/meta-llama/Llama-3.2-1B-Instruct"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 6.000000e-8
+max_input_tokens = 131072
+
+["together_ai/meta-llama/Llama-3.2-3B-Instruct"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 6.000000e-8
+max_input_tokens = 131072
+
+["together_ai/meta-llama/Meta-Llama-3-70B-Instruct-Turbo"]
+input_cost_per_token = 8.800000e-7
+output_cost_per_token = 8.800000e-7
+max_input_tokens = 8192
+
+["together_ai/meta-llama/Meta-Llama-3-8B-Instruct"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 8192
+
+["together_ai/meta-models/Muse-Glimmer-30B"]
+input_cost_per_token = 3.500000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 131072
+cache_read_input_token_cost = 4.000000e-8
+
+["together_ai/mistralai/Ministral-3-14B-Instruct-2512"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 262144
+
+["together_ai/mistralai/Mistral-7B-Instruct-v0.1"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 32768
+
+["together_ai/mistralai/Mistral-7B-Instruct-v0.3"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 32768
+
+["together_ai/mistralai/Mistral-Small-24B-Instruct-2501"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 32768
+
+["together_ai/moonshotai/Kimi-K2.5-fp4"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 2.800000e-6
+max_input_tokens = 262144
+
+["together_ai/moonshotai/Kimi-K2.6"]
+input_cost_per_token = 1.200000e-6
+output_cost_per_token = 4.500000e-6
+max_input_tokens = 262144
+cache_read_input_token_cost = 2.000000e-7
+
+["together_ai/moonshotai/Kimi-K2.7-Code"]
+input_cost_per_token = 9.500000e-7
+output_cost_per_token = 4.000000e-6
+max_input_tokens = 262144
+cache_read_input_token_cost = 1.900000e-7
+
+["together_ai/moonshotai/Kimi-K3"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 1048576
+cache_read_input_token_cost = 3.000000e-7
+
+["together_ai/nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"]
+input_cost_per_token = 8.800000e-7
+output_cost_per_token = 8.800000e-7
+max_input_tokens = 32768
+
+["together_ai/nvidia/NVIDIA-Nemotron-Nano-9B-v2"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 2.500000e-7
+max_input_tokens = 131072
+
+["together_ai/nvidia/nemotron-3-ultra-550b-a55b"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 3.600000e-6
+max_input_tokens = 512288
+cache_read_input_token_cost = 2.000000e-7
+
+["together_ai/thinkingmachines/Inkling"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 4.050000e-6
+max_input_tokens = 524288
+cache_read_input_token_cost = 1.700000e-7
+
+["together_ai/together/Tev1-4B-experimental"]
+input_cost_per_token = 4.200000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32768
+cache_read_input_token_cost = 4.200000e-8
+
+["together_ai/zai-org/GLM-5"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 3.200000e-6
+max_input_tokens = 202752
+
+["together_ai/zai-org/GLM-5.1"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 202752
+cache_read_input_token_cost = 2.600000e-7
+
+["together_ai/zai-org/GLM-5.2"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048575
+max_output_tokens = 128000
+cache_read_input_token_cost = 2.600000e-7
+
+["together_ai/zai-org/GLM-5.3"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048575
+max_output_tokens = 128000
+cache_read_input_token_cost = 2.600000e-7
+
+["together_ai/zai-org/GLM-5.3-Flash"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1048575
+max_output_tokens = 128000
+cache_read_input_token_cost = 3.000000e-8
+
+["together_ai/Salesforce/Llama-Rank-V1"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 8192
+
+["together_ai/meta-llama/Meta-Llama-3.1-8B"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 16384

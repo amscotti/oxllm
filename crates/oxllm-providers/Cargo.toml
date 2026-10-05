@@ -1,0 +1,59 @@
+[package]
+name = "oxllm-providers"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Provider transform implementations for oxllm"
+
+[dependencies]
+oxllm-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+percent-encoding.workspace = true
+uuid.workspace = true
+
+[features]
+default = ["openai", "anthropic", "gemini", "ollama", "groq", "together_ai", "openrouter", "xai", "mistral", "cohere", "azure", "bedrock", "vertex_ai", "databricks", "perplexity", "sambanova", "cloudflare", "deepseek", "cerebras", "ai21", "fireworks_ai", "deepinfra", "nvidia_nim", "voyage", "jina_ai", "watsonx", "huggingface", "deepgram", "elevenlabs", "dashscope", "bedrock_mantle", "replicate", "meta", "baseten"]
+openai_compat = []
+openai = ["openai_compat"]
+anthropic = []
+gemini = ["openai_compat"]
+ollama = ["openai_compat"]
+groq = ["openai_compat"]
+together_ai = ["openai_compat"]
+openrouter = ["openai_compat"]
+xai = ["openai_compat"]
+mistral = ["openai_compat"]
+cohere = []
+azure = ["openai_compat"]
+bedrock = []
+vertex_ai = ["anthropic", "openai_compat"]
+databricks = ["openai_compat"]
+perplexity = ["openai_compat"]
+sambanova = ["openai_compat"]
+cloudflare = ["openai_compat"]
+deepseek = ["openai_compat"]
+cerebras = ["openai_compat"]
+ai21 = ["openai_compat"]
+fireworks_ai = ["openai_compat"]
+deepinfra = ["openai_compat"]
+nvidia_nim = ["openai_compat"]
+voyage = []
+jina_ai = []
+watsonx = ["openai_compat"]
+huggingface = ["openai_compat"]
+deepgram = []
+elevenlabs = []
+dashscope = ["openai_compat"]
+bedrock_mantle = ["openai_compat"]
+replicate = ["openai_compat"]
+meta = ["openai_compat"]
+baseten = ["openai_compat"]
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "anthropic_bench"
+harness = false

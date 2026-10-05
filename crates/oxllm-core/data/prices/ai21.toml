@@ -1,0 +1,75 @@
+# Pricing for provider `ai21`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+[j2-light]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 3.000000e-6
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+[j2-mid]
+input_cost_per_token = 1.000000e-5
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+[j2-ultra]
+input_cost_per_token = 1.500000e-5
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["jamba-1.5"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["jamba-1.5-large"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 8.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["jamba-1.5-large@001"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 8.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["jamba-1.5-mini"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["jamba-1.5-mini@001"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["jamba-large-1.6"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 8.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["jamba-large-1.7"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 8.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["jamba-mini-1.6"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000
+
+["jamba-mini-1.7"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 256000
+max_output_tokens = 256000

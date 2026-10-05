@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Models — oxllm Admin{% endblock %}
+{% block page_title %}Models{% endblock %}
+{% block nav_models %}active{% endblock %}
+{% block content %}
+<div x-data="{ showForm: false }">
+  <div class="ox-page-toolbar">
+    <p class="ox-page-lead" style="margin: 0;">Register upstream deployments and inspect provider pricing. New models are immediately routable.</p>
+    <button type="button" class="ox-btn ox-btn-primary" @click="showForm = !showForm" x-text="showForm ? 'Cancel' : '+ Add Model'">+ Add Model</button>
+  </div>
+  <div class="ox-card" x-show="showForm" x-cloak x-transition style="display: none;">
+    <div class="ox-card-header"><h3>New Model</h3></div>
+    <div class="ox-card-body">
+      <form hx-post="/models/create"
+            hx-target="#models-panel"
+            hx-swap="outerHTML"
+            hx-disabled-elt="find button[type='submit']">
+        <div class="ox-form-grid">
+          <div class="ox-input">
+            <label for="model_name">Model Name</label>
+            <input id="model_name" type="text" name="model_name" placeholder="gpt-4o" required autocomplete="off">
+            <small style="color: var(--ox-muted); font-size: .72rem;">The alias clients send in <code>model</code>.</small>
+          </div>
+          <div class="ox-input">
+            <label for="litellm_model">Upstream Model</label>
+            <input id="litellm_model" type="text" name="litellm_model" placeholder="openai/gpt-4o" required autocomplete="off">
+            <small style="color: var(--ox-muted); font-size: .72rem;">Provider/model identifier LiteLLM routes to.</small>
+          </div>
+          <div class="ox-input" x-data="{ showKey: false }">
+            <label for="api_key">API Key <span style="color: var(--ox-muted);">(optional)</span></label>
+            <div style="display: flex; gap: .4rem;">
+              <input id="api_key" :type="showKey ? 'text' : 'password'" name="api_key" placeholder="os.environ/OPENAI_API_KEY" autocomplete="off" style="flex: 1;">
+              <button type="button" class="ox-btn ox-btn-sm" @click="showKey = !showKey" :title="showKey ? 'Hide' : 'Show'" aria-label="Toggle API key visibility" x-text="showKey ? '🙈' : '👁'">👁</button>
+            </div>
+          </div>
+          <div class="ox-input">
+            <label for="api_base">API Base <span style="color: var(--ox-muted);">(optional)</span></label>
+            <input id="api_base" type="text" name="api_base" placeholder="https://api.openai.com/v1" autocomplete="off">
+          </div>
+        </div>
+        <div class="ox-form-actions">
+          <button type="submit" class="ox-btn ox-btn-primary">Add Model</button>
+          <button type="button" class="ox-btn" @click="showForm = false">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% include "partials/models_table.html" %}
+</div>
+{% endblock %}

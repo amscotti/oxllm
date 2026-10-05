@@ -1,0 +1,15 @@
+{{- if gt (int .Values.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: oxllm
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oxllm
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

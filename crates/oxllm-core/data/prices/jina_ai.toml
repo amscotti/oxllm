@@ -1,0 +1,9 @@
+# Pricing for provider `jina_ai`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["jina-reranker-v2-base-multilingual"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 1024
+max_output_tokens = 1024

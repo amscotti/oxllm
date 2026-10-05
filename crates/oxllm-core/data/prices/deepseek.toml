@@ -1,0 +1,125 @@
+# Pricing for provider `deepseek`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+[deepseek-chat]
+input_cost_per_token = 2.800000e-7
+output_cost_per_token = 4.200000e-7
+max_input_tokens = 131072
+max_output_tokens = 8192
+cache_read_input_token_cost = 2.800000e-8
+
+[deepseek-reasoner]
+input_cost_per_token = 2.800000e-7
+output_cost_per_token = 4.200000e-7
+max_input_tokens = 131072
+max_output_tokens = 65536
+cache_read_input_token_cost = 2.800000e-8
+
+["deepseek-v4-flash"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 6.000000e-9
+cache_creation_input_token_cost = 0.0
+
+["deepseek-flash"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 6.000000e-9
+cache_creation_input_token_cost = 0.0
+
+["deepseek-v4-pro"]
+input_cost_per_token = 1.320000e-6
+output_cost_per_token = 3.960000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 4.400000e-8
+cache_creation_input_token_cost = 0.0
+
+["deepseek/deepseek-chat"]
+input_cost_per_token = 2.800000e-7
+output_cost_per_token = 4.200000e-7
+max_input_tokens = 131072
+max_output_tokens = 8192
+cache_read_input_token_cost = 2.800000e-8
+cache_creation_input_token_cost = 0.0
+
+["deepseek/deepseek-coder"]
+input_cost_per_token = 1.400000e-7
+output_cost_per_token = 2.800000e-7
+max_input_tokens = 128000
+max_output_tokens = 4096
+cache_read_input_token_cost = 1.400000e-8
+
+["deepseek/deepseek-r1"]
+input_cost_per_token = 5.500000e-7
+output_cost_per_token = 2.190000e-6
+max_input_tokens = 65536
+max_output_tokens = 8192
+cache_read_input_token_cost = 1.400000e-7
+
+["deepseek/deepseek-reasoner"]
+input_cost_per_token = 2.800000e-7
+output_cost_per_token = 4.200000e-7
+max_input_tokens = 131072
+max_output_tokens = 65536
+cache_read_input_token_cost = 2.800000e-8
+
+["deepseek/deepseek-v3"]
+input_cost_per_token = 2.700000e-7
+output_cost_per_token = 1.100000e-6
+max_input_tokens = 65536
+max_output_tokens = 8192
+cache_read_input_token_cost = 7.000000e-8
+cache_creation_input_token_cost = 0.0
+
+["deepseek/deepseek-v3.2"]
+input_cost_per_token = 2.800000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 163840
+max_output_tokens = 163840
+cache_read_input_token_cost = 2.800000e-8
+
+["deepseek/deepseek-v4-flash"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 6.000000e-9
+cache_creation_input_token_cost = 0.0
+
+["deepseek/deepseek-v4-pro"]
+input_cost_per_token = 1.320000e-6
+output_cost_per_token = 3.960000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 4.400000e-8
+cache_creation_input_token_cost = 0.0
+
+["deepseek-v4-flash-vision-exp"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 6.000000e-9
+cache_creation_input_token_cost = 0.0
+
+["deepseek/deepseek-flash"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 6.000000e-9
+cache_creation_input_token_cost = 0.0
+
+["deepseek/deepseek-v4-flash-vision-exp"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 6.000000e-9
+cache_creation_input_token_cost = 0.0

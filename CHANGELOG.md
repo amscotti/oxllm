@@ -1,0 +1,225 @@
+# Changelog
+
+All notable changes to oxllm are documented here.
+Format: Keep a Changelog, adheres to Semantic Versioning.
+
+## [Unreleased]
+
+### Models and provider compatibility
+
+- Added GPT-6.1 Sol pricing and context limits for OpenAI, Azure, OpenRouter,
+  Bedrock regional aliases, and Bedrock Mantle, plus OpenRouter pro/batch aliases.
+- Added the Baseten chat backend and the accelerated DeepSeek-V4.1-Flash-Fast
+  model's token/cache prices and limits.
+- Corrected Azure, Gemini, Groq, Bedrock, and OpenRouter prices and context limits.
+- Bill service tiers using the provider's served tier, including streaming,
+  cache tokens, long-context prices, budget settlement, and spend records.
+- Added canonical `cost_per_second` deployment pricing. Legacy input/output
+  duration rates are fallbacks for the same elapsed time, which is billed once.
+  Audio duration rates are not treated as request latency.
+- Preserve per-message `output_config` on Claude requests and add its required
+  beta tag on direct, Vertex AI, Bedrock Invoke, and native Messages routes.
+- Route current GPT families on Bedrock through Converse, and select Mantle's
+  model-specific API base for modern models, including wildcard deployments.
+- Strip the internal client-error traceback flag from provider requests.
+
+### Session affinity routing
+
+- **`session_affinity` strategy** (`oxllm-core::router::session_affinity`):
+  sticky deployment selection via a consistent hash of
+  `RequestContext::session_id`. Clients send `x-oxllm-session-id` so multi-turn
+  traffic on a multi-deployment model group stays on one provider (prompt-cache
+  friendly). Falls back to `simple_shuffle` when the header is absent.
+- Integration coverage in `tests/session_affinity_e2e.rs` (chat stickiness,
+  spread across sessions, shuffle fallback, embeddings header plumbing).
+
+### Post-Phase-8 — P0 fixes + benchmarks
+
+- **P0 security fixes**:
+  - Passthrough routes now require auth when `master_key` is set.
+  - SSRF validation: `api_base` checked for private IPs / non-HTTP schemes at
+    config load; `redirect::Policy::none()` on shared client.
+  - Config hot-reload now preserves DB, Redis, spend writer, and HTTP client.
+  - Budget/RPM hooks always registered (per-key limits work without global config).
+  - Master key bypasses all budget/rate-limit checks.
+- **Criterion benchmarks** (stable Rust):
+  - `oxllm-core/benches/router_bench.rs` — deployment picking, wildcard, cooldown.
+  - `oxllm-core/benches/cost_bench.rs` — cost calculation and price lookup.
+  - `oxllm-core/benches/tokens_bench.rs` — tiktoken estimation at various sizes.
+  - `oxllm-providers/benches/anthropic_bench.rs` — request/response/stream transforms.
+  - Run with `cargo bench --workspace`.
+
+### Phase 8 — Hardening + realtime + advanced auth
+
+- **Realtime WebSocket** (`GET /v1/realtime`): transparent bidirectional proxy
+  to a provider's realtime API (OpenAI `wss://api.openai.com/v1/realtime`).
+  Forwards the `model` query param, propagates the bearer token, and tears
+  down the upstream on client disconnect (and vice versa). Backed by
+  `tokio-tungstenite`.
+- **JWT auth** (`oxllm-server::auth::jwt`): an alternative auth method checked
+  after master + virtual keys. Configured via `general_settings.jwt_secret`
+  (+ optional `jwt_algorithm`, `jwt_audience`). Extracts `sub`/`team_id` and
+  optional `budget`/`rpm`/`tpm` claims into an `AuthUser`. Uses the
+  `jsonwebtoken` crate (HS256 default).
+- **Quality router** (`oxllm-core::router::quality`): a new
+  `routing_strategy: quality_router` that picks the deployment with the highest
+  configured score from `oxllm_settings.quality_scores`. Falls back to
+  `simple_shuffle` when no candidates have scores.
+- **OpenTelemetry** (feature `otel`): OTLP/gRPC trace exporter wired into the
+  global `tracing` subscriber when `general_settings.otel_endpoint` is set.
+  The incoming `traceparent` header is forwarded on upstream chat requests.
+- **Security hardening** (`oxllm-server::security`):
+  - Configurable body size limit (`general_settings.max_request_body_size_mb`,
+    default 10).
+  - Request-smuggling guard (rejects requests carrying both `Content-Length`
+    and `Transfer-Encoding` with 400).
+  - Per-IP auth-failure brake (`AuthBrake`): 10 failures / 60s → blocked 300s
+    with a `Retry-After` header.
+  - `RedactionLayer` helpers (`is_secret_key`, `redact_header_value`) for
+    secret-aware logging.
+  - Upstream response sanitization: strips `server` / `x-request-id` headers
+    and truncates error bodies to 500 chars (+ellipsis).
+- **Performance**: shared `reqwest` client now sets `pool_max_idle_per_host(20)`,
+  `pool_idle_timeout(90s)`, `tcp_nodelay`, and `tcp_keepalive(60s)`.
+- **Deployment**: multi-stage distroless `Dockerfile`, `docker-compose.yml`,
+  `.dockerignore`, and a minimal Helm chart (`helm/oxllm/` with Deployment,
+  Service, ConfigMap+Secret).
+- New config fields: `jwt_secret`, `jwt_algorithm`, `jwt_audience`,
+  `max_request_body_size_mb`, `otel_endpoint`, `otel_service_name`,
+  `quality_scores`.
+- New workspace deps: `tokio-tungstenite`, `jsonwebtoken`, `opentelemetry`,
+  `opentelemetry_sdk`, `opentelemetry-otlp`, `tracing-opentelemetry`.
+
+### Phase 3 — More providers + more endpoints
+
+- `oxllm-core`: added `EmbeddingProvider` trait, `Provider::embeddings()`
+  accessor, and `ChatProvider::supported_params()` for `drop_params` handling.
+- `oxllm-core::registry::ProviderRegistry`: a slug → `Arc<dyn Provider>` map
+  with `resolve_for_deployment`. The server now resolves providers
+  dynamically instead of hardcoding OpenAI.
+- `oxllm-providers`: three new providers, all default-enabled and
+  feature-gated:
+  - `anthropic`: full OpenAI ⇄ Anthropic Messages API translation. Extracts
+    system messages into the top-level `system` field, maps tools to
+    `input_schema`, converts `tool_use` content blocks back to OpenAI
+    `tool_calls`, maps `stop_reason` → `finish_reason`, requires
+    `max_tokens` (defaults to 4096), and translates the Anthropic SSE event
+    stream (`message_start`, `content_block_delta`, `message_delta`,
+    `message_stop`) into OpenAI chat.completion.chunk deltas. Auth via
+    `x-api-key` + `anthropic-version: 2023-06-01`.
+  - `gemini`: uses Google's OpenAI-compatible endpoint
+    (`generativelanguage.googleapis.com/v1beta/openai/chat/completions`),
+    near-identity transform with bearer auth.
+  - `ollama`: uses the local OpenAI-compatible server
+    (`localhost:11434/v1/chat/completions`), near-identity transform, no auth.
+- `oxllm-providers::default_registry()`: builds the registry from the
+  enabled Cargo features — adding a provider is one `register` call.
+- `oxllm-providers/src/openai`: now implements `EmbeddingProvider`
+  (near-identity), so `/v1/embeddings` works for OpenAI deployments.
+- `oxllm-server`: new endpoints:
+  - `POST /v1/completions`, `/completions` (alias) — legacy text completions,
+    wraps the prompt into a chat message and forwards to the chat pipeline.
+  - `POST /v1/embeddings`, `/embeddings` (alias) — embeddings via
+    `EmbeddingProvider`.
+- `oxllm-server::handlers::chat`: refactored to use the `ProviderRegistry`
+  instead of hardcoding `OpenAiProvider`. Resolves an `Arc<dyn Provider>`
+  per deployment and threads it through the retry / fallback / streaming
+  pipeline. Streaming handler now owns its provider `Arc` so it survives
+  `tokio::spawn`.
+- `drop_params` handling: when `oxllm_settings.drop_params` is true and a
+  provider publishes `supported_params()`, unsupported top-level request keys
+  are stripped before calling `transform_request`. When false, unsupported
+  keys are logged at `debug` level and passed through unchanged.
+- Golden-file parity tests for Anthropic (request, response, tools) under
+  `crates/oxllm-providers/src/anthropic/goldens/`.
+- 183 tests passing (81 new: 31 Anthropic, 12 Gemini, 12 Ollama, 6 registry,
+  3 chat-handler unit, 3 completions-handler unit, 11 new E2E, 3 OpenAI
+  test updates).
+
+### Phase 2 — Routing
+
+- `oxllm-core::router`: pure routing module with `Router`, `RoutingStrategy`
+  trait, `SimpleShuffle` strategy, `CooldownStore`, and `RequestContext`.
+- Cooldowns: failed deployments (5xx/429/timeout/network) are temporarily
+  excluded from selection for `cooldown_time_secs` (default 60s).
+- Retries: `num_retries` on retryable errors, potentially selecting a different
+  deployment on each retry.
+- Fallbacks: `fallbacks` and `context_window_fallbacks` config keys.
+  Regular fallbacks fire on retryable errors; context-window fallbacks fire on
+  context-length-exceeded errors. Both set the `x-oxllm-fallback-used` response
+  header. Fallbacks only fire before the first byte is streamed; never on 4xx
+  client errors.
+- Wildcard routing: `model_name: "*"` deployments match unmatched
+  models. `openai/*` patterns match any model starting with `openai/`.
+- Client disconnect handling: `tokio::select!` aborts the upstream
+  stream when the client disconnects, freeing provider capacity.
+- `stream_timeout`: max idle time between stream chunks, enforced
+  via `tokio::time::timeout`.
+- `/v1/models` deduplicates model names when multiple deployments share a
+  `model_name`.
+- 101 tests passing (37 new: 23 unit tests in core, 8 integration tests, 6
+  state/config tests).
+
+### Phase 0 — Foundation
+- Cargo workspace with 5 crates: `oxllm-core`, `oxllm-providers`,
+  `oxllm-server`, `oxllm-cache-redis`, `oxllm-db`.
+- Root binary (`oxllm`) with `clap` CLI: `serve`, `validate`, `keygen` stubs.
+- `oxllm-core`: `Endpoint` enum, `Error`/`Result` types, `Provider`/
+  `ChatProvider` traits, `ResolvedCredentials`.
+- `oxllm-providers`: `openai` feature with `OpenAiProvider` (identity transform).
+- DAG layering test (`tests/workspace_layering.rs`) enforcing the workspace
+  dependency graph.
+- CI: fmt, clippy, test, deny, doc build.
+- Tooling: `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `deny.toml`.
+- Docs: `docs/architecture.md`, `docs/adding-a-provider.md`, `README.md`,
+  `examples/config.example.yaml`.
+
+## Fixed
+
+Comprehensive bug-fix batch — all 55 findings from `REVIEW_TODO.md` (review
+batches 1–8) resolved.
+
+### Streaming / budget metering
+- Streaming chat injects `stream_options.include_usage` so budget/TPM/spend
+  accounting applies to streams; realtime reservations roll back on disconnect
+  and partial usage is accounted on client disconnect.
+
+### Providers
+- Anthropic cache-read cost no longer double-subtracted; `-YYYYMMDD` dated
+  model suffixes now resolve pricing. Cohere embed sends a valid `input_type`
+  and `p` instead of `top_p`. OpenRouter mid-stream error chunks detected;
+  Azure API version updated.
+
+### Auth
+- JWT budget/rate-limit/cache buckets keyed off `sub` (token refresh no longer
+  resets limits); X-Forwarded-For trusted right-to-left; admin console refuses
+  non-loopback bind without a password; hot reload enforces require-auth and
+  preserves the auth brake.
+
+### Routing
+- Wildcard deployments are provider-scoped (`openai/*` no longer matches every
+  unmatched model); tag-based routing plumbed end to end; `least_busy`
+  reserves at pick to avoid races; credential failover fixed.
+
+### Config
+- Explicit-null config blocks accepted; `router_settings` precedence corrected;
+  K8s ConfigMap watcher fires real debounced reloads; Postgres uses
+  `DOUBLE PRECISION` and correct column aliases.
+
+### API
+- `/v1/responses` and `/v1/messages` streaming forward tool calls and report
+  real usage; legacy completions schema fixed and completions streaming no
+  longer 501s.
+
+### SSE
+- UTF-8 framer skips hard-invalid bytes instead of stalling; parser is
+  spec-compliant (comments, event/id/retry lines, mixed framing).
+
+### Cache
+- Stream flag included in the cache key (no more malformed cached streams);
+  cache entry shape confusion fixed.
+
+### Misc
+- AuthBrake/counter maps evicted periodically; passthrough paths validated
+  against traversal and response body reads capped; pricing table expanded;
+  tokenizer updated for newer models.

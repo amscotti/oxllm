@@ -1,0 +1,3 @@
+# Vendored static assets (pico.min.css, htmx.min.js, alpine.min.js) for
+# air-gapped production deploys. Dev mode loads these from CDNs. Pin versions in
+# static/VERSIONS when vendoring.

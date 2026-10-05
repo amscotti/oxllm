@@ -1,0 +1,148 @@
+image:
+  # Local image name; set your registry/repository for a remote cluster.
+  # This chart does not imply that an official image has been published.
+  repository: oxllm
+  # Empty defaults to .Chart.AppVersion in the templates, keeping the main and
+  # admin images in sync on release.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Redis is "Required when replicas > 1" for fleet-correct RPM/TPM/budget
+# counters (see docs/architecture.md). Default to a single replica; raise only
+# after configuring the Redis-backed DualCache in `config.oxllm_settings.cache`.
+replicas: 1
+
+port: 4000
+
+# null computes max(shutdown_timeout_secs or 30, request_timeout or 600) + 30.
+# An explicit value must exceed the server's drain budget (leave flush time).
+terminationGracePeriodSeconds: null
+# Bump on rotation of externally managed Secrets to roll both Deployments.
+rolloutRevision: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+serviceAccount:
+  # Create a dedicated ServiceAccount with no automounted API token. The proxy
+  # never calls the Kubernetes API, so it should not receive a usable token.
+  create: true
+  name: ""
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "1000m"
+    memory: "512Mi"
+
+config:
+  model_list:
+    - model_name: gpt-4o
+      oxllm_params:
+        model: openai/gpt-4o
+        api_key: os.environ/OPENAI_API_KEY
+  oxllm_settings:
+    routing_strategy: simple_shuffle
+    num_retries: 3
+  general_settings:
+    master_key: os.environ/OXLLM_MASTER_KEY
+
+persistence:
+  # External Postgres. Wires config.general_settings.database_url AND the
+  # migrate CLI to OXLLM_DATABASE_URL. Each pod runs its own init container;
+  # database migration locks serialize concurrent starts. No PVC is created.
+  enabled: false
+  # false: run migrations externally before rollout, using the same image.
+  migrate: true
+  # Postgres-style connection string (e.g. postgres://user:pass@host/db).
+  # Mutually exclusive with existingSecret; set one or the other when enabled.
+  databaseUrl: ""
+  # Name of an existing Secret holding the connection string under
+  # databaseUrlSecretKey. Do not also set databaseUrl.
+  existingSecret: ""
+  databaseUrlSecretKey: database-url
+
+# All entries become environment variables from a chart-managed Secret.
+# Supply only the variables referenced by your config, e.g. OPENAI_API_KEY and
+# OXLLM_MASTER_KEY for the default config. For secrets managed outside Helm:
+env: {}
+envSecretRefs: {}
+# envSecretRefs:
+#   OXLLM_MASTER_KEY: {name: proxy-credentials, key: master-key}
+#   OPENAI_API_KEY: {name: provider-credentials, key: openai-api-key}
+# Additional Kubernetes envFrom sources (SecretRef or ConfigMapRef).
+envFrom: []
+
+# When true, the proxy refuses to start (and refuses a hot-reload) if the
+# live config has no master_key, jwt_secret, or database_url. Leave on for
+# any non-loopback deploy.
+requireAuth: true
+
+service:
+  type: ClusterIP
+  port: 4000
+
+# Probe `httpGet.port` is the named container port (`http`), not a
+# hardcoded 4000, so overriding `.port` cannot send probes at the
+# wrong socket (restart loop).
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health/readiness
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 5
+
+admin:
+  enabled: false
+  image: oxllm-admin
+  # Empty defaults to .Chart.AppVersion in the templates.
+  tag: ""
+  # Required when admin.enabled is true — populate via --set or values override.
+  sessionSecret: ""        # random string used to sign session cookies
+  uiPassword: ""           # password for the admin UI login
+  passwordSecret: ""       # optional: name of an external Secret with a `password` key overriding uiPassword
+  sessionSecretRef: {}      # optional: {name: admin-credentials, key: session-secret}
+  cookieSecure: true        # false only for local HTTP testing
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+networkPolicy:
+  enabled: false
+  ingress:
+    allowAll: false
+    from: []
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443
+  # Allow UDP/TCP 53 to kube-dns so the proxy can resolve upstream providers.
+  egressDNS: true
+  denyMetadataEndpoint: true

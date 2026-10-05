@@ -1,0 +1,89 @@
+[package]
+name = "oxllm-server"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "The axum HTTP server for the oxllm proxy gateway"
+
+[features]
+default = ["redis", "platform-apis"]
+redis = ["oxllm-cache-redis/redis", "dep:redis"]
+platform-apis = []
+db = ["dep:oxllm-db", "oxllm-db/sqlite", "oxllm-db/postgres", "dep:sqlx"]
+s3-cache = ["dep:oxllm-cache-s3"]
+gcs-cache = ["dep:oxllm-cache-gcs"]
+azure-cache = ["dep:oxllm-cache-azure"]
+otel = [
+	"dep:opentelemetry",
+	"dep:opentelemetry_sdk",
+	"dep:opentelemetry-otlp",
+	"dep:tracing-opentelemetry",
+]
+
+[dependencies]
+oxllm-core.workspace = true
+oxllm-providers.workspace = true
+oxllm-cache-redis = { workspace = true }
+oxllm-cache-s3 = { workspace = true, optional = true }
+oxllm-cache-gcs = { workspace = true, optional = true }
+oxllm-cache-azure = { workspace = true, optional = true }
+oxllm-db = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
+redis = { workspace = true, optional = true }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+rand.workspace = true
+moka.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+hex.workspace = true
+aes-gcm = { version = "0.10", features = ["zeroize"] }
+base64 = "0.22"
+zeroize = "1.9"
+subtle.workspace = true
+async-trait.workspace = true
+aws-sdk-bedrockruntime = { version = "=1.148.0", default-features = false, features = ["rt-tokio"] }
+aws-smithy-runtime-api = { version = "1.19.0", features = ["client", "http-1x"] }
+aws-smithy-types = { version = "1.8.1", features = ["http-body-1-x"] }
+http-body = "1"
+http-body-util = "0.1"
+arc-swap.workspace = true
+notify.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+jiff.workspace = true
+jsonwebtoken.workspace = true
+url.workspace = true
+percent-encoding.workspace = true
+ipnet.workspace = true
+regex.workspace = true
+parking_lot = "0.12"
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { version = "0.33", optional = true }
+tracing-subscriber = { workspace = true }
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+
+[dev-dependencies]
+httpmock.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tokio-stream.workspace = true
+tower.workspace = true
+serial_test.workspace = true
+tempfile.workspace = true
+aws-smithy-eventstream = "0.61.4"
+hyper = { version = "1", features = ["server", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }

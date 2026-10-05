@@ -1,0 +1,56 @@
+{
+  "input": {
+    "id": "msg_thinking_001",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-3-7-sonnet-20250219",
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "The user asked for the capital of France. France is a country in western Europe, and its capital is Paris.",
+        "signature": "sig_abc123"
+      },
+      {"type": "text", "text": "The capital of France is Paris."}
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 25,
+      "output_tokens": 42,
+      "cache_creation_input_tokens": 100
+    }
+  },
+  "expected_response": {
+    "id": "msg_thinking_001",
+    "object": "chat.completion",
+    "model": "claude-3-7-sonnet-20250219",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "The capital of France is Paris.",
+          "reasoning_content": "The user asked for the capital of France. France is a country in western Europe, and its capital is Paris.",
+          "thinking_blocks": [
+            {
+              "type": "thinking",
+              "thinking": "The user asked for the capital of France. France is a country in western Europe, and its capital is Paris.",
+              "signature": "sig_abc123"
+            }
+          ]
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 25,
+      "completion_tokens": 42,
+      "total_tokens": 67,
+      "cache_creation_input_tokens": 100,
+      "prompt_tokens_details": {
+        "text_tokens": 25,
+        "cache_creation_tokens": 100
+      }
+    }
+  }
+}

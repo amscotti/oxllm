@@ -1,0 +1,37 @@
+[package]
+name = "oxllm-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Core types, traits, and pure logic for the oxllm proxy gateway"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+rand_distr.workspace = true
+tiktoken-rs.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion = { version = "0.5", default-features = false }
+tokio = { workspace = true }
+
+[[bench]]
+name = "router_bench"
+harness = false
+
+[[bench]]
+name = "cost_bench"
+harness = false
+
+[[bench]]
+name = "tokens_bench"
+harness = false

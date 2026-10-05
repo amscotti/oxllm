@@ -1,0 +1,49 @@
+# Dual-replica stack for review live validation (not production).
+#   docker compose -f docker-compose.review.yml -p oxllm-review up --build -d
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  oxllm-a:
+    build: .
+    ports:
+      - "4101:4000"
+    environment:
+      OXLLM_MASTER_KEY: ${OXLLM_MASTER_KEY:?set OXLLM_MASTER_KEY}
+      OXLLM_REQUIRE_AUTH: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      XAI_API_KEY: ${XAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      RUST_LOG: info
+    volumes:
+      - ./examples/config.review-live.yaml:/config.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["serve", "--config", "/config.yaml", "--port", "4000"]
+    stop_grace_period: 120s
+
+  oxllm-b:
+    build: .
+    ports:
+      - "4102:4000"
+    environment:
+      OXLLM_MASTER_KEY: ${OXLLM_MASTER_KEY:?set OXLLM_MASTER_KEY}
+      OXLLM_REQUIRE_AUTH: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      XAI_API_KEY: ${XAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      RUST_LOG: info
+    volumes:
+      - ./examples/config.review-live.yaml:/config.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["serve", "--config", "/config.yaml", "--port", "4000"]
+    stop_grace_period: 120s

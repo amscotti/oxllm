@@ -1,0 +1,32 @@
+//! HTTP handlers for oxllm endpoints.
+
+pub mod anthropic_batches;
+pub mod anthropic_common;
+pub mod anthropic_count_tokens;
+pub mod anthropic_files;
+pub mod anthropic_messages_passthrough;
+#[cfg(feature = "platform-apis")]
+pub mod assistants;
+pub mod azure_legacy;
+#[cfg(feature = "platform-apis")]
+pub mod batches;
+pub mod chat;
+pub mod completions;
+pub mod convert;
+pub mod embeddings;
+#[cfg(feature = "platform-apis")]
+pub mod files;
+#[cfg(feature = "platform-apis")]
+pub mod fine_tuning;
+pub mod health;
+#[cfg(feature = "db")]
+pub mod management;
+pub mod messages;
+pub mod models;
+pub mod passthrough;
+pub mod platform_common;
+pub mod responses;
+#[cfg(feature = "platform-apis")]
+pub mod threads;
+#[cfg(feature = "platform-apis")]
+pub mod token_counter;

@@ -1,0 +1,15 @@
+# Pricing for provider `nvidia_nim`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["nvidia_nim/nvidia/llama-3_2-nv-rerankqa-1b-v2"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+
+["nvidia_nim/nvidia/nv-rerankqa-mistral-4b-v3"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+
+["nvidia_nim/ranking/nvidia/llama-3.2-nv-rerankqa-1b-v2"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0

@@ -1,0 +1,78 @@
+# Multi-deploy load-balancing example: one model name ("multi-chat") routed
+# across OpenAI, Anthropic and xAI deployments, plus single-provider aliases,
+# embeddings and a wildcard entry. Secrets via .env (os.environ/…).
+# Consumed by docker-compose.review.yml, which runs two replicas against the
+# shared Redis-backed cache configured below.
+
+model_list:
+  # Multi-deploy chat: OpenAI + Anthropic + xAI under one client model name
+  - model_name: multi-chat
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 90
+      weight: 1
+
+  - model_name: multi-chat
+    oxllm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+      timeout: 90
+      weight: 1
+
+  - model_name: multi-chat
+    oxllm_params:
+      model: xai/grok-4-1-fast-non-reasoning
+      api_key: os.environ/XAI_API_KEY
+      timeout: 90
+      weight: 1
+
+  # Single-provider aliases for targeted checks
+  - model_name: gpt-4o-mini
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+
+  - model_name: claude
+    oxllm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+      timeout: 60
+
+  - model_name: grok
+    oxllm_params:
+      model: xai/grok-4-1-fast-non-reasoning
+      api_key: os.environ/XAI_API_KEY
+      timeout: 60
+
+  # Embeddings (unary path)
+  - model_name: embed
+    oxllm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+
+  # Wildcard for 429-vs-404 coverage of unmatched openai/* shapes
+  - model_name: "*"
+    oxllm_params:
+      model: openai/*
+      api_key: os.environ/OPENAI_API_KEY
+
+oxllm_settings:
+  drop_params: true
+  num_retries: 2
+  request_timeout: 90
+  routing_strategy: simple_shuffle
+  # Shared Redis (the `redis` service in docker-compose.review.yml) so
+  # rate limits, budgets, key revocation and cache invalidation are
+  # coordinated across both replicas instead of per-process memory.
+  cache:
+    type: redis
+    host: redis
+    port: 6379
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY
+  # Redis is on the private Compose network.
+  allow_private_api_base: true

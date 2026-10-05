@@ -1,0 +1,75 @@
+name: Container release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      registry:
+        description: Registry host (or repository variable CONTAINER_REGISTRY)
+        type: string
+      namespace:
+        description: Registry namespace (or repository variable CONTAINER_NAMESPACE)
+        type: string
+      image_tag:
+        description: Image tag (required for manual runs)
+        type: string
+        required: true
+      publish:
+        description: Push validated images to the configured registry
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rust-checks:
+    uses: ./.github/workflows/ci.yml
+
+  deployment-checks:
+    uses: ./.github/workflows/deployment.yml
+
+  images:
+    needs: [rust-checks, deployment-checks]
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ${{ inputs.registry || vars.CONTAINER_REGISTRY }}
+      NAMESPACE: ${{ inputs.namespace || vars.CONTAINER_NAMESPACE }}
+      IMAGE_TAG: ${{ inputs.image_tag || github.ref_name }}
+      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate release destination
+        shell: bash
+        run: |
+          [[ "$REGISTRY" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?(:[0-9]+)?$ ]] || { echo 'Set registry input or CONTAINER_REGISTRY to a registry host'; exit 1; }
+          [[ "$NAMESPACE" =~ ^[a-z0-9]+([._-]+[a-z0-9]+)*(/[a-z0-9]+([._-]+[a-z0-9]+)*)*$ ]] || { echo 'Set namespace input or CONTAINER_NAMESPACE to your registry namespace'; exit 1; }
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then IMAGE_TAG="${IMAGE_TAG#v}"; fi
+          [[ "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || { echo 'Supply a valid image_tag'; exit 1; }
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: Build release images
+        run: |
+          docker build -t "$REGISTRY/$NAMESPACE/oxllm:$IMAGE_TAG" -f Dockerfile .
+          docker build -t "$REGISTRY/$NAMESPACE/oxllm-admin:$IMAGE_TAG" -f Dockerfile.admin .
+      - name: Authenticate to registry
+        if: env.PUBLISH == 'true'
+        env:
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          : "${REGISTRY_USERNAME:?set REGISTRY_USERNAME repository secret}"
+          : "${REGISTRY_PASSWORD:?set REGISTRY_PASSWORD repository secret}"
+          printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY" --username "$REGISTRY_USERNAME" --password-stdin
+      - name: Publish images
+        if: env.PUBLISH == 'true'
+        run: |
+          docker push "$REGISTRY/$NAMESPACE/oxllm:$IMAGE_TAG"
+          docker push "$REGISTRY/$NAMESPACE/oxllm-admin:$IMAGE_TAG"
+      - name: Log out
+        if: always() && env.PUBLISH == 'true'
+        run: docker logout "$REGISTRY"

@@ -1,0 +1,58 @@
+# Single-host stack: oxllm + Redis + persistent SQLite.
+#
+#   cp .env.example .env   # fill secrets
+#   docker compose up --build -d
+#   ./scripts/smoke-docker.sh
+#
+# Optional admin UI (separate file keeps its required secrets out of base parsing):
+#   docker compose -f docker-compose.yml -f docker-compose.admin.yml --profile admin up --build -d
+
+services:
+  redis:
+    image: redis:7-alpine
+    # Responses and enforcement counters share Redis; surface capacity errors
+    # rather than silently evicting live budgets/rate-limit state.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    # No host port mapping: the cache is only for internal compose networking.
+    # Publishing 6379 unauthenticated on all host interfaces would expose
+    # cache/rate-limit data to the network.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  oxllm:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      OXLLM_MASTER_KEY: ${OXLLM_MASTER_KEY:?set OXLLM_MASTER_KEY in .env}
+      OXLLM_REQUIRE_AUTH: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-placeholder-openai}
+      XAI_API_KEY: ${XAI_API_KEY:-xai-placeholder}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-sk-placeholder-anthropic}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///data/oxllm.db?mode=rwc}
+      # To opt into JWT auth, also uncomment jwt_secret in the mounted config.
+      JWT_SECRET: ${JWT_SECRET:-}
+      # Pass through only when set; the binary's encryption key-ring is opt-in.
+      ENCRYPTION_KEY:
+      ENCRYPTION_KEY_PREVIOUS:
+      RUST_LOG: ${RUST_LOG:-info,oxllm=info,oxllm_server=info}
+    volumes:
+      - ${OXLLM_CONFIG_FILE:-./examples/config.docker.yaml}:/config.yaml:ro
+      - oxllm-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Default config drains for max(30, 120)s, then flushes background writers.
+    # Raise this when increasing request_timeout or shutdown_timeout_secs.
+    stop_grace_period: ${OXLLM_STOP_GRACE_PERIOD:-150s}
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  oxllm-data:

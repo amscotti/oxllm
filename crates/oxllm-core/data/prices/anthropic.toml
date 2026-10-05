@@ -1,0 +1,319 @@
+# Pricing for provider `anthropic`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+# prompt_cache_min_tokens sourced from Anthropic docs / LiteLLM price table.
+
+[claude-3-7-sonnet-20250219]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 200000
+max_output_tokens = 64000
+cache_read_input_token_cost = 3.000000e-7
+cache_creation_input_token_cost = 3.750000e-6
+cache_creation_input_token_cost_above_1hr = 6.000000e-6
+prompt_cache_min_tokens = 1024
+
+[claude-3-haiku-20240307]
+input_cost_per_token = 2.500000e-7
+output_cost_per_token = 1.250000e-6
+max_input_tokens = 200000
+max_output_tokens = 4096
+cache_read_input_token_cost = 3.000000e-8
+cache_creation_input_token_cost = 3.000000e-7
+cache_creation_input_token_cost_above_1hr = 6.000000e-6
+prompt_cache_min_tokens = 1024
+
+[claude-3-opus-20240229]
+input_cost_per_token = 1.500000e-5
+output_cost_per_token = 7.500000e-5
+max_input_tokens = 200000
+max_output_tokens = 4096
+cache_read_input_token_cost = 1.500000e-6
+cache_creation_input_token_cost = 1.875000e-5
+cache_creation_input_token_cost_above_1hr = 6.000000e-6
+prompt_cache_min_tokens = 1024
+
+[claude-4-opus-20250514]
+input_cost_per_token = 1.500000e-5
+output_cost_per_token = 7.500000e-5
+max_input_tokens = 200000
+max_output_tokens = 32000
+cache_read_input_token_cost = 1.500000e-6
+cache_creation_input_token_cost = 1.875000e-5
+prompt_cache_min_tokens = 1024
+
+[claude-4-sonnet-20250514]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 64000
+cache_read_input_token_cost = 3.000000e-7
+cache_creation_input_token_cost = 3.750000e-6
+prompt_cache_min_tokens = 1024
+input_cost_per_token_above_200k_tokens = 6.000000e-6
+output_cost_per_token_above_200k_tokens = 2.250000e-5
+cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
+cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
+
+[claude-fable-5]
+input_cost_per_token = 1.000000e-5
+output_cost_per_token = 5.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.000000e-6
+cache_creation_input_token_cost = 1.250000e-5
+cache_creation_input_token_cost_above_1hr = 2.000000e-5
+prompt_cache_min_tokens = 512
+
+[claude-haiku-4-5]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+max_input_tokens = 200000
+max_output_tokens = 64000
+cache_read_input_token_cost = 1.000000e-7
+cache_creation_input_token_cost = 1.250000e-6
+cache_creation_input_token_cost_above_1hr = 2.000000e-6
+prompt_cache_min_tokens = 4096
+
+[claude-haiku-4-5-20251001]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+max_input_tokens = 200000
+max_output_tokens = 64000
+cache_read_input_token_cost = 1.000000e-7
+cache_creation_input_token_cost = 1.250000e-6
+cache_creation_input_token_cost_above_1hr = 2.000000e-6
+prompt_cache_min_tokens = 4096
+
+[claude-opus-4-1]
+input_cost_per_token = 1.500000e-5
+output_cost_per_token = 7.500000e-5
+max_input_tokens = 200000
+max_output_tokens = 32000
+cache_read_input_token_cost = 1.500000e-6
+cache_creation_input_token_cost = 1.875000e-5
+cache_creation_input_token_cost_above_1hr = 3.000000e-5
+prompt_cache_min_tokens = 1024
+
+[claude-opus-4-1-20250805]
+input_cost_per_token = 1.500000e-5
+output_cost_per_token = 7.500000e-5
+max_input_tokens = 200000
+max_output_tokens = 32000
+cache_read_input_token_cost = 1.500000e-6
+cache_creation_input_token_cost = 1.875000e-5
+cache_creation_input_token_cost_above_1hr = 3.000000e-5
+prompt_cache_min_tokens = 1024
+
+[claude-opus-4-20250514]
+input_cost_per_token = 1.500000e-5
+output_cost_per_token = 7.500000e-5
+max_input_tokens = 200000
+max_output_tokens = 32000
+cache_read_input_token_cost = 1.500000e-6
+cache_creation_input_token_cost = 1.875000e-5
+cache_creation_input_token_cost_above_1hr = 3.000000e-5
+prompt_cache_min_tokens = 1024
+
+[claude-opus-4-5]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 2.500000e-5
+max_input_tokens = 200000
+max_output_tokens = 64000
+cache_read_input_token_cost = 5.000000e-7
+cache_creation_input_token_cost = 6.250000e-6
+cache_creation_input_token_cost_above_1hr = 1.000000e-5
+prompt_cache_min_tokens = 4096
+
+[claude-opus-4-5-20251101]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 2.500000e-5
+max_input_tokens = 200000
+max_output_tokens = 64000
+cache_read_input_token_cost = 5.000000e-7
+cache_creation_input_token_cost = 6.250000e-6
+cache_creation_input_token_cost_above_1hr = 1.000000e-5
+prompt_cache_min_tokens = 4096
+
+[claude-opus-4-6]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 2.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 5.000000e-7
+cache_creation_input_token_cost = 6.250000e-6
+cache_creation_input_token_cost_above_1hr = 1.000000e-5
+prompt_cache_min_tokens = 4096
+
+[claude-opus-4-6-20260205]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 2.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 5.000000e-7
+cache_creation_input_token_cost = 6.250000e-6
+cache_creation_input_token_cost_above_1hr = 1.000000e-5
+prompt_cache_min_tokens = 4096
+
+[claude-opus-4-7]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 2.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 5.000000e-7
+cache_creation_input_token_cost = 6.250000e-6
+cache_creation_input_token_cost_above_1hr = 1.000000e-5
+prompt_cache_min_tokens = 2048
+
+[claude-opus-4-7-20260416]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 2.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 5.000000e-7
+cache_creation_input_token_cost = 6.250000e-6
+cache_creation_input_token_cost_above_1hr = 1.000000e-5
+prompt_cache_min_tokens = 2048
+
+[claude-opus-4-8]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 2.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 5.000000e-7
+cache_creation_input_token_cost = 6.250000e-6
+cache_creation_input_token_cost_above_1hr = 1.000000e-5
+prompt_cache_min_tokens = 1024
+
+["claude-opus-5"]
+input_cost_per_token = 5.000000e-6
+output_cost_per_token = 2.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 5.000000e-7
+cache_creation_input_token_cost = 6.250000e-6
+cache_creation_input_token_cost_above_1hr = 1.000000e-5
+prompt_cache_min_tokens = 512
+
+[claude-sonnet-4-20250514]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 64000
+cache_read_input_token_cost = 3.000000e-7
+cache_creation_input_token_cost = 3.750000e-6
+cache_creation_input_token_cost_above_1hr = 6.000000e-6
+prompt_cache_min_tokens = 1024
+input_cost_per_token_above_200k_tokens = 6.000000e-6
+output_cost_per_token_above_200k_tokens = 2.250000e-5
+cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
+cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
+
+["claude-sonnet-4-5"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 64000
+cache_read_input_token_cost = 3.000000e-7
+cache_creation_input_token_cost = 3.750000e-6
+cache_creation_input_token_cost_above_1hr = 6.000000e-6
+prompt_cache_min_tokens = 1024
+cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
+cache_creation_input_token_cost_above_1hr_above_200k_tokens = 1.200000e-5
+input_cost_per_token_above_200k_tokens = 6.000000e-6
+cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
+output_cost_per_token_above_200k_tokens = 2.250000e-5
+
+["claude-sonnet-4-5-20250929"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 64000
+cache_read_input_token_cost = 3.000000e-7
+cache_creation_input_token_cost = 3.750000e-6
+cache_creation_input_token_cost_above_1hr = 6.000000e-6
+prompt_cache_min_tokens = 1024
+cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
+cache_creation_input_token_cost_above_1hr_above_200k_tokens = 1.200000e-5
+input_cost_per_token_above_200k_tokens = 6.000000e-6
+cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
+output_cost_per_token_above_200k_tokens = 2.250000e-5
+
+["claude-sonnet-4-6"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 3.000000e-7
+cache_creation_input_token_cost = 3.750000e-6
+cache_creation_input_token_cost_above_1hr = 6.000000e-6
+prompt_cache_min_tokens = 1024
+
+[claude-sonnet-5]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 2.000000e-7
+cache_creation_input_token_cost = 2.500000e-6
+cache_creation_input_token_cost_above_1hr = 4.000000e-6
+prompt_cache_min_tokens = 1024
+["claude-fable-5-1"]
+input_cost_per_token = 1.000000e-5
+output_cost_per_token = 5.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 2.500000e-7
+cache_creation_input_token_cost = 1.250000e-5
+cache_creation_input_token_cost_above_1hr = 2.000000e-5
+prompt_cache_min_tokens = 512
+
+["claude-mythos-5"]
+input_cost_per_token = 1.000000e-5
+output_cost_per_token = 5.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.000000e-6
+cache_creation_input_token_cost = 1.250000e-5
+cache_creation_input_token_cost_above_1hr = 2.000000e-5
+prompt_cache_min_tokens = 512
+
+["claude-mythos-5-1"]
+input_cost_per_token = 1.000000e-5
+output_cost_per_token = 5.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 2.500000e-7
+cache_creation_input_token_cost = 1.250000e-5
+cache_creation_input_token_cost_above_1hr = 2.000000e-5
+prompt_cache_min_tokens = 512
+
+["claude-mythos-preview"]
+input_cost_per_token = 1.000000e-5
+output_cost_per_token = 5.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.000000e-6
+cache_creation_input_token_cost = 1.250000e-5
+cache_creation_input_token_cost_above_1hr = 2.000000e-5
+prompt_cache_min_tokens = 512
+
+["claude-opus-5-5"]
+input_cost_per_token = 4.000000e-6
+output_cost_per_token = 2.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 2.000000e-7
+cache_creation_input_token_cost = 5.000000e-6
+cache_creation_input_token_cost_above_1hr = 8.000000e-6
+prompt_cache_min_tokens = 512
+
+["claude-sonnet-5-5"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 2.000000e-7
+cache_creation_input_token_cost = 2.500000e-6
+cache_creation_input_token_cost_above_1hr = 4.000000e-6
+prompt_cache_min_tokens = 512

@@ -1,0 +1,21 @@
+# Adapted from LiteLLM router_settings examples — exercises router_settings + public api_base URLs.
+model_list:
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: azure/gpt-4o-mini
+      api_base: https://example.openai.azure.com
+      api_key: sk-azure-test
+      deployment_id: gpt-4o-mini
+  - model_name: fireworks-llama
+    litellm_params:
+      model: fireworks_ai/accounts/fireworks/models/llama-v3p1-70b-instruct
+      api_key: sk-fireworks-test
+
+router_settings:
+  routing_strategy: simple-shuffle
+  cooldown_time: 120
+  num_retries: 2
+
+oxllm_settings:
+  drop_params: false
+  num_retries: 1

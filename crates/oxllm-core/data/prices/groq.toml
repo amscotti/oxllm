@@ -1,0 +1,107 @@
+# Pricing for provider `groq`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["groq/gemma-7b-it"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 8.000000e-8
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["groq/llama-3.1-8b-instant"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 8.000000e-8
+max_input_tokens = 128000
+max_output_tokens = 8192
+
+["groq/llama-3.3-70b-versatile"]
+input_cost_per_token = 5.900000e-7
+output_cost_per_token = 7.900000e-7
+max_input_tokens = 128000
+max_output_tokens = 32768
+
+["groq/meta-llama/llama-4-maverick-17b-128e-instruct"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 8192
+
+["groq/meta-llama/llama-4-scout-17b-16e-instruct"]
+input_cost_per_token = 1.100000e-7
+output_cost_per_token = 3.400000e-7
+max_input_tokens = 131072
+max_output_tokens = 8192
+
+["groq/meta-llama/llama-guard-4-12b"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["groq/moonshotai/kimi-k2-instruct-0905"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 3.000000e-6
+max_input_tokens = 262144
+max_output_tokens = 16384
+cache_read_input_token_cost = 5.000000e-7
+
+["groq/openai/gpt-oss-120b"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 65536
+cache_read_input_token_cost = 7.500000e-8
+
+["groq/openai/gpt-oss-20b"]
+input_cost_per_token = 7.500000e-8
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 65536
+cache_read_input_token_cost = 3.750000e-8
+
+["groq/openai/gpt-oss-safeguard-20b"]
+input_cost_per_token = 7.500000e-8
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 131072
+max_output_tokens = 65536
+cache_read_input_token_cost = 3.700000e-8
+
+["groq/qwen/qwen3-32b"]
+input_cost_per_token = 2.900000e-7
+output_cost_per_token = 5.900000e-7
+max_input_tokens = 131000
+max_output_tokens = 131000
+["groq/llama-guard-3-8b"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 8192
+
+["groq/meta-llama/llama-prompt-guard-2-22m"]
+input_cost_per_token = 3.000000e-8
+output_cost_per_token = 3.000000e-8
+max_input_tokens = 512
+max_output_tokens = 512
+
+["groq/meta-llama/llama-prompt-guard-2-86m"]
+input_cost_per_token = 4.000000e-8
+output_cost_per_token = 4.000000e-8
+max_input_tokens = 512
+max_output_tokens = 512
+
+["groq/qwen/qwen3.8-27b"]
+input_cost_per_token = 8.000000e-7
+output_cost_per_token = 4.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 16384
+
+["groq/whisper-large-v3"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 3.083000e-5
+
+["groq/whisper-large-v3-turbo"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.111000e-5

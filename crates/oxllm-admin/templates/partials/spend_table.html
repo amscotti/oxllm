@@ -1,0 +1,153 @@
+{% from "partials/list_status.html" import list_notice, missing_option %}
+{% if created %}
+<div class="ox-flash ox-flash-success" hx-swap-oob="true" id="flash">
+  ✅ {{ created }}
+</div>
+{% endif %}
+{% set filters = filters | default({}) %}
+{% set filters_qs = filters_qs | default("") %}
+{% set sort_by = sort_by | default("timestamp") %}
+{% set sort_order = sort_order | default("desc") %}
+<div id="spend-panel" class="ox-card">
+  <div class="ox-card-header">
+    <h3>Spend Logs</h3>
+    <div style="display: flex; gap: .4rem; flex-wrap: wrap; align-items: center;">
+      <button type="button"
+              class="ox-btn ox-btn-sm"
+              title="Exports rows for the Start–End range (and other filters) below"
+              onclick="(function(){var f=document.getElementById('spend-filters');if(!f)return;var s=f.querySelector('[name=start_date]');var e=f.querySelector('[name=end_date]');if(!s||!s.value||!e||!e.value){alert('Set Start and End dates before exporting.');return;}var p=new URLSearchParams(new FormData(f));window.location='/spend/export.csv?'+p.toString();})()">
+        ⬇ Export CSV
+      </button>
+      <button type="button"
+              class="ox-btn ox-btn-sm"
+              hx-get="/spend?{{ list_query | default("") }}"
+              hx-target="#spend-panel"
+              hx-swap="outerHTML"
+              hx-indicator="#spend-refresh-indicator">
+        <span id="spend-refresh-indicator" class="htmx-indicator">…</span>
+        ↻ Refresh
+      </button>
+    </div>
+  </div>
+  {{ list_notice("keys", keys, keys_truncated, keys_unavailable) }}
+  {{ list_notice("teams", teams, teams_truncated, teams_unavailable) }}
+  <div class="ox-filter-bar">
+    <form id="spend-filters"
+          hx-get="/spend"
+          hx-target="#spend-panel"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+          style="display: flex; flex-wrap: wrap; gap: .65rem; align-items: flex-end; width: 100%;">
+      <input type="hidden" name="sort_by" value="{{ sort_by }}">
+      <input type="hidden" name="sort_order" value="{{ sort_order }}">
+      <div class="ox-filter-item">
+        <label for="filter_model">Model</label>
+        <input id="filter_model" type="text" name="model" value="{{ filters.model | default("") }}" placeholder="(any)">
+      </div>
+      <div class="ox-filter-item">
+        <label for="filter_key_id">Key</label>
+        <select id="filter_key_id" name="key_id">
+          <option value="">(any)</option>
+          <option value="master" {% if filters.key_id == "master" %}selected{% endif %}>Master key</option>
+          {% if filters.key_id != "master" %}{{ missing_option(filters.key_id, keys, "key_id") }}{% endif %}
+          {% for key in keys | default([]) %}
+          <option value="{{ key.key_id }}" {% if filters.key_id == key.key_id %}selected{% endif %}>
+            {{ key.key_alias | default(key.key_id) }} — {{ key.key_id }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="ox-filter-item">
+        <label for="filter_team_id">Team</label>
+        <select id="filter_team_id" name="team_id">
+          <option value="">(any)</option>
+          {{ missing_option(filters.team_id, teams, "team_id") }}
+          {% for team in teams | default([]) %}
+          <option value="{{ team.team_id }}" {% if filters.team_id == team.team_id %}selected{% endif %}>
+            {{ team.team_name | default(team.team_id) }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="ox-filter-item">
+        <label for="filter_start">Start <span style="color: var(--ox-danger);">*</span></label>
+        <input id="filter_start" type="date" name="start_date" value="{{ filters.start_date | default("") }}" required>
+      </div>
+      <div class="ox-filter-item">
+        <label for="filter_end">End <span style="color: var(--ox-danger);">*</span></label>
+        <input id="filter_end" type="date" name="end_date" value="{{ filters.end_date | default("") }}" required>
+      </div>
+      <div class="ox-filter-item" style="min-width: auto;">
+        <label>Presets</label>
+        <div style="display: flex; gap: .3rem;">
+          <button type="button" class="ox-btn ox-btn-sm ox-preset-btn"
+                  onclick="(function(){var e=document.getElementById('filter_end');var s=document.getElementById('filter_start');var d=new Date();e.value=d.toISOString().slice(0,10);var p=new Date(d);p.setDate(p.getDate()-6);s.value=p.toISOString().slice(0,10);document.getElementById('spend-filters').requestSubmit();})()">7d</button>
+          <button type="button" class="ox-btn ox-btn-sm ox-preset-btn"
+                  onclick="(function(){var e=document.getElementById('filter_end');var s=document.getElementById('filter_start');var d=new Date();e.value=d.toISOString().slice(0,10);var p=new Date(d);p.setDate(p.getDate()-29);s.value=p.toISOString().slice(0,10);document.getElementById('spend-filters').requestSubmit();})()">30d</button>
+        </div>
+      </div>
+      <button type="submit" class="ox-btn ox-btn-primary ox-btn-sm">Filter</button>
+      <a class="ox-btn ox-btn-sm" href="/spend" hx-get="/spend" hx-target="#spend-panel" hx-swap="outerHTML" hx-push-url="true">Clear</a>
+    </form>
+  </div>
+  <div style="padding: .55rem 1.25rem; border-bottom: 1px solid var(--ox-border); font-size: .8rem; color: var(--ox-muted); display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; align-items: center;">
+    {# total_cost/total_requests come from the proxy aggregated over the
+       FULL filter scope (not just the loaded page), so label them as such —
+       an operator reconciling the loaded rows against the strip would
+       otherwise see mismatched numbers. #}
+    <span>Filtered total: <strong style="color: var(--ox-text);">${{ "%.6f"|format(page_total_cost | default(0.0)) }}</strong>
+      · {{ page_total_requests | default(0) }} requests</span>
+    {% if export_start and export_end %}
+    <span>Range <strong style="color: var(--ox-text);">{{ export_start }}</strong> → <strong style="color: var(--ox-text);">{{ export_end }}</strong>
+      (export + filter). Max 366 days.</span>
+    {% endif %}
+  </div>
+  <div style="overflow-x: auto;">
+    <table class="ox-table">
+      <thead>
+        <tr>
+          {% macro sort_th(label, field) %}
+          {% set next_order = "asc" if sort_by == field and sort_order == "desc" else "desc" if sort_by == field and sort_order == "asc" else "desc" %}
+          {% set arrow = "↓" if sort_by == field and sort_order == "desc" else "↑" if sort_by == field and sort_order == "asc" else "" %}
+          <th>
+            <a class="ox-sort-link{% if sort_by == field %} is-active{% endif %}"
+               href="/spend?sort_by={{ field }}&sort_order={{ next_order }}{% if filters_qs %}&{{ filters_qs }}{% endif %}"
+               hx-get="/spend?sort_by={{ field }}&sort_order={{ next_order }}{% if filters_qs %}&{{ filters_qs }}{% endif %}"
+               hx-target="#spend-panel"
+               hx-swap="outerHTML"
+               hx-push-url="true">{{ label }}{% if arrow %} {{ arrow }}{% endif %}</a>
+          </th>
+          {% endmacro %}
+          {{ sort_th("Timestamp", "timestamp") }}
+          {{ sort_th("Model", "model") }}
+          {{ sort_th("Provider", "provider") }}
+          {{ sort_th("Prompt", "prompt_tokens") }}
+          {{ sort_th("Completion", "completion_tokens") }}
+          {{ sort_th("Cost", "cost") }}
+          {{ sort_th("Key", "key_id") }}
+          {{ sort_th("Team", "team_id") }}
+        </tr>
+      </thead>
+      <tbody id="spend-rows">
+        {% if logs %}
+        {% include "partials/spend_rows.html" %}
+        {% else %}
+        <tr><td colspan="8">
+          <div class="ox-empty">
+            <div class="ox-empty-icon">💰</div>
+            No spend records for this filter.
+          </div>
+        </td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  <div style="padding: .85rem 1.25rem; border-top: 1px solid var(--ox-border); display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap;">
+    <div id="spend-load-more-wrapper">
+      {% include "partials/spend_load_more.html" %}
+    </div>
+    <small style="color: var(--ox-muted);">
+      Sort applies to the loaded page. CSV export is limited to the Start–End dates set above.
+    </small>
+  </div>
+</div>

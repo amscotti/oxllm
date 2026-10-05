@@ -1,0 +1,41 @@
+<div class="ox-modal-overlay"
+     id="key-created-modal"
+     x-data="{ open: true }"
+     x-show="open"
+     x-transition.opacity
+     role="dialog" aria-modal="true" aria-labelledby="key-created-title"
+     @keydown.escape.window="open = false; window.location.href = '/keys'">
+  <div class="ox-modal" @click.outside="open = false; window.location.href = '/keys'">
+    <div class="ox-modal-header">
+      <span style="font-size: 1.2rem;">🔑</span>
+      <h3 id="key-created-title" style="margin: 0; font-size: 1.05rem; font-weight: 650;">{% if rotated %}Key Rotated{% else %}Key Created{% endif %}</h3>
+    </div>
+    <div class="ox-modal-body">
+      <div style="background: rgba(253,203,110,.1); border: 1px solid rgba(253,203,110,.25); border-radius: 8px; padding: .65rem .85rem; margin-bottom: 1rem; font-size: .82rem; color: #b8860b;">
+        ⚠️ <strong>Copy this key now — it will not be shown again.</strong>
+      </div>
+      <label style="font-size: .75rem; font-weight: 600; color: var(--ox-muted); text-transform: uppercase; letter-spacing: .04em;">API Key</label>
+      <div style="position: relative; margin-top: .25rem;">
+        <code id="new-key-value"
+              data-key="{{ key }}"
+              style="word-break: break-all; display: block; padding: .75rem; background: var(--ox-bg); border: 1px solid var(--ox-border); border-radius: 8px; font-family: 'SF Mono', monospace; font-size: .82rem; line-height: 1.5;">{{ key }}</code>
+      </div>
+      <div style="margin-top: .65rem; font-size: .8rem; color: var(--ox-muted);">
+        Key ID: <span class="ox-code" id="new-key-id">{{ key_id }}</span>
+      </div>
+    </div>
+    <div class="ox-modal-footer">
+      <button type="button"
+              class="ox-btn ox-btn-primary"
+              id="copy-key-btn"
+              onclick="oxCopyKey(this)">
+        📋 Copy Key
+      </button>
+      <a href="/keys"
+              class="ox-btn"
+              id="key-created-done">
+        Done
+      </a>
+    </div>
+  </div>
+</div>

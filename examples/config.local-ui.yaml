@@ -1,0 +1,40 @@
+# Local stack for proxy + admin UI (SQLite + Redis).
+#   cargo run --features db -- serve --config examples/config.local-ui.yaml --port 4000
+#   cargo run --features admin --bin oxllm-admin -- serve
+
+model_list:
+  - model_name: gpt-4o
+    oxllm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 90
+  - model_name: grok-4.5
+    oxllm_params:
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
+      timeout: 120
+      stream_timeout: 90
+  - model_name: text-embedding-3-small
+    oxllm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+
+oxllm_settings:
+  drop_params: true
+  num_retries: 1
+  request_timeout: 120
+  cache:
+    type: redis
+    host: 127.0.0.1
+    port: 6379
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY
+  database_url: sqlite:oxllm-local.db?mode=rwc
+  # Required: the Redis cache above runs on loopback, which is rejected
+  # unless this is set. Keep it `false` for public-only deployments.
+  allow_private_api_base: true
+  management_cors_origins:
+    - http://127.0.0.1:8080
+    - http://localhost:8080

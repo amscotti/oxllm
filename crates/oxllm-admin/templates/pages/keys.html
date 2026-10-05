@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}API Keys — oxllm Admin{% endblock %}
+{% block page_title %}API Keys{% endblock %}
+{% block nav_keys %}active{% endblock %}
+{% block content %}
+<div x-data="{ showForm: false }">
+  <div class="ox-page-toolbar">
+    <p class="ox-page-lead" style="margin: 0;">Mint virtual keys with budgets and rate limits. The secret is shown once — rotate to issue a new one.</p>
+    <button type="button" class="ox-btn ox-btn-primary" @click="showForm = !showForm" x-text="showForm ? 'Cancel' : '+ Create Key'">+ Create Key</button>
+  </div>
+  <div class="ox-card" x-show="showForm" x-cloak x-transition style="display: none;">
+    <div class="ox-card-header"><h3>New API Key</h3></div>
+    <div class="ox-card-body">
+      {% include "partials/key_form.html" %}
+    </div>
+  </div>
+  {% include "partials/keys_table.html" %}
+</div>
+{% endblock %}

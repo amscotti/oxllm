@@ -1,0 +1,180 @@
+# Pricing for provider `dashscope`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["dashscope/qwen-coder"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 1000000
+max_output_tokens = 16384
+
+["dashscope/qwen-max"]
+input_cost_per_token = 1.600000e-6
+output_cost_per_token = 6.400000e-6
+max_input_tokens = 30720
+max_output_tokens = 8192
+
+["dashscope/qwen-plus"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 129024
+max_output_tokens = 16384
+
+["dashscope/qwen-plus-2025-01-25"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 129024
+max_output_tokens = 8192
+
+["dashscope/qwen-plus-2025-04-28"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 129024
+max_output_tokens = 16384
+output_cost_per_reasoning_token = 4.000000e-6
+
+["dashscope/qwen-plus-2025-07-14"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 129024
+max_output_tokens = 16384
+output_cost_per_reasoning_token = 4.000000e-6
+
+["dashscope/qwen-turbo"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 129024
+max_output_tokens = 16384
+output_cost_per_reasoning_token = 5.000000e-7
+
+["dashscope/qwen-turbo-2024-11-01"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 8192
+
+["dashscope/qwen-turbo-2025-04-28"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 16384
+output_cost_per_reasoning_token = 5.000000e-7
+
+["dashscope/qwen-turbo-latest"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 16384
+output_cost_per_reasoning_token = 5.000000e-7
+
+["dashscope/qwen3-next-80b-a3b-instruct"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 262144
+max_output_tokens = 65536
+
+["dashscope/qwen3-next-80b-a3b-thinking"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 262144
+max_output_tokens = 65536
+
+["dashscope/qwen3-vl-235b-a22b-instruct"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 1.600000e-6
+max_input_tokens = 131072
+max_output_tokens = 32768
+
+["dashscope/qwen3-vl-235b-a22b-thinking"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 4.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 32768
+
+["dashscope/qwen3-vl-32b-instruct"]
+input_cost_per_token = 1.600000e-7
+output_cost_per_token = 6.400000e-7
+max_input_tokens = 131072
+max_output_tokens = 32768
+
+["dashscope/qwen3-vl-32b-thinking"]
+input_cost_per_token = 1.600000e-7
+output_cost_per_token = 2.870000e-6
+max_input_tokens = 131072
+max_output_tokens = 32768
+
+["dashscope/qwq-plus"]
+input_cost_per_token = 8.000000e-7
+output_cost_per_token = 2.400000e-6
+max_input_tokens = 98304
+max_output_tokens = 8192
+
+["dashscope/qwen3.7-max"]
+input_cost_per_token = 2.5000000000e-6
+output_cost_per_token = 7.5000000000e-6
+cache_read_input_token_cost = 5.0000000000e-7
+max_input_tokens = 991808
+max_output_tokens = 65536
+["dashscope/deepseek-v4-flash"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 4.000000e-8
+
+["dashscope/deepseek-v4-flash-0731"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 4.000000e-8
+
+["dashscope/deepseek-v4-pro"]
+input_cost_per_token = 2.400000e-6
+output_cost_per_token = 4.800000e-6
+max_input_tokens = 1000000
+max_output_tokens = 393216
+cache_read_input_token_cost = 2.000000e-7
+
+["dashscope/glm-5.1"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 202745
+max_output_tokens = 131072
+cache_read_input_token_cost = 2.600000e-7
+
+["dashscope/glm-5.2"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 2.800000e-7
+
+["dashscope/kimi-k2.7-code"]
+input_cost_per_token = 9.500000e-7
+output_cost_per_token = 4.000000e-6
+max_input_tokens = 229376
+max_output_tokens = 16384
+cache_read_input_token_cost = 1.900000e-7
+
+["dashscope/qwen3.8-flash"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 4.700000e-7
+max_input_tokens = 991808
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.600000e-8
+cache_creation_input_token_cost = 2.000000e-7
+
+["dashscope/qwen3.8-max"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 991808
+max_output_tokens = 131072
+cache_read_input_token_cost = 2.500000e-7
+
+["dashscope/qwen3.8-omni-flash"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 4.700000e-7
+max_input_tokens = 991808
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.600000e-8

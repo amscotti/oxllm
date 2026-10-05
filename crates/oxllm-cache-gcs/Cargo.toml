@@ -1,0 +1,24 @@
+[package]
+name = "oxllm-cache-gcs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Google Cloud Storage response cache backend for oxllm"
+
+[dependencies]
+oxllm-core.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+reqwest = { workspace = true }
+tokio = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+jsonwebtoken.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+httpmock.workspace = true
+
+[features]
+default = []

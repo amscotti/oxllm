@@ -1,0 +1,20 @@
+# Quickstart: only these three exported variables are needed:
+# OPENAI_API_KEY, ANTHROPIC_API_KEY, OXLLM_MASTER_KEY.
+# Remove a model entry to omit its provider credential. No Redis or DB required.
+model_list:
+  - model_name: chat
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude
+    oxllm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+oxllm_settings:
+  drop_params: true
+  num_retries: 2
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY

@@ -1,0 +1,148 @@
+# Pricing for provider `voyage`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["voyage/rerank-2"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 16000
+max_output_tokens = 16000
+
+["voyage/rerank-2-lite"]
+input_cost_per_token = 2.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 8000
+max_output_tokens = 8000
+
+["voyage/rerank-2.5"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+max_output_tokens = 32000
+
+["voyage/rerank-2.5-lite"]
+input_cost_per_token = 2.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+max_output_tokens = 32000
+
+["voyage/voyage-2"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 4000
+
+["voyage/voyage-3"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-3-large"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-3-lite"]
+input_cost_per_token = 2.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-3.5"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-3.5-lite"]
+input_cost_per_token = 2.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-code-2"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 16000
+
+["voyage/voyage-code-3"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-context-3"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 120000
+
+["voyage/voyage-finance-2"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-large-2"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 16000
+
+["voyage/voyage-law-2"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 16000
+
+["voyage/voyage-lite-01"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 4096
+
+["voyage/voyage-lite-02-instruct"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 4000
+
+["voyage/voyage-multimodal-3"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+["voyage/rerank-3"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+max_output_tokens = 32000
+
+["voyage/rerank-3-lite"]
+input_cost_per_token = 2.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+max_output_tokens = 32000
+
+["voyage/voyage-4"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-4-large"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-4-lite"]
+input_cost_per_token = 2.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-code-4"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-context-4"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 120000
+
+["voyage/voyage-multilingual-2"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 32000
+
+["voyage/voyage-multimodal-3.5"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 32000

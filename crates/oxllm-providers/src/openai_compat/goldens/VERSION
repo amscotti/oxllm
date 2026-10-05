@@ -1,0 +1,13 @@
+Shared canonical golden fixtures for OpenAI-compatible providers.
+
+These two files (chat_request_001.json / chat_response_001.json) capture the
+common wire shape that every OpenAiCompatProvider (and the OpenAI/Azure
+providers) round-trips identically. Individual provider test modules load them
+via include_str!("../openai_compat/goldens/...") and patch the `model` field
+to the provider's expected upstream model id before running the parity
+assertion.
+
+Provider-specific goldens that cannot be expressed by patching a single field
+(e.g. OpenRouter's injected `usage` block is patched in-test; OpenAI's tools
+golden stays at openai/goldens/chat_request_002.json) remain in their own
+modules.

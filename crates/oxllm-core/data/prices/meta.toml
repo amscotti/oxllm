@@ -1,0 +1,65 @@
+# Pricing for provider `meta`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+#
+# Source: Meta Model API. Muse Spark 1.1 launched July 2026 at
+# $1.25/M input, $4.25/M output. Muse Spark 1.2 (Aug 2026) uses the same
+# pricing structure. Both are multimodal reasoning models: reasoning tokens
+# are billed at the full output rate. 1M-token context window.
+
+["muse-spark-1.1"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 4.250000e-6
+output_cost_per_reasoning_token = 4.250000e-6
+cache_read_input_token_cost = 1.500000e-7
+max_input_tokens = 1048576
+max_output_tokens = 131072
+
+["meta/muse-spark-1.1"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 4.250000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.500000e-7
+
+["muse-spark-1.2"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 4.250000e-6
+output_cost_per_reasoning_token = 4.250000e-6
+cache_read_input_token_cost = 1.500000e-7
+max_input_tokens = 1048576
+max_output_tokens = 131072
+
+["meta/muse-spark-1.2"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 4.250000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.500000e-7
+
+["meta/muse-spark-1.2-contributor"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 2.000000e-9
+
+["meta/muse-spark-1.3"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 4.250000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 1.500000e-7
+
+["meta/muse-spark-1.3-contributor"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 2.000000e-9
+
+["meta/muse-voice-transcribe-1.0"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 5.000000e-5

@@ -1,0 +1,41 @@
+{{- $settings := .Values.config.oxllm_settings | default dict -}}
+{{- $cache := $settings.cache | default dict -}}
+{{- if and (gt (int .Values.replicas) 1) (ne ($cache.type | default "memory") "redis") -}}
+{{- fail "replicas > 1 requires config.oxllm_settings.cache.type=redis for fleet-wide limits and budgets; configure a shared Redis or use replicas=1" -}}
+{{- end -}}
+{{- if .Values.persistence.enabled -}}
+{{- if not (or .Values.persistence.databaseUrl .Values.persistence.existingSecret) -}}
+{{- fail "persistence.databaseUrl or persistence.existingSecret must be set when persistence.enabled=true" -}}
+{{- end -}}
+{{- if and .Values.persistence.databaseUrl .Values.persistence.existingSecret -}}
+{{- fail "set only one of persistence.databaseUrl and persistence.existingSecret" -}}
+{{- end -}}
+{{- if and .Values.persistence.databaseUrl (not (regexMatch "^postgres(ql)?://" .Values.persistence.databaseUrl)) -}}
+{{- fail "persistence uses external Postgres; the chart does not provision a SQLite volume" -}}
+{{- end -}}
+{{- $general := .Values.config.general_settings | default dict -}}
+{{- if and $general.database_url (ne $general.database_url "os.environ/OXLLM_DATABASE_URL") -}}
+{{- fail "persistence.enabled manages config.general_settings.database_url; remove that override and set persistence.databaseUrl/existingSecret instead" -}}
+{{- end -}}
+{{- end -}}
+{{- range $name, $_ := .Values.env -}}
+{{- if hasKey $.Values.envSecretRefs $name -}}
+{{- fail (printf "set %s in only one of env and envSecretRefs" $name) -}}
+{{- end -}}
+{{- end -}}
+{{- range $name, $_ := merge (deepCopy .Values.env) .Values.envSecretRefs -}}
+{{- if or (has $name (list "OXLLM_PORT" "OXLLM_REQUIRE_AUTH")) (and $.Values.persistence.enabled (has $name (list "OXLLM_DATABASE_URL" "OXLLM_AUTO_MIGRATE"))) -}}
+{{- fail (printf "%s is managed by chart settings; remove it from env/envSecretRefs" $name) -}}
+{{- end -}}
+{{- end -}}
+{{- $refs := dict -}}
+{{- include "oxllm.collectEnvRefs" (dict "value" .Values.config "refs" $refs) -}}
+{{- if .Values.admin.enabled -}}
+{{- $_ := set $refs "OXLLM_MASTER_KEY" true -}}
+{{- end -}}
+{{- range $name, $_ := $refs -}}
+{{- $hasValue := and (hasKey $.Values.env $name) (ne (get $.Values.env $name | toString | trim) "") -}}
+{{- if not (or $hasValue (hasKey $.Values.envSecretRefs $name) $.Values.envFrom (and $.Values.persistence.enabled (eq $name "OXLLM_DATABASE_URL"))) -}}
+{{- fail (printf "config references %s; supply env.%s, envSecretRefs.%s, or envFrom" $name $name $name) -}}
+{{- end -}}
+{{- end -}}

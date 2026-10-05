@@ -1,0 +1,29 @@
+<form hx-post="/users/create"
+      hx-target="#users-panel"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      @htmx:after-request="if (oxRequestSucceeded($event)) showForm = false">
+  <div class="ox-form-grid">
+    <div class="ox-input">
+      <label for="user_name">User Name</label>
+      <input id="user_name" type="text" name="user_name" placeholder="Jane Doe" required autocomplete="off">
+    </div>
+    <div class="ox-input">
+      <label for="user_max_budget">Max Budget ($)</label>
+      <input id="user_max_budget" type="number" step="0.01" min="0" name="max_budget" placeholder="(optional)">
+    </div>
+    <div class="ox-input">
+      <label for="user_budget_duration">Budget Duration</label>
+      <input id="user_budget_duration" type="text" name="budget_duration" placeholder="30d">
+    </div>
+    <div class="ox-input" style="grid-column: 1 / -1;">
+      <label for="user_models">Allowed Models</label>
+      <input id="user_models" type="text" name="models" placeholder="gpt-4o, claude-* (comma-separated; blank = all)" autocomplete="off">
+      <small style="color: var(--ox-muted); font-size: .72rem;">Comma-separated patterns. <code>*</code> wildcard supported. Blank = no restriction.</small>
+    </div>
+  </div>
+  <div class="ox-form-actions">
+    <button type="submit" class="ox-btn ox-btn-primary">Create User</button>
+    <button type="button" class="ox-btn" @click="showForm = false">Cancel</button>
+  </div>
+</form>

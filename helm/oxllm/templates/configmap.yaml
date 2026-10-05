@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    app.kubernetes.io/name: oxllm
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  config.yaml: |
+    {{- include "oxllm.config" . | nindent 4 }}

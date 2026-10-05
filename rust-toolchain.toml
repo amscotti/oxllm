@@ -1,0 +1,6 @@
+[toolchain]
+# Pin to the same minor as the Docker builder images (`rust:1.96-bookworm`)
+# so local, CI-via-toolchain-file, and image builds cannot drift onto a
+# newer rustup `stable`.
+channel = "1.96"
+components = ["rustfmt", "clippy"]

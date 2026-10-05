@@ -1,0 +1,80 @@
+{% from "partials/list_status.html" import list_notice %}
+{{ list_notice("teams", teams, teams_truncated, teams_unavailable) }}
+{{ list_notice("users", users, users_truncated, users_unavailable) }}
+{{ list_notice("organizations", organizations, organizations_truncated, organizations_unavailable) }}
+{{ list_notice("projects", projects, projects_truncated, projects_unavailable) }}
+<form hx-post="/keys/create"
+      hx-target="#key-result"
+      hx-swap="innerHTML"
+      hx-disabled-elt="find button[type='submit']">
+  <div class="ox-form-grid">
+    <div class="ox-input">
+      <label for="key_alias">Alias</label>
+      <input id="key_alias" type="text" name="key_alias" placeholder="my-key" autocomplete="off">
+    </div>
+    <div class="ox-input">
+      <label for="team_id">Team</label>
+      <select id="team_id" name="team_id">
+        <option value="">(none)</option>
+        {% for team in teams | default([]) %}
+        <option value="{{ team.team_id }}">{{ team.team_name | default(team.team_id) }} — {{ team.team_id }}</option>
+        {% endfor %}
+      </select>
+      {% if not teams and not teams_truncated and not teams_unavailable %}
+      <small style="color: var(--ox-muted); font-size: .72rem;">No teams yet — create one under Teams first.</small>
+      {% endif %}
+    </div>
+    <div class="ox-input">
+      <label for="user_id">User</label>
+      <select id="user_id" name="user_id">
+        <option value="">(none)</option>
+        {% for user in users | default([]) %}
+        <option value="{{ user.user_id }}">{{ user.user_name | default(user.user_id) }} — {{ user.user_id }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="ox-input">
+      <label for="org_id">Organization</label>
+      <select id="org_id" name="org_id">
+        <option value="">(none)</option>
+        {% for org in organizations | default([]) %}
+        <option value="{{ org.org_id }}">{{ org.org_name | default(org.org_id) }} — {{ org.org_id }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="ox-input">
+      <label for="project_id">Project</label>
+      <select id="project_id" name="project_id">
+        <option value="">(none)</option>
+        {% for project in projects | default([]) %}
+        <option value="{{ project.project_id }}">{{ project.project_name | default(project.project_id) }} — {{ project.project_id }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="ox-input">
+      <label for="max_budget">Max Budget ($)</label>
+      <input id="max_budget" type="number" step="0.01" min="0" name="max_budget" placeholder="(optional)">
+    </div>
+    <div class="ox-input">
+      <label for="budget_duration">Budget Duration</label>
+      <input id="budget_duration" type="text" name="budget_duration" placeholder="30d">
+    </div>
+    <div class="ox-input">
+      <label for="rpm">RPM Limit</label>
+      <input id="rpm" type="number" min="0" name="rpm" placeholder="(optional)">
+    </div>
+    <div class="ox-input">
+      <label for="tpm">TPM Limit</label>
+      <input id="tpm" type="number" min="0" name="tpm" placeholder="(optional)">
+    </div>
+    <div class="ox-input" style="grid-column: 1 / -1;">
+      <label for="models">Allowed Models</label>
+      <input id="models" type="text" name="models" placeholder="gpt-4o, claude-* (comma-separated; blank = all)" autocomplete="off">
+      <small style="color: var(--ox-muted); font-size: .72rem;">Comma-separated patterns. <code>*</code> wildcard supported. Blank = no restriction.</small>
+    </div>
+  </div>
+  <div class="ox-form-actions">
+    <button type="submit" class="ox-btn ox-btn-primary">Generate Key</button>
+    <button type="button" class="ox-btn" @click="showForm = false">Cancel</button>
+  </div>
+</form>

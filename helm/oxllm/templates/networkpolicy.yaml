@@ -1,0 +1,107 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: oxllm
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: oxllm
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    {{- if .Values.networkPolicy.ingress.allowAll }}
+    - {}
+    {{- else }}
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.port }}
+      {{- with .Values.networkPolicy.ingress.from }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+  egress:
+    {{- if .Values.networkPolicy.egressDNS }}
+    # Allow DNS egress so the proxy can resolve upstream provider hostnames;
+    # without it the TCP-443-only rules below block all outbound calls.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    {{- end }}
+    {{- range $egress := .Values.networkPolicy.egress }}
+    - ports:
+        {{- range $port := $egress.ports }}
+        - protocol: {{ $port.protocol | default "TCP" }}
+          port: {{ $port.port }}
+        {{- end }}
+      {{- if $egress.to }}
+      to:
+        {{- toYaml $egress.to | nindent 8 }}
+      {{- else if $.Values.networkPolicy.denyMetadataEndpoint }}
+      # Fold the metadata-endpoint denial INTO this rule's destination rather
+      # than emitting a separate port-less rule. A standalone allow-all-except
+      # rule is OR'd with the user rules and, having no `ports`, matches every
+      # port — effectively widening egress to the whole internet. Instead, a
+      # rule without an explicit `to` gets bound to 0.0.0.0/0 minus the
+      # metadata IP, so no new ports or destinations are opened.
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+              - 169.254.170.2/32
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fd00:ec2::23/128
+              - fd00:ec2::254/128
+      {{- end }}
+    {{- end }}
+{{- if .Values.admin.enabled }}
+---
+# Admin listens on 8080; that port must not be opened on oxllm pods (they
+# never bind it). Ingress-only so this policy does not deny admin→proxy
+# egress on `.Values.service.port`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-admin
+  labels:
+    app.kubernetes.io/name: oxllm-admin
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: oxllm-admin
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- if .Values.networkPolicy.ingress.allowAll }}
+    - {}
+    {{- else }}
+    - ports:
+        - protocol: TCP
+          port: 8080
+      {{- with .Values.networkPolicy.ingress.from }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

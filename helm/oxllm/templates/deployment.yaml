@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: oxllm
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oxllm
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/env: {{ include (print $.Template.BasePath "/env-secret.yaml") . | sha256sum }}
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        oxllm/rollout-revision: {{ .Values.rolloutRevision | quote }}
+      labels:
+        app.kubernetes.io/name: oxllm
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+    spec:
+      automountServiceAccountToken: false
+      {{- if or .Values.serviceAccount.name .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Values.serviceAccount.name | default .Release.Name }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ include "oxllm.graceSeconds" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if and .Values.persistence.enabled .Values.persistence.migrate }}
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/oxllm", "migrate"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: OXLLM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.persistence.existingSecret | default (printf "%s-secrets" .Release.Name) }}
+                  key: {{ .Values.persistence.databaseUrlSecretKey }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      {{- end }}
+      containers:
+        - name: oxllm
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/oxllm"]
+          args: ["serve", "--config", "/etc/oxllm/config.yaml"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+              protocol: TCP
+          {{- if or .Values.env .Values.envFrom }}
+          envFrom:
+            {{- if .Values.env }}
+            - secretRef:
+                name: {{ .Release.Name }}-env
+            {{- end }}
+            {{- with .Values.envFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          env:
+            - name: OXLLM_PORT
+              value: {{ .Values.port | quote }}
+            - name: OXLLM_REQUIRE_AUTH
+              value: {{ .Values.requireAuth | quote }}
+            {{- range $name, $ref := .Values.envSecretRefs }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required (printf "envSecretRefs.%s.name is required" $name) $ref.name }}
+                  key: {{ required (printf "envSecretRefs.%s.key is required" $name) $ref.key }}
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: OXLLM_AUTO_MIGRATE
+              value: "false"
+            - name: OXLLM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.persistence.existingSecret | default (printf "%s-secrets" .Release.Name) }}
+                  key: {{ .Values.persistence.databaseUrlSecretKey }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/oxllm
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-config
+        - name: tmp
+          emptyDir: {}

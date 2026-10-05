@@ -1,0 +1,64 @@
+# cfg(test)-only shard exercising context-length pricing tiers.
+# The model names are unique so they can never collide with a real provider row.
+
+["tiered-test-model"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+cache_read_input_token_cost = 1.000000e-7
+cache_creation_input_token_cost = 1.000000e-6
+input_cost_per_audio_token = 7.000000e-7
+output_cost_per_reasoning_token = 3.000000e-6
+input_cost_per_token_above_100k_tokens = 2.000000e-6
+output_cost_per_token_above_200k_tokens = 1.000000e-5
+cache_read_input_token_cost_above_200k_tokens = 2.000000e-7
+
+# Tier declared with the non-`k` `_above_<N>_tokens` spelling.
+["tiered-nonk-model"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+input_cost_per_token_above_200000_tokens = 2.000000e-6
+output_cost_per_token_above_200000_tokens = 1.000000e-5
+
+# Tiered 1h cache-creation rate (LiteLLM
+# `cache_creation_input_token_cost_above_1hr_above_<N>k_tokens`).
+["tiered-1h-model"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+cache_creation_input_token_cost = 1.000000e-6
+cache_creation_input_token_cost_above_1hr = 2.000000e-6
+cache_creation_input_token_cost_above_1hr_above_200k_tokens = 4.000000e-6
+
+# A tier carrying ALL five tierable rate fields at the same threshold, to
+# exercise the full-field combination of the selection logic end-to-end.
+["tiered-all-fields-model"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+cache_read_input_token_cost = 1.000000e-7
+cache_creation_input_token_cost = 1.000000e-6
+cache_creation_input_token_cost_above_1hr = 2.000000e-6
+input_cost_per_token_above_100k_tokens = 2.000000e-6
+output_cost_per_token_above_100k_tokens = 1.000000e-5
+cache_read_input_token_cost_above_100k_tokens = 2.000000e-7
+cache_creation_input_token_cost_above_100k_tokens = 4.000000e-6
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 8.000000e-6
+
+# Three tiers at distinct thresholds (100k, 200k, 300k) to exercise the
+# highest-threshold-wins descending chain beyond two tiers.
+["tiered-three-tier-model"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+input_cost_per_token_above_100k_tokens = 2.000000e-6
+input_cost_per_token_above_200k_tokens = 3.000000e-6
+input_cost_per_token_above_300k_tokens = 4.000000e-6
+
+# Coverage: a model whose name LEGITIMATELY ends in 8 digits (not a date
+# snapshot). An exact table entry must win over the date-suffix strip so the
+# distinct rate is preserved.
+["eight-digit-real-12345678"]
+input_cost_per_token = 9.000000e-6
+output_cost_per_token = 9.000000e-6
+
+["eight-digit-real"]
+input_cost_per_token = 1.000000e-9
+output_cost_per_token = 1.000000e-9
+

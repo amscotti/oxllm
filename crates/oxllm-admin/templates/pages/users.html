@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Users — oxllm Admin{% endblock %}
+{% block page_title %}Users{% endblock %}
+{% block nav_users %}active{% endblock %}
+{% block content %}
+<div x-data="{ showForm: false }">
+  <div class="ox-page-toolbar">
+    <p class="ox-page-lead" style="margin: 0;">People or services that own keys. Attach a budget, then select the user when minting a key.</p>
+    <button type="button" class="ox-btn ox-btn-primary" @click="showForm = !showForm" x-text="showForm ? 'Cancel' : '+ Create User'">+ Create User</button>
+  </div>
+  <div class="ox-card" x-show="showForm" x-cloak x-transition style="display: none;">
+    <div class="ox-card-header"><h3>New User</h3></div>
+    <div class="ox-card-body">
+      {% include "partials/user_form.html" %}
+    </div>
+  </div>
+  {% include "partials/users_table.html" %}
+</div>
+{% endblock %}

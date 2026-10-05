@@ -1,0 +1,188 @@
+{% from "partials/list_status.html" import list_notice %}
+{% if created %}
+<div class="ox-flash ox-flash-success" hx-swap-oob="true" id="flash">{{ created }}</div>
+{% endif %}
+<div id="keys-panel"
+     x-data="{ editing: null }">
+  <div class="ox-card">
+    <div class="ox-card-header">
+      <h3>API Keys</h3>
+      <span style="font-size: .72rem; color: var(--text-muted); font-family: var(--font-mono);">{{ keys | default([]) | length }} keys{% if keys_truncated %} shown (incomplete){% endif %}</span>
+    </div>
+    {{ list_notice("keys", keys, keys_truncated) }}
+    <div style="padding: .5rem 1rem 0;">
+      <input type="text" placeholder="Search keys..." oninput="filterKeysTable(this)" class="ox-input" style="margin-bottom:1rem;width:100%;max-width:300px">
+      <script>
+      function filterKeysTable(input) {
+        const filter = input.value.toLowerCase();
+        const table = input.closest('#keys-panel').querySelector('table');
+        if (!table) return;
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+          tr.style.display = tr.textContent.toLowerCase().includes(filter) ? '' : 'none';
+        });
+      }
+      </script>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="ox-table">
+        <thead>
+          <tr>
+            <th>Key ID</th>
+            <th>Alias</th>
+            <th>Team</th>
+            <th>Budget</th>
+            <th>Duration</th>
+            <th>RPM</th>
+            <th>TPM</th>
+            <th>Created</th>
+            <th>Status</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if keys %}
+          {% for key in keys %}
+          <tr id="key-row-{{ key.key_id }}">
+            <td><span class="ox-code">{{ key.key_id }}</span></td>
+            <td>{{ key.key_alias | default("—") }}</td>
+            <td>{{ key.team_id | default("—") }}</td>
+            <td>
+              {% if key.max_budget %}
+              <div class="ox-budget-cell">
+                <div class="ox-budget-text">
+                  ${{ "%.2f"|format(key.budget_spend | default(0.0)) }} / ${{ "%.2f"|format(key.max_budget) }}
+                </div>
+                <div class="ox-budget-bar" title="{{ key.budget_spend_pct | default(0.0) }}% utilized">
+                  <div class="ox-budget-fill ox-budget-fill-{{ key.budget_spend_tier | default("ok") }}"
+                       style="width: {{ key.budget_spend_pct | default(0.0) }}%"></div>
+                </div>
+              </div>
+              {% else %}
+              <span style="color: var(--text-muted);">—</span>
+              {% endif %}
+            </td>
+            <td>{{ key.budget_duration | default("—") }}</td>
+            <td>{{ key.rpm | default("—") }}</td>
+            <td>{{ key.tpm | default("—") }}</td>
+            <td><small>{{ key.created_at | default("—") }}</small></td>
+            <td>
+              {% if key.is_active %}
+              <span class="ox-badge ox-badge-ok">Active</span>
+              {% else %}
+              <span class="ox-badge ox-badge-off">Disabled</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="ox-row-actions">
+                {% if key.is_active %}
+                <button class="ox-btn ox-btn-sm"
+                        @click="editing = {{ loop.index }}; $nextTick(() => { document.querySelectorAll('.ox-edit-row').forEach(function(el){ if (window.htmx) htmx.process(el); }); })"
+                        aria-label="Edit" title="Edit key">✎</button>
+                <button class="ox-btn ox-btn-sm"
+                        hx-post="/keys/{{ key.key_id | urlencode_path }}/rotate"
+                        hx-target="#key-result"
+                        hx-swap="innerHTML"
+                        hx-confirm="Rotate secret for {{ key.key_id }}? The old secret stops working immediately."
+                        aria-label="Rotate" title="Rotate secret">↻</button>
+                <button class="ox-btn ox-btn-danger ox-btn-sm"
+                        hx-post="/keys/{{ key.key_id | urlencode_path }}/delete"
+                        hx-target="#keys-panel"
+                        hx-swap="outerHTML"
+                        hx-confirm="Disable key {{ key.key_id }}?"
+                        aria-label="Disable" title="Disable key">✕</button>
+                {% else %}
+                <button class="ox-btn ox-btn-sm"
+                        hx-post="/keys/{{ key.key_id | urlencode_path }}/enable"
+                        hx-target="#keys-panel"
+                        hx-swap="outerHTML"
+                        hx-confirm="Re-enable key {{ key.key_id }}? It will accept requests again."
+                        aria-label="Enable" title="Re-enable key">✓</button>
+                <button class="ox-btn ox-btn-danger ox-btn-sm"
+                        hx-post="/keys/{{ key.key_id | urlencode_path }}/purge"
+                        hx-target="#keys-panel"
+                        hx-swap="outerHTML"
+                        hx-confirm="Permanently remove key {{ key.key_id }}? This cannot be undone. Spend history is kept."
+                        aria-label="Remove" title="Permanently remove key">🗑</button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+
+          {% if key.is_active %}
+          <template x-if="editing === {{ loop.index }}">
+            <tr class="ox-edit-row">
+              <td colspan="10">
+                <div class="ox-edit-panel" @keydown.escape.window="editing = null">
+                  <div class="ox-edit-header">
+                    <span class="ox-code">{{ key.key_id }}</span>
+                    <button class="ox-btn ox-btn-sm" @click="editing = null">✕ Close</button>
+                  </div>
+                  <form hx-post="/keys/{{ key.key_id | urlencode_path }}/update"
+                        hx-target="#keys-panel"
+                        hx-swap="outerHTML"
+                        class="ox-form-grid" style="margin-top: .75rem;">
+                    <div class="ox-input">
+                      <label>Alias</label>
+                      <input type="text" name="key_alias" value="{{ key.key_alias | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>Team ID</label>
+                      <input type="text" name="team_id" value="{{ key.team_id | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>User ID</label>
+                      <input type="text" name="user_id" value="{{ key.user_id | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>Org ID</label>
+                      <input type="text" name="org_id" value="{{ key.org_id | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>Project ID</label>
+                      <input type="text" name="project_id" value="{{ key.project_id | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>Max Budget</label>
+                      <input type="number" step="0.01" name="max_budget" value="{{ key.max_budget | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>Duration</label>
+                      <input type="text" name="budget_duration" value="{{ key.budget_duration | default("") }}" placeholder="30d">
+                    </div>
+                    <div class="ox-input">
+                      <label>RPM</label>
+                      <input type="number" name="rpm" value="{{ key.rpm | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>TPM</label>
+                      <input type="number" name="tpm" value="{{ key.tpm | default("") }}">
+                    </div>
+                    <div class="ox-input" style="grid-column: 1 / -1;">
+                      <label>Allowed Models</label>
+                      <input type="text" name="models" value="{{ key.models | default("") }}" placeholder="gpt-4o, claude-* (blank = all)">
+                    </div>
+                    <div class="ox-form-actions" style="grid-column: 1 / -1;">
+                      <button type="submit" class="ox-btn ox-btn-primary">Save</button>
+                      <button type="button" class="ox-btn" @click="editing = null">Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          </template>
+          {% endif %}
+          {% endfor %}
+          {% else %}
+          <tr><td colspan="10">
+            <div class="ox-empty">
+              <div class="ox-empty-icon">🔑</div>
+              No API keys yet. Create one to get started.
+            </div>
+          </td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div id="key-result"></div>
+</div>

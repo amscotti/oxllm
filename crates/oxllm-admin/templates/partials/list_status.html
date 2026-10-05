@@ -1,0 +1,15 @@
+{% macro list_notice(label, rows, truncated=false, unavailable=false) %}
+{% if unavailable %}
+<p class="ox-list-notice" role="status">{{ label | capitalize }} list unavailable. Reload to retry; available choices may be missing.</p>
+{% elif truncated %}
+<p class="ox-list-notice" role="status">Incomplete list: {{ rows | default([]) | length }} {{ label }} shown. More records exist. Search and choices cover only loaded records; use the management API to look up omitted records by ID.</p>
+{% endif %}
+{% endmacro %}
+
+{# A capped or failed feed must not turn a previously selected ID into "none"
+   on the next submit. This option is used only when the current ID is absent. #}
+{% macro missing_option(value, rows, id_field) %}
+{% if value and value not in (rows | default([]) | map(attribute=id_field) | list) %}
+<option value="{{ value }}" selected>{{ value }} (current; not in loaded list)</option>
+{% endif %}
+{% endmacro %}

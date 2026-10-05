@@ -1,0 +1,32 @@
+<form hx-post="/organizations/create"
+      hx-target="#organizations-panel"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      @htmx:after-request="if (oxRequestSucceeded($event)) showForm = false">
+  <div class="ox-form-grid">
+    <div class="ox-input">
+      <label for="org_name">Organization Name</label>
+      <input id="org_name" type="text" name="org_name" placeholder="Acme" required autocomplete="off">
+    </div>
+    <div class="ox-input">
+      <label for="org_max_budget">Max Budget ($)</label>
+      <input id="org_max_budget" type="number" step="0.01" min="0" name="max_budget" placeholder="(optional)">
+    </div>
+    <div class="ox-input">
+      <label for="org_budget_duration">Budget Duration</label>
+      <input id="org_budget_duration" type="text" name="budget_duration" placeholder="30d">
+    </div>
+    <div class="ox-input">
+      <label for="org_rpm">RPM</label>
+      <input id="org_rpm" type="number" min="0" name="rpm" placeholder="(optional)">
+    </div>
+    <div class="ox-input">
+      <label for="org_tpm">TPM</label>
+      <input id="org_tpm" type="number" min="0" name="tpm" placeholder="(optional)">
+    </div>
+  </div>
+  <div class="ox-form-actions">
+    <button type="submit" class="ox-btn ox-btn-primary">Create Organization</button>
+    <button type="button" class="ox-btn" @click="showForm = false">Cancel</button>
+  </div>
+</form>

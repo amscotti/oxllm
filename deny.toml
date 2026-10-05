@@ -1,0 +1,53 @@
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = [
+    # rsa crate timing side-channel (Marvin Attack, RUSTSEC-2025-0052).
+    # The `rsa` crate is pulled in by `sqlx-mysql` (via sqlx's `any` feature,
+    # which bundles all DB drivers). We only use the `postgres`/`sqlite` drivers,
+    # so the vulnerable MySQL RSA-auth code path is never executed. The jsonwebtoken
+    # dependency no longer pulls `rsa` (built with the `aws_lc_rs` provider, which
+    # is a C library and has no Rust `rsa` crate dependency). Tracked upstream;
+    # no fixed version is available yet.
+    "RUSTSEC-2025-0052",
+    # serde_yml unsoundness (RUSTSEC-2025-0068): `serde_yml::ser::Serializer.emitter`
+    # can segfault, and the upstream project was archived. We do NOT use the emitter
+    # API — the codebase only calls `serde_yml::from_str` (parse) and
+    # `serde_yml::to_string` (serialize), which are unaffected. Config YAML is
+    # trusted (operator-supplied), not untrusted input. Ignored pending migration
+    # to a maintained fork (serde_yaml_ng / serde_norway).
+    "RUSTSEC-2025-0068",
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+deny = []
+allow = []
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

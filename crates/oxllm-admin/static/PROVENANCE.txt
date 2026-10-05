@@ -1,0 +1,37 @@
+oxllm-admin browser dependencies (retrieved 2026-09-12)
+=====================================================
+
+These are the exact versions previously selected by base.html, served locally
+and embedded in the binary. No package manager or CDN is needed at runtime.
+The JavaScript was downloaded through BrowserOS from the immutable versioned
+URLs below. Each upstream file's SHA-256 was independently compared with the
+same npm release on jsDelivr. SRI in base.html covers the vendored bytes.
+
+htmx 2.0.4
+  Source: https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js
+  Cross-check: https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js
+  Upstream SHA-256 (50917 bytes):
+    e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447
+  Local file: htmx-2.0.4.min.js
+  Local SHA-256 (50918 bytes):
+    69caefd0da92269066e725d7fe175e26b9d50c962e3056459c0c477154cdb9d3
+  Only modification: a final LF added by apply_patch; JavaScript unchanged.
+  License: 0BSD, included in htmx-2.0.4.LICENSE.txt
+  License source: https://unpkg.com/htmx.org@2.0.4/LICENSE
+
+Alpine.js 3.14.8 (standard browser build)
+  Source: https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js
+  Cross-check: https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js
+  Local file: alpine-3.14.8.min.js (unmodified, 44758 bytes)
+  Upstream and local SHA-256:
+    b600e363d99d95444db54acbfb2deffec9ae792aa99a09229bcda078e5b55643
+  License: MIT, included in alpine-3.14.8.LICENSE.txt
+  License source:
+    https://raw.githubusercontent.com/alpinejs/alpine/v3.14.8/LICENSE.md
+  Bundles Vue reactivity; its MIT notice is in vue-reactivity.LICENSE.txt.
+  Dependency declaration: https://unpkg.com/alpinejs@3.14.8/package.json
+    (@vue/reactivity ~3.1.1; this file is the published Alpine bundle, not a rebuild)
+  Vue license source: https://unpkg.com/@vue/reactivity@3.1.1/LICENSE
+
+When updating, download and verify the selected releases, retain their license
+notices, and update these hashes, assets.rs, and the script URLs/SRI together.

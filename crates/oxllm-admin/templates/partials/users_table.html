@@ -1,0 +1,133 @@
+{% from "partials/list_status.html" import list_notice %}
+{% if created %}
+<div class="ox-flash ox-flash-success" hx-swap-oob="true" id="flash">{{ created }}</div>
+{% endif %}
+<div id="users-panel"
+     x-data="{ editing: null }">
+  <div class="ox-card">
+    <div class="ox-card-header">
+      <h3>Users</h3>
+      <span style="font-size: .72rem; color: var(--text-muted); font-family: var(--font-mono);">{{ users | default([]) | length }} users{% if users_truncated %} shown (incomplete){% endif %}</span>
+    </div>
+    {{ list_notice("users", users, users_truncated) }}
+    <div style="padding: .5rem 1rem 0;">
+      <input type="text" placeholder="Search users..." oninput="filterUsersTable(this)" class="ox-input" style="margin-bottom:1rem;width:100%;max-width:300px">
+      <script>
+      function filterUsersTable(input) {
+        const filter = input.value.toLowerCase();
+        const table = input.closest('#users-panel').querySelector('table');
+        if (!table) return;
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+          tr.style.display = tr.textContent.toLowerCase().includes(filter) ? '' : 'none';
+        });
+      }
+      </script>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="ox-table">
+        <thead>
+          <tr>
+            <th>User ID</th>
+            <th>Name</th>
+            <th>Max Budget</th>
+            <th>Duration</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if users %}
+          {% for user in users %}
+          <tr id="user-row-{{ user.user_id }}">
+            <td><span class="ox-code">{{ user.user_id }}</span></td>
+            <td>{{ user.user_name | default("—") }}</td>
+            <td>
+              {% if user.max_budget %}
+                {# The proxy exposes no user-scoped spend total, so user rows
+                   carry no budget_spend; show the budget without a bar rather
+                   than a misleading $0.00 / $X utilization figure. #}
+                {% if user.budget_spend is defined %}
+                <div class="ox-budget-cell">
+                  <div class="ox-budget-text">
+                    ${{ "%.2f"|format(user.budget_spend) }} / ${{ "%.2f"|format(user.max_budget) }}
+                  </div>
+                  <div class="ox-budget-bar" title="{{ user.budget_spend_pct | default(0.0) }}% utilized">
+                    <div class="ox-budget-fill ox-budget-fill-{{ user.budget_spend_tier | default("ok") }}"
+                         style="width: {{ user.budget_spend_pct | default(0.0) }}%"></div>
+                  </div>
+                </div>
+                {% else %}
+                <span title="User-scoped spend rollup is not available; check per-key spend on the Keys page.">
+                  — / ${{ "%.2f"|format(user.max_budget) }}
+                </span>
+                {% endif %}
+              {% else %}
+              <span style="color: var(--text-muted);">—</span>
+              {% endif %}
+            </td>
+            <td>{{ user.budget_duration | default("—") }}</td>
+            <td>
+              <div class="ox-row-actions">
+                <button class="ox-btn ox-btn-sm"
+                        @click="editing = {{ loop.index }}; $nextTick(() => { document.querySelectorAll('.ox-edit-row').forEach(function(el){ if (window.htmx) htmx.process(el); }); })"
+                        aria-label="Edit" title="Edit user">✎</button>
+                <button class="ox-btn ox-btn-danger ox-btn-sm"
+                        hx-post="/users/{{ user.user_id | urlencode_path }}/delete"
+                        hx-target="#users-panel"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete user {{ user.user_id }}?"
+                        aria-label="Delete" title="Delete user">✕</button>
+              </div>
+            </td>
+          </tr>
+
+          <template x-if="editing === {{ loop.index }}">
+            <tr class="ox-edit-row">
+              <td colspan="5">
+                <div class="ox-edit-panel" @keydown.escape.window="editing = null">
+                  <div class="ox-edit-header">
+                    <span>Edit: <strong>{{ user.user_name | default(user.user_id) }}</strong></span>
+                    <button class="ox-btn ox-btn-sm" @click="editing = null">✕ Close</button>
+                  </div>
+                  <form hx-post="/users/{{ user.user_id | urlencode_path }}/update"
+                        hx-target="#users-panel"
+                        hx-swap="outerHTML"
+                        class="ox-form-grid" style="margin-top: .75rem;">
+                    <div class="ox-input">
+                      <label>User Name</label>
+                      <input type="text" name="user_name" value="{{ user.user_name | default("") }}" required>
+                    </div>
+                    <div class="ox-input">
+                      <label>Max Budget</label>
+                      <input type="number" step="0.01" name="max_budget" value="{{ user.max_budget | default("") }}">
+                    </div>
+                    <div class="ox-input">
+                      <label>Duration</label>
+                      <input type="text" name="budget_duration" value="{{ user.budget_duration | default("") }}" placeholder="30d">
+                    </div>
+                    <div class="ox-input" style="grid-column: 1 / -1;">
+                      <label>Allowed Models</label>
+                      <input type="text" name="models" value="{{ user.models | default("") }}" placeholder="gpt-4o, claude-* (blank = all)">
+                    </div>
+                    <div class="ox-form-actions" style="grid-column: 1 / -1;">
+                      <button type="submit" class="ox-btn ox-btn-primary">Save</button>
+                      <button type="button" class="ox-btn" @click="editing = null">Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          </template>
+          {% endfor %}
+          {% else %}
+          <tr><td colspan="5">
+            <div class="ox-empty">
+              <div class="ox-empty-icon">●</div>
+              No users yet.
+            </div>
+          </td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

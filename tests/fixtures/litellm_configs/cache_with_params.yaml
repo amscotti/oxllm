@@ -1,0 +1,19 @@
+# Adapted from ../litellm/tests/proxy_unit_tests/example_config_yaml/cache_with_params.yaml
+model_list:
+  - model_name: openai-model
+    litellm_params:
+      model: gpt-3.5-turbo
+
+oxllm_settings:
+  # LiteLLM uses cache: true + cache_params; oxllm uses a single `cache` object.
+  cache:
+    type: redis
+    host: redis.example.test
+    # LiteLLM-only keys should be ignored with a warning, not fail parse.
+    cache_params:
+      supported_call_types:
+        - embedding
+        - aembedding
+
+general_settings:
+  allow_private_api_base: true

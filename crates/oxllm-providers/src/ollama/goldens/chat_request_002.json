@@ -1,0 +1,13 @@
+{
+  "model": "llama3",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Tell me a short joke about programming."
+    }
+  ],
+  "temperature": 0.9,
+  "top_p": 0.95,
+  "max_tokens": 128,
+  "seed": 42
+}

@@ -1,0 +1,56 @@
+# Pricing for provider `cerebras`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["cerebras/gpt-oss-120b"]
+input_cost_per_token = 3.500000e-7
+output_cost_per_token = 7.500000e-7
+max_input_tokens = 131072
+max_output_tokens = 32768
+
+["cerebras/llama-3.3-70b"]
+input_cost_per_token = 8.500000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cerebras/llama3.1-70b"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cerebras/llama3.1-8b"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cerebras/qwen-3-32b"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 8.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cerebras/zai-glm-4.6"]
+input_cost_per_token = 2.250000e-6
+output_cost_per_token = 2.750000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["cerebras/zai-glm-4.7"]
+input_cost_per_token = 2.250000e-6
+output_cost_per_token = 2.750000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+["cerebras/gemma-4-31b"]
+input_cost_per_token = 9.900000e-7
+output_cost_per_token = 1.490000e-6
+max_input_tokens = 131072
+max_output_tokens = 40960
+
+["cerebras/qwen-3.8-27b"]
+input_cost_per_token = 9.900000e-7
+output_cost_per_token = 1.490000e-6
+max_input_tokens = 65536
+max_output_tokens = 32768

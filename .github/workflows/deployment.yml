@@ -1,0 +1,82 @@
+name: Deployment artifacts
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: deployment-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  helm-and-context:
+    name: Helm/Compose validation + Docker input hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install YAML parser
+        run: python3 -m pip install PyYAML==6.0.3
+
+      - name: Render & assert (Helm chart + .dockerignore)
+        run: bash scripts/check-deployment-artifacts.sh --require-tools
+
+  docker-build:
+    # Build both Dockerfiles to catch cache-layer / feature-selection regressions
+    # that the Rust CI matrix does not cover.
+    name: Docker build + provider-free runtime smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build oxllm image
+        run: docker build -t oxllm:ci -f Dockerfile .
+
+      - name: Build oxllm-admin image
+        run: docker build -t oxllm-admin:ci -f Dockerfile.admin .
+
+      - name: Assert non-root runtime user (oxllm)
+        run: |
+          uid="$(docker run --rm --entrypoint id oxllm:ci -u)"
+          echo "oxllm runs as uid=$uid"
+          test "$uid" = 10001
+
+      - name: Assert non-root runtime user (admin)
+        run: |
+          user="$(docker inspect --format '{{.Config.User}}' oxllm-admin:ci)"
+          echo "oxllm-admin runs as user=$user"
+          test "$user" = "10001:10001"
+
+      - name: Runtime smoke (Redis, SQLite, auth, admin assets)
+        env:
+          OXLLM_MASTER_KEY: ci-only-master-key
+          ADMIN_SESSION_SECRET: ci-only-session-secret-long-enough
+          ADMIN_UI_PASSWORD: ci-only-admin-password
+          ADMIN_COOKIE_SECURE: "false"
+          OXLLM_LOAD_ENV: "0"
+          OXLLM_DB_SMOKE: "1"
+          OXLLM_ADMIN_URL: http://127.0.0.1:8080
+        run: |
+          compose=(docker compose --env-file /dev/null -p "oxllm-ci-${GITHUB_RUN_ID}" -f docker-compose.yml -f docker-compose.admin.yml -f docker-compose.ci.yml --profile admin)
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then "${compose[@]}" logs --no-color; fi
+            "${compose[@]}" down --volumes
+            exit "$status"
+          }
+          trap cleanup EXIT
+          "${compose[@]}" up --no-build --wait --wait-timeout 120
+          bash scripts/smoke-docker.sh

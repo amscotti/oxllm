@@ -1,0 +1,156 @@
+# Multi-instance stress topology: 3x oxllm behind nginx, sharing Redis +
+# Postgres, with a mock OpenAI upstream and Prometheus/Grafana.
+#
+#   docker compose -f tests/multi-instance/docker-compose.yml build
+#   docker compose -f tests/multi-instance/docker-compose.yml up -d
+#
+# oxllm instances build from the repo Dockerfile (db,otel features). All
+# mount the SAME config file so they serve identical deployments. A `migrate`
+# init container runs `oxllm migrate` once; instances boot with
+# OXLLM_AUTO_MIGRATE=false and wait on service_completed_successfully.
+#
+# Exposed ports:
+#   lb (nginx)        :8080   <- drive loadgen here
+#   oxllm-a           :4000   <- direct, for per-instance checks
+#   oxllm-b           :4001   <- direct
+#   oxllm-c           :4002   <- direct
+#   redis             :6379
+#   postgres          :5432
+#   prometheus        :9090
+#   grafana           :3000   (admin/admin)
+#   mock-llm          :9000
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: oxllm
+      POSTGRES_DB: oxllm
+    ports: ["5432:5432"]
+    # Persist spend logs across `down`/`up` for soak comparisons.
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d oxllm"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  mock-llm:
+    build: ./mock-llm
+    environment:
+      LATENCY_MS: "120"
+      EMBED_DIM: "64"
+    ports: ["9000:9000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9000/health').status==200 else 1)"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  # Migration init container: runs `oxllm migrate` once and exits.
+  # All oxllm instances depend on it completing successfully, so the
+  # schema is ready before any instance starts. Startup auto-migrations also
+  # serialize, but a single pre-step makes readiness and migration failures
+  # explicit for this fleet.
+  migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/oxllm"]
+    command: ["migrate", "--database-url", "postgres://postgres:oxllm@postgres:5432/oxllm"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  oxllm-a:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["serve", "--config", "/etc/oxllm/config.yaml"]
+    environment:
+      OXLLM_INSTANCE_ID: "a"
+      OXLLM_PORT: "4000"
+      OXLLM_AUTO_MIGRATE: "false"
+      RUST_LOG: "info,oxllm=info,oxllm_server=info"
+    volumes: ["./config.yaml:/etc/oxllm/config.yaml:ro"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      mock-llm: { condition: service_healthy }
+    ports: ["4000:4000"]
+    mem_limit: 512m
+
+  oxllm-b:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["serve", "--config", "/etc/oxllm/config.yaml"]
+    environment:
+      OXLLM_INSTANCE_ID: "b"
+      OXLLM_PORT: "4001"
+      OXLLM_AUTO_MIGRATE: "false"
+      RUST_LOG: "info,oxllm=info,oxllm_server=info"
+    volumes: ["./config.yaml:/etc/oxllm/config.yaml:ro"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      mock-llm: { condition: service_healthy }
+    ports: ["4001:4001"]
+    mem_limit: 512m
+
+  oxllm-c:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["serve", "--config", "/etc/oxllm/config.yaml"]
+    environment:
+      OXLLM_INSTANCE_ID: "c"
+      OXLLM_PORT: "4002"
+      OXLLM_AUTO_MIGRATE: "false"
+      RUST_LOG: "info,oxllm=info,oxllm_server=info"
+    volumes: ["./config.yaml:/etc/oxllm/config.yaml:ro"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      mock-llm: { condition: service_healthy }
+    ports: ["4002:4002"]
+    mem_limit: 512m
+
+  lb:
+    image: nginx:alpine
+    volumes: ["./nginx.conf:/etc/nginx/nginx.conf:ro"]
+    ports: ["8080:80"]
+    depends_on: [oxllm-a, oxllm-b, oxllm-c]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+    depends_on: [oxllm-a, oxllm-b, oxllm-c]
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+
+volumes:
+  pgdata: {}

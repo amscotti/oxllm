@@ -1,0 +1,49 @@
+{% for row in rows | default(logs | default([])) %}
+<tr>
+  <td><small>{{ row.timestamp | default("—") }}</small></td>
+  <td><span class="ox-code">{{ row.model | default("—") }}</span></td>
+  <td>
+    {% if row.provider == "openai" %}<span class="ox-badge" style="background: rgba(16,163,127,.12); color: #0d8a66;">OpenAI</span>
+    {% elif row.provider == "anthropic" %}<span class="ox-badge" style="background: rgba(217,119,87,.12); color: #c2663f;">Anthropic</span>
+    {% elif row.provider == "xai" %}<span class="ox-badge" style="background: rgba(91,79,224,.12); color: var(--ox-primary);">xAI</span>
+    {% else %}<span class="ox-badge ox-badge-warn">{{ row.provider | default("?") }}</span>{% endif %}
+  </td>
+  <td class="ox-num">{{ row.prompt_tokens | default(0) }}</td>
+  <td class="ox-num">{{ row.completion_tokens | default(0) }}</td>
+  <td>
+    {% if row.cost is number %}
+    <span class="ox-cost">${{ "%.8f"|format(row.cost) }}</span>
+    {% elif row.cost %}
+    <span class="ox-cost">${{ row.cost }}</span>
+    {% else %}
+    <span class="ox-cost-missing">—</span>
+    {% endif %}
+  </td>
+  <td>
+    {% if row.key_id %}
+    <div style="display: flex; flex-direction: column; gap: .1rem;">
+      {% if row.key_alias %}
+      <strong style="font-size: .82rem;">{{ row.key_alias }}</strong>
+      {% elif row.key_id == "master" %}
+      <strong style="font-size: .82rem;">Master key</strong>
+      {% endif %}
+      <span class="ox-code">{{ row.key_id }}</span>
+    </div>
+    {% else %}
+    <span class="ox-cost-missing">—</span>
+    {% endif %}
+  </td>
+  <td>
+    {% if row.team_name %}
+    <div style="display: flex; flex-direction: column; gap: .1rem;">
+      <span>{{ row.team_name }}</span>
+      <span class="ox-code">{{ row.team_id | default("") }}</span>
+    </div>
+    {% elif row.team_id %}
+    <span class="ox-code">{{ row.team_id }}</span>
+    {% else %}
+    —
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}

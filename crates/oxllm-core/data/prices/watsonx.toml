@@ -1,0 +1,188 @@
+# Pricing for provider `watsonx`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["watsonx/bigscience/mt0-xxl-13b"]
+input_cost_per_token = 1.908000e-6
+output_cost_per_token = 1.908000e-6
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+["watsonx/core42/jais-13b-chat"]
+input_cost_per_token = 0.0005
+output_cost_per_token = 0.002
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["watsonx/google/flan-t5-xl-3b"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["watsonx/ibm/granite-13b-chat-v2"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["watsonx/ibm/granite-13b-instruct-v2"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["watsonx/ibm/granite-3-3-8b-instruct"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["watsonx/ibm/granite-3-8b-instruct"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 1024
+
+["watsonx/ibm/granite-4-h-small"]
+input_cost_per_token = 6.360000e-8
+output_cost_per_token = 2.650000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["watsonx/ibm/granite-guardian-3-2-2b"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["watsonx/ibm/granite-guardian-3-3-8b"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["watsonx/ibm/granite-ttm-1024-96-r2"]
+input_cost_per_token = 3.800000e-7
+output_cost_per_token = 3.800000e-7
+max_input_tokens = 512
+max_output_tokens = 512
+
+["watsonx/ibm/granite-ttm-1536-96-r2"]
+input_cost_per_token = 3.800000e-7
+output_cost_per_token = 3.800000e-7
+max_input_tokens = 512
+max_output_tokens = 512
+
+["watsonx/ibm/granite-ttm-512-96-r2"]
+input_cost_per_token = 3.800000e-7
+output_cost_per_token = 3.800000e-7
+max_input_tokens = 512
+max_output_tokens = 512
+
+["watsonx/ibm/granite-vision-3-2-2b"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 8192
+max_output_tokens = 8192
+
+["watsonx/meta-llama/llama-3-2-11b-vision-instruct"]
+input_cost_per_token = 3.500000e-7
+output_cost_per_token = 3.500000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["watsonx/meta-llama/llama-3-2-1b-instruct"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["watsonx/meta-llama/llama-3-2-3b-instruct"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.500000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["watsonx/meta-llama/llama-3-2-90b-vision-instruct"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["watsonx/meta-llama/llama-3-3-70b-instruct"]
+input_cost_per_token = 7.526000e-7
+output_cost_per_token = 7.526000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["watsonx/meta-llama/llama-4-maverick-17b"]
+input_cost_per_token = 3.710000e-7
+output_cost_per_token = 1.484000e-6
+max_input_tokens = 131072
+max_output_tokens = 8192
+
+["watsonx/meta-llama/llama-guard-3-11b-vision"]
+input_cost_per_token = 3.500000e-7
+output_cost_per_token = 3.500000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["watsonx/mistralai/mistral-large"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 131072
+max_output_tokens = 16384
+
+["watsonx/mistralai/mistral-medium-2505"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["watsonx/mistralai/mistral-small-2503"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 32000
+max_output_tokens = 32000
+
+["watsonx/mistralai/mistral-small-3-1-24b-instruct-2503"]
+input_cost_per_token = 1.060000e-7
+output_cost_per_token = 3.180000e-7
+max_input_tokens = 131072
+max_output_tokens = 16384
+
+["watsonx/mistralai/pixtral-12b-2409"]
+input_cost_per_token = 3.500000e-7
+output_cost_per_token = 3.500000e-7
+max_input_tokens = 128000
+max_output_tokens = 128000
+
+["watsonx/openai/gpt-oss-120b"]
+input_cost_per_token = 1.590000e-7
+output_cost_per_token = 6.360000e-7
+max_input_tokens = 131072
+max_output_tokens = 131072
+
+["watsonx/sdaia/allam-1-13b-instruct"]
+input_cost_per_token = 1.800000e-6
+output_cost_per_token = 1.800000e-6
+max_input_tokens = 8192
+max_output_tokens = 8192
+["watsonx/bigscience/mt0-xxl"]
+input_cost_per_token = 1.908000e-6
+output_cost_per_token = 1.908000e-6
+max_input_tokens = 4096
+max_output_tokens = 4096
+
+["watsonx/meta-llama/llama-4-maverick-17b-128e-instruct-fp8"]
+input_cost_per_token = 3.710000e-7
+output_cost_per_token = 1.484000e-6
+max_input_tokens = 131072
+max_output_tokens = 8192
+
+["watsonx/whisper-large-v3-turbo"]
+mode = "audio_transcription"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.000000e-4

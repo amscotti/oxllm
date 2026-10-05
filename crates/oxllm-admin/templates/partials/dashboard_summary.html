@@ -1,0 +1,82 @@
+<div id="dashboard-panel" hx-get="/dashboard" hx-target="this" hx-swap="outerHTML" hx-trigger="every 15s">
+  <div class="ox-hero">
+    <div class="ox-hero-panel">
+      <div class="ox-hero-kicker">Proxy pulse</div>
+      <h2 class="ox-hero-title">
+        {% if health and health.reachable %}
+          {% if health.degraded %}Backends degraded{% elif health.healthy %}Gateway online{% else %}Gateway unhealthy{% endif %}
+        {% else %}
+          Gateway unreachable
+        {% endif %}
+      </h2>
+      <p class="ox-hero-copy">
+        Live status of the oxllm process and its store checks. Refreshes every 15s.
+      </p>
+      <div style="margin-top: 1rem; display: flex; flex-wrap: wrap; gap: .45rem; align-items: center;">
+        {% if health and health.reachable %}
+          {% if health.degraded %}
+          <span class="ox-badge ox-badge-warn">● Degraded</span>
+          {% elif health.healthy %}
+          <span class="ox-badge ox-badge-ok">● Online</span>
+          {% else %}
+          <span class="ox-badge ox-badge-off">● Unhealthy</span>
+          {% endif %}
+        {% else %}
+        <span class="ox-badge ox-badge-off">● Unreachable</span>
+        {% endif %}
+        {% if health and health.reachable %}
+          <span style="font-size: .78rem; color: var(--text-muted); font-family: var(--font-mono);">
+            {{ health.status | default("unknown") }}
+            {% if health.checks and health.checks.db %} · db {{ health.checks.db }}{% endif %}
+            {% if health.checks and health.checks.redis %} · redis {{ health.checks.redis }}{% endif %}
+          </span>
+        {% elif health and health.error %}
+          <span style="font-size: .78rem; color: var(--danger); word-break: break-word;">
+            Cannot reach <code class="ox-code">{{ proxy_url | default("proxy") }}</code>
+            — {{ health.error }}
+          </span>
+        {% else %}
+          <span style="font-size: .78rem; color: var(--text-muted);">
+            Start with <code class="ox-code">./scripts/dev-stack.sh</code>
+          </span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="ox-stat-card" style="margin: 0; display: flex; flex-direction: column; justify-content: center;">
+      <div class="ox-stat-label">Total spend</div>
+      <div class="ox-stat-value">${{ "%.4f"|format(total_spend | default(0.0)) }}</div>
+      <div class="ox-stat-sub">{{ total_requests | default(0) }} requests · from spend DB</div>
+    </div>
+  </div>
+
+  <div class="ox-card">
+    <div class="ox-card-header">
+      <h3>Daily spend · last {{ activity_days | default(30) }} days</h3>
+    </div>
+    <div class="ox-card-body">
+      {% if activity and activity | length > 0 %}
+      <div style="display: flex; flex-direction: column; gap: .12rem;">
+        {% for day in activity %}
+        <div class="ox-activity-bar">
+          <span class="ox-activity-label">{{ day.day }}</span>
+          <div class="ox-activity-track">
+            <div class="ox-activity-fill" style="width: {{ day.bar_pct | default(0) }}%;"></div>
+          </div>
+          <span class="ox-activity-val">
+            {% if day.spend is number %}${{ "%.4f"|format(day.spend) }}{% else %}$0.0000{% endif %}
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="ox-empty">
+        <div class="ox-empty-icon">⌀</div>
+        <p style="margin: 0 0 .35rem; font-weight: 650; color: var(--text);">No spend recorded yet</p>
+        <p style="margin: 0; font-size: .85rem;">
+          Route traffic through a proxy with <code class="ox-code">database_url</code> to fill this chart.
+        </p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>

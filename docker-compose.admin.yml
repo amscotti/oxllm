@@ -1,0 +1,21 @@
+# Opt-in overlay. Compose interpolates required variables before profile
+# filtering, so include this file only when starting the admin service.
+# docker compose -f docker-compose.yml -f docker-compose.admin.yml --profile admin up --build -d
+services:
+  oxllm-admin:
+    profiles: ["admin"]
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    environment:
+      OXLLM_PROXY_URL: http://oxllm:4000
+      OXLLM_MASTER_KEY: ${OXLLM_MASTER_KEY:?set OXLLM_MASTER_KEY in .env}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?set ADMIN_SESSION_SECRET in .env (at least 16 characters)}
+      ADMIN_UI_PASSWORD: ${ADMIN_UI_PASSWORD:?set ADMIN_UI_PASSWORD in .env}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      oxllm:
+        condition: service_healthy
+    restart: unless-stopped

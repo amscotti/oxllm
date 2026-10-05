@@ -1,0 +1,244 @@
+# oxllm proxy configuration — example
+#
+# This follows the LiteLLM config shape so existing users feel at home.
+# Unknown keys are ignored with a warning.
+# This is an annotated catalog. Remove unused model entries before running;
+# every active os.environ/ reference must exist. For quickstart use config.minimal.yaml.
+
+model_list:
+  # The `model_name` is what clients send. The `oxllm_params.model` is
+  # the provider/model that oxllm translates to.
+  - model_name: gpt-4o
+    oxllm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://api.openai.com/v1  # optional; defaults to OpenAI
+      timeout: 600                         # request timeout (seconds)
+      stream_timeout: 60                   # idle timeout between stream chunks
+      rpm: 480                             # per-deployment rate limit
+      tpm: 1000000                         # per-deployment token limit
+
+  # Multiple deployments under the same model_name → load-balanced + failover.
+  - model_name: gpt-4o
+    oxllm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY_BACKUP
+      # weight: 4    # weight for `simple_shuffle` (default 1)
+
+  # Wildcard: any unmatched openai/* model forwards to OpenAI.
+  - model_name: "*"
+    oxllm_params:
+      model: openai/*
+      api_key: os.environ/OPENAI_API_KEY
+
+  # --- OpenAI-compatible providers ------------------------------------
+  # Each strips its own `<slug>/` prefix and forwards the rest unchanged.
+
+  # Groq (chat only). llama-3.1-70b-versatile was decommissioned on Groq;
+  # llama-3.3-70b-versatile is the current production 70B instruct model.
+  - model_name: groq-llama
+    oxllm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      # api_base: https://api.groq.com/openai/v1   # default
+
+  # Together AI (chat + embeddings).
+  - model_name: together-llama
+    oxllm_params:
+      model: together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo
+      api_key: os.environ/TOGETHER_API_KEY
+      # api_base: https://api.together.xyz/v1     # default
+
+  # OpenRouter (chat + embeddings). Optional ranking headers come from the
+  # deployment `extra` block (typically populated from env at config load).
+  - model_name: openrouter-gpt
+    oxllm_params:
+      model: openrouter/openai/gpt-4o
+      api_key: os.environ/OPENROUTER_API_KEY
+      # api_base: https://openrouter.ai/api/v1    # default
+      # http_referer: https://myapp.example.com   # optional, for rankings
+      # x_title: My App                           # optional, for rankings
+
+  # xAI / Grok (chat only).
+  - model_name: grok
+    oxllm_params:
+      model: xai/grok-4
+      api_key: os.environ/XAI_API_KEY
+      # api_base: https://api.x.ai/v1              # default
+
+  # Mistral (chat + embeddings).
+  - model_name: mistral-large
+    oxllm_params:
+      model: mistral/mistral-large-latest
+      api_key: os.environ/MISTRAL_API_KEY
+      # api_base: https://api.mistral.ai/v1       # default
+
+  # --- Cohere + Azure OpenAI ------------------------------------------
+
+  # Cohere (chat + embeddings + rerank). Cohere v2 is NOT OpenAI-native;
+  # oxllm translates the wire format (system → preamble, content array →
+  # string, billed_units → usage, finish_reason mapping, etc.).
+  - model_name: cohere-command
+    oxllm_params:
+      model: cohere/command-r-plus
+      api_key: os.environ/COHERE_API_KEY
+      # api_base: https://api.cohere.com/v2       # default (chat + embed)
+      # For rerank, oxllm derives the v1 base from this (…/v2 → …/v1).
+
+  # Azure OpenAI (chat + embeddings). Two live surfaces:
+  #  * v1 (GA, recommended): `api_version: v1` → `{api_base}/openai/v1/…`
+  #    with the deployment name in the body `model`. `api_base` may be the
+  #    resource root, the documented v1 base (…/openai/v1/), or the unified
+  #    Foundry host (https://<resource>.services.ai.azure.com/openai/v1/).
+  #  * classic: a dated `api_version` (e.g. 2024-10-21) routes through
+  #    `…/openai/deployments/<deployment>/…`.
+  # Auth: `api_key` sends the `api-key` header; keyless Entra ID uses
+  # `extra.azure_ad_token` (sent as `Authorization: Bearer`).
+  - model_name: azure-gpt4
+    oxllm_params:
+      model: azure/my-gpt4-deployment
+      api_key: os.environ/AZURE_API_KEY
+      # extra:
+      #   azure_ad_token: os.environ/AZURE_AD_TOKEN   # keyless Entra ID
+      api_base: https://myresource.openai.azure.com
+      # Classic default; omit to use it. Prefer `v1` for new deployments.
+      # Old dated versions (e.g. 2024-02-15-preview) reject newer params
+      # (max_completion_tokens, reasoning-effort) with silent 400s.
+      api_version: 2025-02-01-preview
+
+  # --- Google Vertex AI ----------------------------------------------
+  # Vertex hosts Gemini (via an OpenAI-compat endpoint) and Anthropic
+  # Claude (via `:rawPredict`). Both go through the `vertex_ai/` slug.
+  # `vertex_project` and `vertex_location` are passed via the `extra` map;
+  # `os.environ/` substitution is supported. The bearer token comes from
+  # `api_key` (a pre-exchanged GCP access token) or the `GCP_ACCESS_TOKEN`
+  # / `VERTEX_AI_ACCESS_TOKEN` env vars.
+  - model_name: vertex-gemini
+    oxllm_params:
+      model: vertex_ai/gemini-1.5-pro
+      api_key: os.environ/GCP_ACCESS_TOKEN
+      vertex_project: os.environ/VERTEX_AI_PROJECT
+      vertex_location: us-central1
+      # api_base: https://us-central1-aiplatform.googleapis.com   # default
+
+  - model_name: vertex-claude
+    oxllm_params:
+      model: vertex_ai/claude-3-5-sonnet@20241022
+      api_key: os.environ/GCP_ACCESS_TOKEN
+      vertex_project: os.environ/VERTEX_AI_PROJECT
+      vertex_location: us-central1
+
+oxllm_settings:
+  drop_params: true            # strip unsupported params instead of erroring
+  num_retries: 2               # retries on 5xx/429/timeout (LiteLLM parity default)
+  request_timeout: 600         # global default
+  routing_strategy: simple_shuffle   # | lowest_latency | lowest_cost | usage_based
+                                     # | latency_based | quality_router | tag_based
+                                     # | least_busy | session_affinity
+  # session_affinity: stick requests with the same x-oxllm-session-id header to
+  # the same deployment (consistent hash). Useful for multi-provider model
+  # groups so provider-side prompt caches stay warm across turns.
+  fallbacks:                   # try alternate models on failure
+    - gpt-4o: [azure-gpt4]     # target must be a defined `model_name` above
+  context_window_fallbacks:    # swap to larger-context model if context overflows
+    - groq-llama: [gpt-4o]     # source and target must be defined `model_name`s above
+  # Content-policy fallback: swap models when the upstream rejects
+  # the request via a content-policy / content-filter error.
+  # content_policy_fallbacks:
+  #   - gpt-4o: [llama-guarded, claude-guarded]
+  # Per-HTTP-status retry counts. Overrides num_retries for the
+  # listed statuses; missing statuses fall back to num_retries.
+  # retry_policy:
+  #   "429": 5
+  #   "500": 3
+  #   "503": 3
+  # quality_router: pick the deployment with the highest configured score
+  # routing_strategy: quality_router
+  # quality_scores:
+  #   openai/gpt-4o: 0.9
+  #   openai/gpt-4o-mini: 0.7
+  # Cache / rate-limit backend. Use Redis for multi-replica deploys:
+  # cache:
+  #   type: redis
+  #   host: redis
+  #   port: 6379
+  # Langfuse observability — when set, a hook batches trace-create +
+  # generation-create events and POSTs them to {host}/api/public/ingestion.
+  # langfuse_config:
+  #   host: https://cloud.langfuse.com
+  #   public_key: os.environ/LANGFUSE_PUBLIC_KEY
+  #   secret_key: os.environ/LANGFUSE_SECRET_KEY
+  #   flush_interval_secs: 5        # default 5
+  #   max_batch_size: 50            # default 50
+  #   log_inputs: true              # log request bodies (default true)
+  #   log_outputs: true             # log response bodies (default true)
+  #
+  # Budget threshold alerts: fire a webhook when spend crosses a percentage
+  # of max_budget. Fire-and-forget, never blocks requests.
+  # alerting: ["webhook"]
+  # alerting_config:
+  #   webhook:
+  #     url: https://hooks.example.com/budget-alerts
+  #     thresholds: [0.5, 0.8, 0.9, 1.0]   # default [0.8, 0.9, 1.0]
+  #     # headers:
+  #     #   Authorization: Bearer alert-token
+
+# Router settings include typed aliases, routing groups, and routing knobs.
+# Shared knobs here override their oxllm_settings counterparts.
+router_settings:
+  # Map a client-facing model name to one or more concrete `model_name`
+  # entries from `model_list`. The router expands the request across all
+  # deployments in the alias group.
+  # model_group_alias:
+  #   gpt-4: [gpt-4o, gpt-4-turbo]
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY  # required in prod (also set OXLLM_REQUIRE_AUTH=true)
+  # Clients may authenticate with Authorization: Bearer <key> (OpenAI SDK)
+  # or x-api-key: <key> (Anthropic SDK pointing base_url at oxllm).
+  # database_url: os.environ/DATABASE_URL   # optional
+  # JWT auth — checked after master + virtual keys
+  # jwt_secret: os.environ/JWT_SECRET
+  # jwt_algorithm: HS256                   # default HS256
+  # jwt_audience: oxllm                    # optional
+  # Security
+  # max_request_body_size_mb: 50           # default 10
+  # Runtime log format for serve (text default); changing it requires restart.
+  # log_format: json
+  # Daily DB spend-log pruning; omitted means no retention limit.
+  # spend_log_retention_days: 90
+  # OpenTelemetry (requires the `otel` feature)
+  # otel_endpoint: http://localhost:4317
+  # otel_service_name: oxllm
+  # Management API CORS allow-list. When omitted or empty, CORS is disabled.
+  # Each entry must be a fully-qualified origin (scheme + host [+ port]).
+  # management_cors_origins:
+  #   - http://localhost:3000
+  #   - https://admin.internal.example.com
+  # Proxy/LLM CORS is configured separately (also off when omitted/empty).
+  # proxy_cors_origins:
+  #   - http://localhost:3000
+  # Caller CIDR allowlist: omitted allows all; [] denies ALL protected callers.
+  # allowed_ips:
+  #   - 192.0.2.0/24
+  # Trusted reverse-proxy CIDR ranges. When set, X-Forwarded-For /
+  # X-Real-IP are honored only when the connection peer IP falls inside
+  # one of these ranges. When unset (default), forwarded headers are
+  # NEVER trusted and the peer IP is used directly — this prevents
+  # spoofing of the per-IP auth-failure rate limiter.
+  # trusted_proxy_cidrs:
+  #   - 10.0.0.0/8
+  #   - 192.168.0.0/16
+  # Effective shutdown drain is max(this or 30, request_timeout or 600).
+  # Leave additional time for spend/telemetry flushing in the pod/Compose grace.
+  # shutdown_timeout_secs: 30
+
+  # For private Redis or upstream endpoints, explicitly permit private targets:
+  # allow_private_api_base: true
+
+# Distributed cache belongs under oxllm_settings (not general_settings):
+# oxllm_settings:
+#   cache:
+#     type: redis
+#     redis_url: os.environ/REDIS_URL  # supports auth/TLS; or use host + port
+# A shared Redis coordinates fleet-wide counters, key revocation and alerts.

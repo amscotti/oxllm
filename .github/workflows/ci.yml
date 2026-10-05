@@ -1,0 +1,228 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: rust-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # The hosted runner's ~14 GB disk cannot hold this workspace's debug-profile
+  # (debuginfo=2) test artifacts: links died with ENOSPC and even the runner
+  # agent lost its log. Debug info is not needed to run the suite.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  check:
+    name: Check & Test (${{ matrix.os }}, ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        toolchain: ["1.96"]
+        include:
+          - os: ubuntu-latest
+            toolchain: nightly
+    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
+    env:
+      # rust-toolchain.toml pins a channel and rustup prefers the toolchain
+      # file over what dtolnay/rust-toolchain installs; force the matrix
+      # channel so the nightly leg actually runs nightly.
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Belt-and-braces against ENOSPC: reclaim ~10 GB from preinstalled
+      # SDKs this workflow never uses.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+
+      - name: Install cargo-deny
+        if: matrix.toolchain == '1.96' && matrix.os == 'ubuntu-latest'
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
+        with:
+          tool: cargo-deny
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          # -dbg0: caches saved before the debug=0 profile switch restore
+          # oversized debug=2 target dirs; do not reuse them.
+          shared-key: ${{ matrix.os }}-${{ matrix.toolchain }}-dbg0
+
+      - name: Format check
+        if: matrix.toolchain == '1.96'
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace
+
+      - name: Compile Criterion benchmarks on the pinned stable toolchain
+        if: matrix.toolchain == '1.96' && matrix.os == 'ubuntu-latest'
+        run: cargo bench --locked --workspace --no-run
+
+      # NOTE: cargo-deny only runs on ubuntu-latest. Platform-specific advisories
+      # (e.g. macOS-only or linux-only CVEs) would create false positives/negatives
+      # if cross-checked on the other OS. The Linux graph is the canonical one.
+      - name: Deny check
+        if: matrix.toolchain == '1.96' && matrix.os == 'ubuntu-latest'
+        run: cargo deny --locked check
+
+      - name: Doc build
+        if: matrix.toolchain == '1.96'
+        run: cargo doc --locked --no-deps --workspace
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  feature-matrix:
+    name: Feature matrix (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "db"
+            flags: "--features db"
+          - label: "admin"
+            flags: "--features admin"
+          - label: "otel"
+            flags: "--features otel"
+          - label: "no-default-features"
+            flags: "--no-default-features"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Belt-and-braces against ENOSPC: reclaim ~10 GB from preinstalled
+      # SDKs this workflow never uses.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+
+      - name: Install Rust (pinned stable)
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: "1.96"
+          components: clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          shared-key: ubuntu-latest-stable-features-dbg0
+
+      - name: Build (${{ matrix.label }})
+        run: cargo build --locked --workspace --bins ${{ matrix.flags }}
+
+      - name: Test (${{ matrix.label }})
+        run: cargo test --locked --workspace ${{ matrix.flags }}
+
+  db-postgres:
+    # Exercises the Postgres code paths against a real server. CI otherwise
+    # only runs SQLite (`sqlite::memory:`), which masked the sqlx::Any
+    # INT4/INT8 decode mismatch (Postgres INTEGER columns cannot be read as
+    # i64). The integration test below is gated on
+    # OXLLM_TEST_POSTGRES_URL and skips when it is unset.
+    name: DB integration (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: oxllm
+          POSTGRES_PASSWORD: oxllm
+          POSTGRES_DB: oxllm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U oxllm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OXLLM_TEST_POSTGRES_URL: postgres://oxllm:oxllm@localhost:5432/oxllm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust (pinned stable)
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: "1.96"
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          shared-key: ubuntu-latest-stable-postgres-dbg0
+
+      - name: Test (oxllm-db, postgres + sqlite)
+        run: cargo test --locked -p oxllm-db --features postgres,sqlite
+
+  redis-integration:
+    name: Redis integration (cross-replica invalidation)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    env:
+      OXLLM_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: "1.96"
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          shared-key: ubuntu-latest-stable-redis-dbg0
+      - name: Exercise real Redis paths
+        run: |
+          cargo test --locked -p oxllm-cache-redis --features redis
+          cargo test --locked -p oxllm-server --features db
+          cargo test --locked --features db --test redis_invalidation_e2e --test cross_replica_model_propagation_e2e
+
+  all-features:
+    # Catches feature-combination regressions under `--all-features`.
+    name: Clippy (--all-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust (pinned stable)
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: "1.96"
+          components: clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          shared-key: ubuntu-latest-stable-all-features-dbg0
+
+      - name: Clippy (all features)
+        run: cargo clippy --locked --workspace --all-features --all-targets -- -D warnings

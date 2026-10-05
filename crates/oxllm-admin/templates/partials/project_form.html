@@ -1,0 +1,53 @@
+{% from "partials/list_status.html" import list_notice %}
+{{ list_notice("organizations", organizations, organizations_truncated, organizations_unavailable) }}
+{{ list_notice("teams", teams, teams_truncated, teams_unavailable) }}
+<form hx-post="/projects/create"
+      hx-target="#projects-panel"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      @htmx:after-request="if (oxRequestSucceeded($event)) showForm = false">
+  <div class="ox-form-grid">
+    <div class="ox-input">
+      <label for="project_name">Project Name</label>
+      <input id="project_name" type="text" name="project_name" placeholder="Atlas" required autocomplete="off">
+    </div>
+    <div class="ox-input">
+      <label for="project_org_id">Organization</label>
+      <select id="project_org_id" name="org_id">
+        <option value="">(none)</option>
+        {% for org in organizations | default([]) %}
+        <option value="{{ org.org_id }}">{{ org.org_name | default(org.org_id) }} — {{ org.org_id }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="ox-input">
+      <label for="project_team_id">Team</label>
+      <select id="project_team_id" name="team_id">
+        <option value="">(none)</option>
+        {% for team in teams | default([]) %}
+        <option value="{{ team.team_id }}">{{ team.team_name | default(team.team_id) }} — {{ team.team_id }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="ox-input">
+      <label for="project_max_budget">Max Budget ($)</label>
+      <input id="project_max_budget" type="number" step="0.01" min="0" name="max_budget" placeholder="(optional)">
+    </div>
+    <div class="ox-input">
+      <label for="project_budget_duration">Budget Duration</label>
+      <input id="project_budget_duration" type="text" name="budget_duration" placeholder="30d">
+    </div>
+    <div class="ox-input">
+      <label for="project_rpm">RPM</label>
+      <input id="project_rpm" type="number" min="0" name="rpm" placeholder="(optional)">
+    </div>
+    <div class="ox-input">
+      <label for="project_tpm">TPM</label>
+      <input id="project_tpm" type="number" min="0" name="tpm" placeholder="(optional)">
+    </div>
+  </div>
+  <div class="ox-form-actions">
+    <button type="submit" class="ox-btn ox-btn-primary">Create Project</button>
+    <button type="button" class="ox-btn" @click="showForm = false">Cancel</button>
+  </div>
+</form>

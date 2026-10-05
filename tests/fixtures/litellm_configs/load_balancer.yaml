@@ -1,0 +1,27 @@
+# Adapted from ../litellm/tests/proxy_unit_tests/example_config_yaml/load_balancer.yaml
+oxllm_settings:
+  drop_params: true
+
+model_list:
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: gpt-3.5-turbo
+      api_key: sk-test-a
+    rpm: 3
+    tpm: 20000
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: gpt-3.5-turbo
+      api_key: sk-test-b
+    rpm: 3
+    tpm: 20000
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openrouter/gpt-3.5-turbo
+  - model_name: mistral-7b-instruct
+    litellm_params:
+      model: mistralai/mistral-7b-instruct
+
+environment_variables:
+  REDIS_HOST: localhost
+  REDIS_PORT: "6379"

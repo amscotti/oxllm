@@ -1,0 +1,2 @@
+# Required for the host-side scenario driver, separate from mock-llm's aiohttp.
+httpx>=0.28,<1

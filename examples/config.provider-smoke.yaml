@@ -1,0 +1,84 @@
+# Multi-provider live smoke config. Secrets via .env (os.environ/…).
+# Covers every provider with keys present in the local environment.
+
+model_list:
+  # --- OpenAI ---
+  - model_name: openai
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 90
+
+  # --- Anthropic ---
+  - model_name: anthropic
+    oxllm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+      timeout: 90
+
+  # --- xAI (Grok) ---
+  - model_name: xai
+    oxllm_params:
+      model: xai/grok-4-1-fast-non-reasoning
+      api_key: os.environ/XAI_API_KEY
+      timeout: 90
+
+  # --- DeepSeek (direct) ---
+  - model_name: deepseek
+    oxllm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+      timeout: 120
+
+  # --- Meta (Muse) ---
+  - model_name: meta
+    oxllm_params:
+      model: meta/muse-spark-1.1
+      api_key: os.environ/META_API_KEY
+      timeout: 120
+
+  # --- Groq ---
+  - model_name: groq
+    oxllm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      timeout: 90
+
+  # --- Fireworks ---
+  - model_name: fireworks
+    oxllm_params:
+      model: fireworks_ai/accounts/fireworks/models/deepseek-v4-flash
+      api_key: os.environ/FIREWORKS_API_KEY
+      timeout: 90
+
+  # --- Perplexity ---
+  - model_name: perplexity
+    oxllm_params:
+      model: perplexity/sonar
+      api_key: os.environ/PERPLEXITY_API_KEY
+      timeout: 90
+
+  # --- OpenRouter (aggregator) ---
+  - model_name: openrouter
+    oxllm_params:
+      model: openrouter/openai/gpt-4o-mini
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 90
+      http_referer: https://github.com/oxllm
+      x_title: oxllm-provider-smoke
+
+  # --- OpenAI embeddings (unary path) ---
+  - model_name: openai-embed
+    oxllm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+
+oxllm_settings:
+  drop_params: true
+  num_retries: 1
+  request_timeout: 120
+  routing_strategy: simple_shuffle
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY

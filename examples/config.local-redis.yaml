@@ -1,0 +1,53 @@
+# Local smoke config: Redis on localhost, placeholder provider keys.
+# Used by scripts/smoke-local.sh (not docker).
+
+model_list:
+  - model_name: gpt-4o
+    oxllm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+  - model_name: claude
+    oxllm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+      timeout: 60
+  - model_name: grok
+    oxllm_params:
+      model: xai/grok-3
+      api_key: os.environ/XAI_API_KEY
+      timeout: 60
+  # Grok 4.5 — primary model for Claude Code via oxllm
+  - model_name: grok-4.5
+    oxllm_params:
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
+      timeout: 120
+      stream_timeout: 90
+  # Claude Code often still requests Anthropic model ids; map them to Grok 4.5
+  # so the CLI works without forcing every internal call to rename models.
+  - model_name: claude-sonnet-4-5-20250929
+    oxllm_params:
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
+      timeout: 120
+  - model_name: claude-haiku-4-5-20251001
+    oxllm_params:
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
+      timeout: 120
+
+oxllm_settings:
+  drop_params: true
+  num_retries: 1
+  request_timeout: 60
+  cache:
+    type: redis
+    host: 127.0.0.1
+    port: 6379
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY
+  # Required: the Redis cache above runs on loopback, which is rejected
+  # unless this is set. Keep it `false` for public-only deployments.
+  allow_private_api_base: true
