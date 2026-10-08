@@ -372,14 +372,14 @@ fn test_golden_file_parity() {
     assert_semantically_equal(&out, &response);
 }
 
-// --- Ported from LiteLLM test_openai.py ---
+// --- Ported from the reference test_openai.py ---
 //
 // The OpenAI provider is a near-identity transform (only the `model` field is
 // rewritten).  These tests verify that all API parameters, complex message
 // content (vision, files), tool definitions, and streaming-chunk fields
 // survive the pass-through unchanged.
 
-// Litellm test: test_openai_prediction_param / test_openai_prediction_param_mock
+// Reference test: test_openai_prediction_param / test_openai_prediction_param_mock
 #[test]
 fn passthrough_preserves_prediction() {
     let p = OpenAiProvider;
@@ -397,7 +397,7 @@ fn passthrough_preserves_prediction() {
     assert_eq!(out["prediction"]["content"], code);
 }
 
-// Litellm test: test_vision_with_custom_model
+// Reference test: test_vision_with_custom_model
 #[test]
 fn passthrough_preserves_vision_content() {
     let p = OpenAiProvider;
@@ -421,7 +421,7 @@ fn passthrough_preserves_vision_content() {
     assert!(url.starts_with("data:image/png;base64,"));
 }
 
-// Litellm test: test_openai_tool_calling
+// Reference test: test_openai_tool_calling
 #[test]
 fn passthrough_preserves_tool_calls() {
     let p = OpenAiProvider;
@@ -450,7 +450,7 @@ fn passthrough_preserves_tool_calls() {
     assert_eq!(out["temperature"], 0.5);
 }
 
-// Litellm test: test_openai_service_tier_parameter
+// Reference test: test_openai_service_tier_parameter
 #[test]
 fn passthrough_preserves_service_tier() {
     let p = OpenAiProvider;
@@ -463,7 +463,7 @@ fn passthrough_preserves_service_tier() {
     assert_eq!(out["service_tier"], "priority");
 }
 
-// Litellm test: test_openai_safety_identifier_parameter
+// Reference test: test_openai_safety_identifier_parameter
 #[test]
 fn passthrough_preserves_safety_identifier() {
     let p = OpenAiProvider;
@@ -476,7 +476,7 @@ fn passthrough_preserves_safety_identifier() {
     assert_eq!(out["safety_identifier"], "user_code_123456");
 }
 
-// Litellm test: test_openai_gpt5_reasoning
+// Reference test: test_openai_gpt5_reasoning
 #[test]
 fn passthrough_preserves_reasoning_effort() {
     let p = OpenAiProvider;
@@ -489,7 +489,7 @@ fn passthrough_preserves_reasoning_effort() {
     assert_eq!(out["reasoning_effort"], "minimal");
 }
 
-// Litellm test: test_openai_pdf_url (file type content in messages)
+// Reference test: test_openai_pdf_url (file type content in messages)
 #[test]
 fn passthrough_preserves_file_content() {
     let p = OpenAiProvider;
@@ -511,7 +511,7 @@ fn passthrough_preserves_file_content() {
     );
 }
 
-// Litellm test: test_openai_chat_completion_streaming_handler_reasoning_content
+// Reference test: test_openai_chat_completion_streaming_handler_reasoning_content
 #[test]
 fn stream_chunk_with_reasoning_content() {
     let p = OpenAiProvider;
@@ -529,7 +529,7 @@ fn stream_chunk_with_reasoning_content() {
     assert!(out["choices"][0]["delta"]["content"].is_null());
 }
 
-// Litellm test: test_streaming_tool_calls_with_n_greater_than_1 (chunk parsing)
+// Reference test: test_streaming_tool_calls_with_n_greater_than_1 (chunk parsing)
 #[test]
 fn stream_chunk_with_tool_calls() {
     let p = OpenAiProvider;
@@ -553,7 +553,7 @@ fn stream_chunk_with_tool_calls() {
     );
 }
 
-// Litellm test: test_streaming_content_with_n_greater_than_1 (choice index in chunks)
+// Reference test: test_streaming_content_with_n_greater_than_1 (choice index in chunks)
 #[test]
 fn stream_chunk_with_choice_index() {
     let p = OpenAiProvider;
@@ -567,7 +567,7 @@ fn stream_chunk_with_choice_index() {
     assert_eq!(out["choices"][0]["delta"]["content"], "Hello");
 }
 
-// Litellm test: test_openai_web_search (response annotations passthrough)
+// Reference test: test_openai_web_search (response annotations passthrough)
 #[test]
 fn response_preserves_annotations() {
     let p = OpenAiProvider;
@@ -603,7 +603,7 @@ fn response_preserves_annotations() {
     );
 }
 
-// Litellm test: test_openai_prediction_param (completion_tokens_details passthrough)
+// Reference test: test_openai_prediction_param (completion_tokens_details passthrough)
 #[test]
 fn response_preserves_usage_details() {
     let p = OpenAiProvider;
@@ -1593,7 +1593,7 @@ fn gpt5_with_reasoning_effort_none_still_strips_sampling_params() {
 // gpt-5-chat-2025-08-07) are regular chat models: they support
 // `temperature`, `top_p`, and the standard sampling surface, but NOT
 // `reasoning_effort`. They must NOT be routed through the GPT-5 reasoning
-// path (LiteLLM `OpenAIGPT5Config.is_model_gpt_5_model`).
+// path (the reference GPT-5-family capability check).
 
 #[test]
 fn gpt5_chat_family_not_classified_as_reasoning() {
@@ -2329,6 +2329,24 @@ fn endpoint_url_full_base_with_trailing_slash_not_doubled() {
     assert_eq!(
         p.endpoint_url(&dep),
         "https://gateway.example.com/v1/chat/completions"
+    );
+}
+
+#[test]
+fn endpoint_urls_preserve_queries_on_full_operation_paths() {
+    let p = OpenAiProvider;
+    let mut dep = test_deployment();
+    dep.oxllm_params.api_base =
+        Some("https://example.test/models/chat/completions?api-version=test".into());
+    assert_eq!(
+        ChatProvider::endpoint_url(&p, &dep),
+        "https://example.test/models/chat/completions?api-version=test"
+    );
+    dep.oxllm_params.api_base =
+        Some("https://example.test/models/embeddings?api-version=test".into());
+    assert_eq!(
+        EmbeddingProvider::embedding_url(&p, &dep),
+        "https://example.test/models/embeddings?api-version=test"
     );
 }
 

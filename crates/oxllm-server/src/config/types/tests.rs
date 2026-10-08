@@ -216,7 +216,7 @@ router_settings:
 #[test]
 fn settings_adaptive_strategy_parses() {
     // Routing knobs (incl. the strategy name) are accepted under
-    // `oxllm_settings` too, per LiteLLM config compatibility.
+    // `oxllm_settings` too, for config compatibility.
     let yaml = "\
 model_list: []
 oxllm_settings:
@@ -231,7 +231,7 @@ oxllm_settings:
 }
 
 // Bug #49 — `oxllm_params.timeout` accepts fractional seconds (e.g.
-// `timeout: 0.5`), which LiteLLM configs use legitimately. Stored as
+// `timeout: 0.5`), which existing configs use legitimately. Stored as
 // `f64` rather than `u64`.
 #[test]
 fn params_timeout_accepts_fractional_seconds() {
@@ -400,7 +400,7 @@ router_settings:
 
 #[test]
 fn allowed_fails_accepted_in_settings() {
-    // LiteLLM-style configs carry allowed_fails under oxllm_settings;
+    // Existing configs carry allowed_fails under oxllm_settings;
     // they must not be silently dropped.
     let yaml = "\
 model_list: []

@@ -16,7 +16,7 @@
 //!   exists and the pinned deployment is available, prefer it over the
 //!   router's pick.
 //! - Post-call: write `pcache:{api_key_hash}:{hash}` → deployment id with a
-//!   5-minute TTL (matching LiteLLM).
+//!   5-minute TTL (matching the reference).
 //!
 //! The pin value is the deployment's stable cooldown key
 //! (`stable_key(deployment)`, see
@@ -37,7 +37,7 @@
 //! pre-call *lookup* uses the **minimum** resolved `prompt_cache_min_tokens`
 //! across the model group's deployments (so a high-floor member cannot
 //! suppress a valid lookup for a low-floor member that may hold a warm cache,
-//! matching LiteLLM's `_get_min_token_count_for_deployments`); the post-call
+//! matching the reference `_get_min_token_count_for_deployments`); the post-call
 //! *write* uses the per-deployment resolved minimum (`engages`).
 //!
 //! # Cache-key caveats
@@ -48,7 +48,7 @@
 //!   practical concern within a tenant's pin space.
 //! - The hash is computed over the serialized message JSON **without Unicode
 //!   normalization**: NFC and NFD variants of the same visible text produce
-//!   different cache keys (this matches LiteLLM behavior).
+//!   different cache keys (this matches reference behavior).
 //! - The cache key is sensitive to the full message JSON structure — role,
 //!   content-part layout, and serialized field ordering — **and** to the
 //!   request's `tools` array, not just the visible text. Same prefix with a
@@ -56,16 +56,16 @@
 //!   covers tool definitions, so this keeps the pin aligned with cache
 //!   warmth).
 //!
-//! # LiteLLM parity divergence (documented)
+//! # Reference parity divergence (documented)
 //!
-//! LiteLLM's `get_prompt_caching_cache_key` returns `None` when **no** content
+//! The reference `get_prompt_caching_cache_key` returns `None` when **no** content
 //! block in the request carries `cache_control: {type: "ephemeral"}`, and
 //! neither the read nor the write touches the cache in that case. oxllm
 //! intentionally diverges: it pins **every** large prompt regardless of
 //! `cache_control` annotation, because oxllm does not auto-inject
 //! `cache_control` breakpoints (see the future-feature note below) and the
 //! pin doubles as sticky routing for conversations whose callers have not
-//! opted into caching. The cost is that oxllm writes pins LiteLLM would skip
+//! opted into caching. The cost is that oxllm writes pins the reference would skip
 //! (degenerating to sticky-by-prefix routing when the provider has nothing
 //! cached); the benefit is simpler, uniformly sticky routing. Folding `tools`
 //! into the key and hashing the first system/user message keeps collisions
@@ -73,7 +73,7 @@
 //!
 //! # Future feature: auto-inject `cache_control` breakpoints (U31)
 //!
-//! LiteLLM commit `04afc962b1` adds *automatic* injection of Anthropic
+//! The reference adds *automatic* injection of Anthropic
 //! `cache_control: {type: "ephemeral"}` breakpoints into the request body
 //! (on the last tool definition, the last system block, and the last user
 //! message) when the request is large enough to benefit from caching.
@@ -89,7 +89,7 @@
 //!   and the `has_cache_control` branches in `anthropic::split_system_messages`).
 //!   So callers who know they want caching can opt in explicitly today.
 //!
-//! What is missing for full LiteLLM parity: a hook that auto-injects
+//! What is missing for full reference parity: a hook that auto-injects
 //! `cache_control` breakpoints on the host side, gated on the same
 //! `prompt_caching_min_tokens` threshold, so callers get caching without
 //! having to annotate their requests. Implementing this requires:
@@ -119,7 +119,7 @@ use sha2::{Digest, Sha256};
 /// (Anthropic's prompt-cache minimum is 1024 tokens for most models).
 pub const DEFAULT_MIN_TOKENS: u32 = 1024;
 
-/// TTL for prompt → deployment pin entries (5 minutes, matching LiteLLM's
+/// TTL for prompt → deployment pin entries (5 minutes, matching the reference
 /// `PromptCachingCache` set calls, which pass `ttl=300`). Exposed to tests so
 /// the value is pinned; a regression here silently changes how long stale
 /// pins survive deployment rotation.
@@ -174,7 +174,7 @@ impl PromptCachingCheck {
     ///
     /// This is the **pin-write gate**: it decides whether a prompt that was
     /// served by `deployment` is large enough to *record* a pin so future
-    /// requests route back here. LiteLLM specifies that the write gate should
+    /// requests route back here. The reference specifies that the write gate should
     /// use the **highest** minimum across the model group (so we only pin when
     /// the prompt is cacheable for *every* deployment in the group, avoiding
     /// pinning to a deployment whose cache the provider would reject).
@@ -192,7 +192,7 @@ impl PromptCachingCheck {
 
     /// Whether the pre-call *pin lookup* engages: the estimated prefix
     /// tokens meet the **minimum** resolved `prompt_cache_min_tokens` across
-    /// the model group's deployments, mirroring LiteLLM's
+    /// the model group's deployments, mirroring the reference
     /// `_get_min_token_count_for_deployments`.
     ///
     /// The read gate deliberately uses the group minimum (not the maximum,
@@ -216,7 +216,7 @@ impl PromptCachingCheck {
     /// # U35 — read gate semantics
     ///
     /// This is the **cache-read gate**: it decides whether to even *consult*
-    /// the pin table for a request. LiteLLM specifies that the read gate
+    /// the pin table for a request. The reference specifies that the read gate
     /// should use the **lowest** minimum across the model group (so any
     /// deployment that could have a warm cache is consulted). This method
     /// implements that directly, rather than approximating it with the global
@@ -357,7 +357,7 @@ fn cache_key(api_key_hash: &str, hash: u128) -> String {
 /// appear in JSON) so that two requests sharing a system prompt but differing
 /// in their tool definitions produce distinct pins. Anthropic's provider-side
 /// cache key covers tool definitions, so this keeps the pin aligned with
-/// cache warmth (the LiteLLM cache key also includes `tools`).
+/// cache warmth (the reference cache key also includes `tools`).
 fn prompt_prefix(body: &Value) -> Option<(String, String)> {
     let messages = body.get("messages")?.as_array()?;
     let find = |role: &str| {
@@ -532,7 +532,7 @@ mod tests {
 
     /// C13/LOW: when the model *group* name does not map to a known BPE
     /// tokenizer, [`estimate_tokens`] falls back to `cl100k_base` (matching
-    /// LiteLLM's `token_counter`, which normalises unknown names to
+    /// the reference token counter, which normalises unknown names to
     /// `gpt-3.5-turbo`). For a CJK prompt this is visibly larger — and closer
     /// to the real BPE token count — than the previous `byte_length / 4`
     /// ASCII heuristic. This locks in the documented approximation so a future
@@ -717,7 +717,7 @@ mod tests {
     /// 4096` to accommodate an Opus-4.5 deployment must NOT silently disable
     /// cache consultation for a Sonnet (1024) group: the group minimum
     /// resolves to 1024 and the lookup engages at 1024 tokens. Mirrors
-    /// LiteLLM's `_get_min_token_count_for_deployments`.
+    /// the reference `_get_min_token_count_for_deployments`.
     #[test]
     fn engages_globally_uses_group_minimum_not_global() {
         // claude-sonnet-4-20250514 carries a 1024 pricing floor.
@@ -834,7 +834,7 @@ mod tests {
         );
     }
 
-    /// C13/LOW: the pin TTL must match LiteLLM's 300s (`ttl=300` in
+    /// C13/LOW: the pin TTL must match the reference 300s (`ttl=300` in
     /// `PromptCachingCache.async_set_cache`), not the 3600s the constant held
     /// before this fix. A regression here silently holds stale pins 12×
     /// longer than upstream, directing traffic at deployments that may have

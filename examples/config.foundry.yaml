@@ -1,0 +1,39 @@
+# Azure AI Foundry vendor routes. Set these environment variables and replace
+# model suffixes with the deployment/model identifiers in your resource.
+# Bases can be resource roots or full endpoints, including query versions.
+
+model_list:
+  - model_name: foundry-claude
+    oxllm_params:
+      model: azure_ai/claude-haiku-4-5
+      api_base: os.environ/AZURE_AI_ANTHROPIC_API_BASE
+      api_key: os.environ/AZURE_AI_ANTHROPIC_API_KEY
+
+  - model_name: foundry-grok
+    oxllm_params:
+      model: azure_ai/grok-4-fast-reasoning
+      api_base: os.environ/AZURE_AI_XAI_API_BASE
+      api_key: os.environ/AZURE_AI_XAI_API_KEY
+      api_version: 2024-05-01-preview
+
+  - model_name: foundry-embed
+    oxllm_params:
+      model: azure_ai/cohere-embed-v4
+      api_base: os.environ/AZURE_AI_COHERE_API_BASE
+      api_key: os.environ/AZURE_AI_COHERE_API_KEY
+      api_version: 2024-05-01-preview
+      # Native cohere/ deployments can instead set api_type: azure_ai.
+
+# For explicit Entra tokens, replace api_key with azure_ad_token. Shared keys
+# on unified Foundry resources use api-key automatically. Custom gateways can
+# select auth_header: api-key and auth_scheme: raw on a deployment.
+# Configure your contract's input/output/cache pricing overrides when the
+# deployment name does not identify a published model rate card.
+
+oxllm_settings:
+  drop_params: true
+  modify_params: true
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY
+  # http_force_ipv4: true

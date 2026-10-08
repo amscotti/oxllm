@@ -27,7 +27,7 @@ fn endpoint_url_uses_default_deepseek_base() {
 
 #[test]
 fn default_base_supports_thinking_mode() {
-    // The `/beta` default matches LiteLLM and is the endpoint that accepts
+    // The `/beta` default matches the reference and is the endpoint that accepts
     // the native `thinking` parameter mapped from `reasoning_effort`.
     assert_eq!(DEFAULT_DEEPSEEK_BASE, "https://api.deepseek.com/beta");
 }
@@ -55,7 +55,7 @@ fn apply_auth_uses_bearer_token() {
     );
 }
 
-// --- Ported from LiteLLM test_deepseek_provider_async_completion ---
+// --- Ported from the reference DeepSeek async-completion tests ---
 
 #[test]
 fn request_strips_deepseek_prefix_from_model() {
@@ -189,7 +189,7 @@ fn request_maps_reasoning_effort_to_thinking() {
     // DeepSeek's native thinking control is `{"type": "enabled"|"disabled"}`.
     // An OpenAI-style `reasoning_effort` is mapped to it ("none" → disabled,
     // anything else → enabled) and consumed — never forwarded verbatim (parity
-    // with LiteLLM's DeepSeekChatConfig.map_openai_params).
+    // with the reference DeepSeek parameter mapping).
     let p = DeepSeekProvider;
     let req = json!({
         "model": "deepseek/deepseek-reasoner",
@@ -372,7 +372,7 @@ fn transform_request_preserves_newer_openai_params() {
     assert_eq!(out["service_tier"], "default");
 }
 
-// --- Additional request parameter tests (ported from LiteLLM test_optional_params.py) ---
+// --- Additional request parameter tests (ported from the reference optional-param tests) ---
 
 #[test]
 fn request_preserves_response_format_json_object() {
@@ -626,7 +626,7 @@ fn thinking_mode_preserves_existing_reasoning_content() {
 
 #[test]
 fn thinking_mode_promotes_provider_specific_fields_reasoning_content() {
-    // When reasoning_content was saved in provider_specific_fields (LiteLLM's
+    // When reasoning_content was saved in provider_specific_fields (the reference
     // convention), it is promoted onto the assistant message.
     let p = DeepSeekProvider;
     let req = json!({

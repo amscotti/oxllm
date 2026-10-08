@@ -4,9 +4,9 @@ use oxllm_core::provider::{Provider, ResolvedCredentials};
 use std::collections::HashMap;
 
 // =============================================================================
-// Ported from LiteLLM `tests/llm_translation/test_deepgram.py`.
+// Ported from the reference `tests/llm_translation/test_deepgram.py`.
 //
-// LiteLLM's Deepgram suite (`TestDeepgramAudioTranscription`) extends a
+// The reference Deepgram suite (`TestDeepgramAudioTranscription`) extends a
 // live-call base class that hits the network for `deepgram/nova-2`. The ports
 // below cover the observable, pure pieces: provider metadata, the `Token`
 // (not Bearer) auth scheme, the `/listen` base URL, and model-prefix

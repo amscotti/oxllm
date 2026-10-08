@@ -34,7 +34,7 @@ HDRS = {"Authorization": f"Bearer {MASTER}", "Content-Type": "application/json"}
 
 
 def _chat(model: str, content: str, session_id: Optional[str] = None, stream: bool = False, cache: bool = False) -> dict:
-    # oxllm uses the LiteLLM opt-in convention: the client must send a `cache`
+    # oxllm uses the cache opt-in convention: the client must send a `cache`
     # object to engage the response cache. Without it, identical prompts are
     # NOT cached (request_wants_cache in hooks/cache_hook.rs).
     body = {"model": model, "messages": [{"role": "user", "content": content}], "stream": stream}

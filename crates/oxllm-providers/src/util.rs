@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+#[cfg(any(feature = "cohere", feature = "azure_ai"))]
+use oxllm_core::Deployment;
 use oxllm_core::provider::ResolvedCredentials;
 use serde_json::{Map, Value, json};
 
@@ -21,6 +23,163 @@ pub(crate) fn apply_bearer_auth(
         return;
     };
     headers.insert("authorization".to_string(), format!("Bearer {bearer}"));
+}
+
+/// Append `operation` to `base` when the URL path does not already end in it.
+///
+/// The suffix match uses the path only. A query string or fragment is kept,
+/// so `…/chat/completions?api-version=2024-05-01-preview` stays one path and
+/// does not lose `api-version`. A base that already ends in `/messages` is
+/// used verbatim instead of becoming `/messages/messages`.
+pub(crate) fn append_operation_path(base: &str, operation: &str) -> String {
+    let (without_fragment, fragment) = match base.split_once('#') {
+        Some((path, fragment)) => (path, Some(fragment)),
+        None => (base, None),
+    };
+    let (path, query) = match without_fragment.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (without_fragment, None),
+    };
+    let path = path.trim_end_matches('/');
+    let operation = operation.trim_matches('/');
+    let mut url = if path_ends_with_operation(path, operation) {
+        path.to_string()
+    } else {
+        format!("{path}/{operation}")
+    };
+    if let Some(query) = query.filter(|query| !query.is_empty()) {
+        url.push('?');
+        url.push_str(query);
+    }
+    if let Some(fragment) = fragment {
+        url.push('#');
+        url.push_str(fragment);
+    }
+    url
+}
+
+/// Identify the unified Azure model-inference host without matching lookalike
+/// domains, query strings, or classic deployment-scoped OpenAI paths.
+#[cfg(any(feature = "cohere", feature = "azure_ai"))]
+pub(crate) fn is_foundry_base(base: &str) -> bool {
+    let path = base.split(['?', '#']).next().unwrap_or(base);
+    let Some((_, rest)) = path.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+    host.to_ascii_lowercase()
+        .ends_with(".services.ai.azure.com")
+        && !rest.contains("/openai/deployments/")
+}
+
+/// Explicit `api_type: azure_ai` also supports custom gateways and local fixtures.
+#[cfg(feature = "cohere")]
+pub(crate) fn uses_foundry_inference(deployment: &Deployment) -> bool {
+    deployment.provider_slug() == "azure_ai"
+        || deployment
+            .oxllm_params
+            .extra
+            .get("api_type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| matches!(kind, "azure_ai" | "foundry"))
+        || deployment
+            .oxllm_params
+            .api_base
+            .as_deref()
+            .is_some_and(is_foundry_base)
+}
+
+/// Build Foundry chat, native Anthropic, or text-embedding URLs, retaining
+/// explicit query versions and normalizing full operation paths for reuse.
+#[cfg(any(feature = "cohere", feature = "azure_ai"))]
+pub(crate) fn foundry_endpoint_url(
+    deployment: &Deployment,
+    operation: &str,
+    anthropic: bool,
+) -> String {
+    let base = deployment
+        .oxllm_params
+        .api_base
+        .as_deref()
+        .unwrap_or("https://azure-ai-api-base-not-configured.invalid");
+    let (base, fragment) = base
+        .split_once('#')
+        .map_or((base, None), |(base, fragment)| (base, Some(fragment)));
+    let (base, query) = base
+        .split_once('?')
+        .map_or((base, None), |(base, query)| (base, Some(query)));
+    let mut path = base.trim_end_matches('/').to_string();
+    for suffix in ["/chat/completions", "/embeddings", "/embed", "/messages"] {
+        if let Some(root) = path.strip_suffix(suffix) {
+            path = root.to_string();
+            break;
+        }
+    }
+    if is_foundry_base(base) {
+        if anthropic {
+            if let Some(root) = path.strip_suffix("/models") {
+                path = format!("{root}/anthropic/v1");
+            } else if path.ends_with("/anthropic") {
+                path.push_str("/v1");
+            } else if path
+                .split_once("://")
+                .is_some_and(|(_, rest)| !rest.contains('/'))
+            {
+                path.push_str("/anthropic/v1");
+            }
+        } else if !path.ends_with("/models") && !path.ends_with("/openai/v1") {
+            path.push_str("/models");
+        }
+    }
+    let mut url = append_operation_path(&path, operation);
+    if let Some(query) = query.filter(|query| !query.is_empty()) {
+        url.push('?');
+        url.push_str(query);
+    }
+    let has_version = query.is_some_and(|query| {
+        query
+            .split('&')
+            .any(|param| param.split('=').next() == Some("api-version"))
+    });
+    if !has_version
+        && let Some(version) = deployment
+            .oxllm_params
+            .api_version
+            .as_deref()
+            .filter(|version| !version.is_empty())
+    {
+        const QUERY: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+            .add(b' ')
+            .add(b'&')
+            .add(b'=')
+            .add(b'#')
+            .add(b'+')
+            .add(b'%')
+            .add(b'?');
+        url.push(if url.contains('?') { '&' } else { '?' });
+        url.push_str("api-version=");
+        url.push_str(&percent_encoding::utf8_percent_encode(version, QUERY).to_string());
+    }
+    if let Some(fragment) = fragment {
+        url.push('#');
+        url.push_str(fragment);
+    }
+    url
+}
+
+/// True when `path` is exactly `operation` or ends in `/operation`.
+fn path_ends_with_operation(path: &str, operation: &str) -> bool {
+    path == operation
+        || path
+            .strip_suffix(operation)
+            .is_some_and(|prefix| prefix.ends_with('/'))
 }
 
 /// Convert a `data:<media-type>;base64,<payload>` URL into the Anthropic
@@ -217,7 +376,7 @@ fn inject_additional_properties_false_inner(schema: &mut Value, depth: u32) {
     if is_object {
         // Anthropic requires additionalProperties to be exactly false on
         // object schemas. Always overwrite — even if the client explicitly
-        // sent true — because Anthropic 400s on anything else. (LiteLLM
+        // sent true — because Anthropic 400s on anything else. (The reference
         // commit 46751ad83e)
         map.insert("additionalProperties".to_string(), Value::Bool(false));
     }
@@ -230,7 +389,7 @@ fn inject_additional_properties_false_inner(schema: &mut Value, depth: u32) {
         inject_additional_properties_false_inner(items, depth + 1);
     }
     // Walk `$defs` / `definitions` (referenced sub-schemas) so named
-    // definitions get the same annotation. Matches LiteLLM's
+    // definitions get the same annotation. Matches the reference
     // `_add_additional_properties_to_schema`.
     for defs_key in ["$defs", "definitions"] {
         if let Some(Value::Object(defs)) = map.get_mut(defs_key) {
@@ -417,7 +576,7 @@ mod tests {
 
     #[test]
     fn inject_does_not_annotate_untyped_schema() {
-        // A node with no explicit `type` is not an object per LiteLLM's
+        // A node with no explicit `type` is not an object per the reference
         // `result.get("type") == "object"` predicate.
         let mut schema = json!({"description": "x"});
         inject_additional_properties_false(&mut schema);
@@ -440,7 +599,7 @@ mod tests {
 
     #[test]
     fn inject_skips_type_array() {
-        // `type: ["object","null"]` is not the string "object"; LiteLLM skips
+        // `type: ["object","null"]` is not the string "object"; the reference skips
         // it. oxllm now matches (previously injected).
         let mut schema = json!({"type": ["object", "null"], "properties": {}});
         inject_additional_properties_false(&mut schema);

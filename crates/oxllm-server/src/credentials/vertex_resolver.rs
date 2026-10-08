@@ -8,9 +8,10 @@
 //! 2. Deployment `vertex_credentials` (JSON object, JSON string, or file path).
 //! 3. `GCP_ACCESS_TOKEN`, then `VERTEX_AI_ACCESS_TOKEN` env vars.
 //! 4. A file selected by `GOOGLE_APPLICATION_CREDENTIALS`.
+//! 5. Inline JSON selected by `VERTEX_AI_CREDENTIALS_JSON` or its legacy alias.
 //!
 //! `service_account` (RS256 JWT grant) and `authorized_user` (refresh-token
-//! grant) files are supported, with expiry-aware token caching. This is a
+//! grant) files are supported, with half-TTL background token renewal. This is a
 //! **subset** of ADC: no well-known gcloud file discovery, metadata server,
 //! external-account federation, impersonation or non-default universes.
 //! Static access-token mode has no refresh material or trustworthy expiry;
@@ -128,10 +129,18 @@ impl CredentialResolver for VertexResolver {
         {
             return self.resolve_json(read_credential_file(path).await?).await;
         }
+        for name in [
+            "VERTEX_AI_CREDENTIALS_JSON",
+            "LITELLM_VERTEX_AI_CREDENTIALS",
+        ] {
+            if let Some(json) = lookup(name).filter(|value| !value.trim().is_empty()) {
+                return self.resolve_json(Zeroizing::new(json.into_bytes())).await;
+            }
+        }
         Err(Error::Config(format!(
             "missing GCP access token: set api_key in oxllm_params \
              or the {} (or {}) env var; for automatic refresh configure \
-             vertex_credentials or GOOGLE_APPLICATION_CREDENTIALS with a \
+              vertex_credentials, GOOGLE_APPLICATION_CREDENTIALS or VERTEX_AI_CREDENTIALS_JSON with a \
              service_account or authorized_user JSON file",
             oxllm_providers::vertex_ai::ENV_GCP_ACCESS_TOKEN,
             oxllm_providers::vertex_ai::ENV_VERTEX_ACCESS_TOKEN,
@@ -168,7 +177,10 @@ impl VertexResolver {
         let credentials: GoogleCredentials = serde_json::from_slice(&bytes)
             .map_err(|_| Error::Config("invalid Google credential JSON".into()))?;
         credentials.validate()?;
-        let token = self.exchange.token(&bytes, || credentials.form()).await?;
+        let token = self
+            .exchange
+            .background_token(&bytes, move || credentials.form())
+            .await?;
         Ok(ResolvedCredentials::GcpBearer { token })
     }
 }

@@ -205,14 +205,13 @@ impl ChatProvider for AnthropicProvider {
             .oxllm_params
             .api_base
             .as_deref()
-            .unwrap_or("https://api.anthropic.com/v1")
-            .trim_end_matches('/');
-        format!("{base}/messages")
+            .unwrap_or("https://api.anthropic.com/v1");
+        crate::util::append_operation_path(base, "messages")
     }
 
     fn apply_auth(
         &self,
-        _deployment: &Deployment,
+        deployment: &Deployment,
         creds: &ResolvedCredentials,
         headers: &mut HashMap<String, String>,
     ) {
@@ -238,6 +237,7 @@ impl ChatProvider for AnthropicProvider {
             },
         };
         headers.insert("x-api-key".to_string(), key);
+        oxllm_core::provider::apply_auth_overrides(deployment, creds, headers);
         headers.insert(
             "anthropic-version".to_string(),
             ANTHROPIC_VERSION.to_string(),
@@ -253,6 +253,8 @@ impl ChatProvider for AnthropicProvider {
     }
 
     fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
+        let cache_request = inject_configured_cache_breakpoints(request, deployment)?;
+        let request = cache_request.as_ref().unwrap_or(request);
         let normalized = normalize_legacy_function_request(request)?;
         let request = normalized.as_ref().unwrap_or(request);
         let mut out = Map::new();
@@ -278,7 +280,7 @@ impl ChatProvider for AnthropicProvider {
         // floats — some serializers emit integer values as floats (e.g.
         // `4096.0`); `as_u64()` alone drops those silently and falls back to
         // the per-model default, which can inflate the output window. Round
-        // floats like LiteLLM (`transformation.py:1427-1430`:
+        // floats like the reference (`transformation.py:1427-1430`:
         // `int(round(value))`), saturating to a minimum of 1.
         let max_tokens = request
             .get("max_tokens")
@@ -327,7 +329,7 @@ impl ChatProvider for AnthropicProvider {
         // the model to call it. In `transform_response` we then lift the
         // tool call's arguments out as the response `content`. This is the
         // same synthetic-tool trick (and the same `json_tool_call` marker
-        // name) LiteLLM uses, and works on every Claude model — unlike
+        // name) the reference uses, and works on every Claude model — unlike
         // `output_format`, which only some models accept.
         let raw_tools = tools_from_request(request);
 
@@ -338,7 +340,7 @@ impl ChatProvider for AnthropicProvider {
         // (OpenAI-shape) entries inside `tools[]`, and we lift them out into
         // a top-level `mcp_servers` array on the Anthropic body. The remaining
         // (function) tools stay in `tools[]` and flow through the standard
-        // `map_tool_to_anthropic` path below. Mirrors LiteLLM's
+        // `map_tool_to_anthropic` path below. Mirrors the reference
         // `_map_tool_helper` / `_map_openai_mcp_server_tool`.
         let (mut tools, mut mcp_servers) = extract_mcp_servers(&raw_tools);
 
@@ -405,7 +407,7 @@ impl ChatProvider for AnthropicProvider {
                     let mut format_obj = Map::new();
                     format_obj.insert("type".to_string(), json!("json_schema"));
                     if let Some(mut s) = schema {
-                        // U32 (LiteLLM commit 46440e2df4): Anthropic's
+                        // U32: Anthropic's
                         // structured-output schema validator rejects several
                         // JSON Schema keywords it does not implement
                         // (`uniqueItems`, `contains`, `minProperties`,
@@ -630,12 +632,12 @@ impl ChatProvider for AnthropicProvider {
             // Map OpenAI `reasoning_effort` to Anthropic thinking config when
             // the caller didn't set `thinking` directly (feature #4). For
             // pre-4.6 models this emits `{"type": "enabled", "budget_tokens":
-            // N}` with budgets matching LiteLLM's
+            // N}` with budgets matching the reference
             // `DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET` constants
-            // (`litellm/constants.py:183-189`); `none` skips thinking entirely.
+            // (`constants.py:183-189`); `none` skips thinking entirely.
             // For adaptive-thinking models (4.6+/5+) the model self-sizes its
             // budget, so we emit `{"type": "adaptive"}` and additionally set
-            // `output_config.effort` (the stable API) — mirroring LiteLLM's
+            // `output_config.effort` (the stable API) — mirroring the reference
             // `_map_reasoning_effort` + `REASONING_EFFORT_TO_OUTPUT_CONFIG_EFFORT`.
             if is_known_effort(effort) && effort != "none" {
                 if is_adaptive_thinking_model(model) {
@@ -888,7 +890,7 @@ impl ChatProvider for AnthropicProvider {
         // cache-creation (write) tokens, whereas the OpenAI usage shape (and
         // `calculate_cost`) expects cache tokens to be a subset of
         // `prompt_tokens`. Fold BOTH `cache_read_input_tokens` and
-        // `cache_creation_input_tokens` into `prompt_tokens` (the LiteLLM
+        // `cache_creation_input_tokens` into `prompt_tokens` (the reference
         // convention — and the convention the Bedrock Converse transform
         // already uses) so the normalised response obeys the
         // `cache_read ⊆ prompt_tokens` invariant and the same model reports
@@ -956,7 +958,7 @@ impl ChatProvider for AnthropicProvider {
         // fresh (non-cached, non-audio) input token count. Anthropic's
         // `input_tokens` already excludes cache reads, so `text_tokens =
         // input_tokens`. Then add cache counters under the same details
-        // object when present. This matches LiteLLM's `raw_input_tokens =
+        // object when present. This matches the reference `raw_input_tokens =
         // prompt_tokens - cache_read - cache_creation` which equals our
         // `input_tokens`.
         let cache_creation_buckets = usage
@@ -1616,6 +1618,144 @@ fn tools_from_request(request: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+const EPHEMERAL_CACHE_CONTROL: fn() -> Value = || json!({"type": "ephemeral"});
+
+/// Mark source messages before normalization changes their indices or splits
+/// out system blocks. Preserve caller controls, skip missing targets, and
+/// count existing tool/system/message marks against the four-block limit.
+fn inject_configured_cache_breakpoints(
+    request: &Value,
+    deployment: &Deployment,
+) -> Result<Option<Value>> {
+    let Some(points) = deployment
+        .oxllm_params
+        .cache_control_injection_points
+        .as_deref()
+    else {
+        return Ok(None);
+    };
+    if points.is_empty() {
+        return Ok(None);
+    }
+    let mut marked = request.clone();
+    let mut used = count_cache_breakpoints(&marked);
+    for point in points {
+        point
+            .validate()
+            .map_err(|err| oxllm_core::Error::BadRequest(err.to_string()))?;
+        if used >= 4 {
+            break;
+        }
+        let Some(messages) = marked.get_mut("messages").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        let target = point
+            .index
+            .and_then(|index| resolve_message_index(messages.len(), index));
+        for (index, message) in messages.iter_mut().enumerate() {
+            let role = message.get("role").and_then(Value::as_str);
+            let matches = if point.index.is_some() {
+                target == Some(index)
+            } else {
+                point.role.as_deref() == role
+                    || (point.role.as_deref() == Some("system") && role == Some("developer"))
+            };
+            if !matches
+                || used >= 4
+                || has_cache_control(message)
+                || content_has_cache_control(&message["content"])
+            {
+                continue;
+            }
+            if let Some(content) = message.get("content").cloned() {
+                if role == Some("tool") && content.is_string() {
+                    message["cache_control"] = EPHEMERAL_CACHE_CONTROL();
+                    used += 1;
+                } else {
+                    let content = with_cache_control(content);
+                    used += cache_control_count(&content);
+                    message["content"] = content;
+                }
+            }
+        }
+    }
+    Ok(Some(marked))
+}
+
+fn resolve_message_index(len: usize, index: i64) -> Option<usize> {
+    if index >= 0 {
+        usize::try_from(index).ok().filter(|index| *index < len)
+    } else {
+        len.checked_sub(usize::try_from(index.unsigned_abs()).ok()?)
+    }
+}
+
+fn content_has_cache_control(content: &Value) -> bool {
+    cache_control_count(content) != 0
+}
+
+fn has_cache_control(block: &Value) -> bool {
+    block
+        .get("cache_control")
+        .is_some_and(|value| !value.is_null())
+}
+
+fn cache_control_count(content: &Value) -> usize {
+    content
+        .as_array()
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|block| has_cache_control(block))
+                .count()
+        })
+        .unwrap_or_else(|| usize::from(has_cache_control(content)))
+}
+
+fn count_cache_breakpoints(request: &Value) -> usize {
+    usize::from(has_cache_control(request))
+        + cache_control_count(&request["system"])
+        + request["messages"]
+            .as_array()
+            .map(|messages| {
+                messages
+                    .iter()
+                    .map(|message| {
+                        usize::from(has_cache_control(message))
+                            + cache_control_count(&message["content"])
+                    })
+                    .sum::<usize>()
+            })
+            .unwrap_or(0)
+        + request["tools"]
+            .as_array()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter(|tool| has_cache_control(tool) || has_cache_control(&tool["function"]))
+                    .count()
+            })
+            .unwrap_or(0)
+}
+
+fn with_cache_control(content: Value) -> Value {
+    match content {
+        Value::String(text) => json!([{
+            "type": "text",
+            "text": text,
+            "cache_control": EPHEMERAL_CACHE_CONTROL(),
+        }]),
+        Value::Array(mut blocks) => {
+            if let Some(Value::Object(last)) = blocks.last_mut() {
+                last.entry("cache_control".to_string())
+                    .or_insert_with(EPHEMERAL_CACHE_CONTROL);
+            }
+            Value::Array(blocks)
+        }
+        other => other,
+    }
+}
+
 fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>, Vec<Value>)> {
     let Some(arr) = messages.as_array() else {
         return Ok((None, Vec::new()));
@@ -1665,6 +1805,11 @@ fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>
 }
 
 fn coerce_message_content(msg: &Value) -> Option<Value> {
+    if let Some(control) = msg.get("cache_control").filter(|value| !value.is_null()) {
+        if let Some(Value::String(text)) = msg.get("content") {
+            return Some(json!([{"type": "text", "text": text, "cache_control": control}]));
+        }
+    }
     match msg.get("content") {
         Some(Value::String(s)) => Some(Value::String(s.clone())),
         Some(Value::Array(arr)) => {
@@ -1791,6 +1936,9 @@ fn normalize_message(msg: &Value) -> Result<Value> {
         "content": content,
         }]
         });
+        if let Some(control) = msg.get("cache_control").filter(|value| !value.is_null()) {
+            native["content"][0]["cache_control"] = control.clone();
+        }
         if let Some(config) = msg.get("output_config").filter(|value| !value.is_null()) {
             native["output_config"] = config.clone();
         }
@@ -1830,6 +1978,14 @@ fn normalize_message(msg: &Value) -> Result<Value> {
     if let Some(tc) = msg.get("tool_calls").and_then(|v| v.as_array()) {
         for call in tc {
             content_blocks.push(map_tool_call_to_anthropic(call));
+        }
+    }
+
+    if let Some(control) = msg.get("cache_control").filter(|value| !value.is_null()) {
+        if let Some(Value::Object(block)) = content_blocks.last_mut() {
+            block
+                .entry("cache_control".to_string())
+                .or_insert_with(|| control.clone());
         }
     }
 
@@ -1874,7 +2030,7 @@ fn map_tool_call_to_anthropic(tc: &Value) -> Value {
 /// `input_schema`, rewriting others into the form it accepts.
 ///
 /// Anthropic's tool schema validator is stricter than the OpenAI / JSON Schema
-/// spec. Two cases it rejects, mirroring the schema-walk LiteLLM does in
+/// spec. Two cases it rejects, mirroring the reference schema-walk in
 /// `AnthropicConfig.filter_anthropic_output_schema` (drops unsupported keys
 /// while recursing through `properties` / `items` / `$defs` / `anyOf` /
 /// `allOf` / `oneOf`):
@@ -1889,7 +2045,7 @@ fn map_tool_call_to_anthropic(tc: &Value) -> Value {
 /// It also normalizes the non-standard `type:"custom"` marker that Claude
 /// Code emits on custom-tool schemas to `type:"object"`. Bedrock rejects any
 /// type string that isn't a valid JSON Schema type with
-/// `tools.N.input_schema.type: Input should be 'object'`; LiteLLM applies the
+/// `tools.N.input_schema.type: Input should be 'object'`; the reference applies the
 /// same rewrite in `normalize_json_schema_custom_types_to_object`. The
 /// rewrite is safe for plain Anthropic too — the API ignores the `type` field
 /// on tool `input_schema` — so a single shared sanitizer covers both paths.
@@ -2055,7 +2211,7 @@ fn map_hosted_tool(tool: &Value) -> Option<Value> {
 /// client describes each server as an entry inside `tools[]`, and we lift them
 /// out into the top-level `mcp_servers` array on the Anthropic body (they must
 /// NOT be passed through `map_tool_to_anthropic`, which expects function
-/// tools). Mirrors LiteLLM's `_map_tool_helper` (`type: "url"`) and
+/// tools). Mirrors the reference tool mapping (`type: "url"`) and
 /// `_map_openai_mcp_server_tool` (`type: "mcp"`).
 ///
 /// # Input formats
@@ -2181,7 +2337,7 @@ fn map_tool_to_anthropic(tool: &Value) -> Option<Value> {
         out.insert("description".to_string(), desc);
     }
     // Preserve cache_control: accept it from either the function object or
-    // the top-level tool object, matching LiteLLM's _map_tool_helper behavior.
+    // the top-level tool object, matching the reference tool-mapping behavior.
     let cache_control = function
         .get("cache_control")
         .or_else(|| tool.get("cache_control"));
@@ -2740,16 +2896,16 @@ fn model_requires_effort_beta(model: &str) -> bool {
 /// This is the exact complement of [`model_requires_effort_beta`]: models that
 /// do NOT need the `effort` beta (4.6+/4.7+/4.8+ and major-version 5+) accept
 /// `effort` as a stable API feature and self-size their thinking budget.
-/// Matches LiteLLM's `_is_adaptive_thinking_model` capability probe
-/// (`litellm/llms/anthropic/common_utils.py:412`), resolved via the version
+/// Matches the reference adaptive-thinking capability probe
+/// (`llms/anthropic/common_utils.py:412`), resolved via the version
 /// substring rules instead of a cost-map lookup.
 fn is_adaptive_thinking_model(model: &str) -> bool {
     !model_requires_effort_beta(model)
 }
 
 /// Map an OpenAI `reasoning_effort` string to a thinking `budget_tokens`
-/// value, mirroring LiteLLM's `DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET`
-/// constants (`litellm/constants.py:183-189`). `minimal` is clamped up to
+/// value, mirroring the reference `DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET`
+/// constants (`constants.py:183-189`). `minimal` is clamped up to
 /// `ANTHROPIC_MIN_THINKING_BUDGET_TOKENS` (1024) per
 /// `_map_reasoning_effort` (`transformation.py:1226-1233`). Unknown/`none`
 /// efforts return `0` (the caller drops the thinking block in that case).
@@ -2766,7 +2922,7 @@ fn reasoning_effort_budget(effort: &str) -> u64 {
 }
 
 /// Map an OpenAI `reasoning_effort` to an Anthropic `output_config.effort`
-/// value for adaptive-thinking models. Mirrors LiteLLM's
+/// value for adaptive-thinking models. Mirrors the reference
 /// `REASONING_EFFORT_TO_OUTPUT_CONFIG_EFFORT`
 /// (`transformation.py:217-224`): `minimal` collapses to `low`; `none` and
 /// unknown values return `None` (no effort field emitted).
@@ -2814,7 +2970,7 @@ pub fn normalize_effort_for_model(model: &str, effort: &str) -> Option<String> {
 ///
 /// `serde_json::Value::as_u64()` returns `None` for floats, so a caller whose
 /// serializer emits `4096.0` would otherwise be silently dropped. Floats are
-/// rounded and clamped to a minimum of 1, matching LiteLLM
+/// rounded and clamped to a minimum of 1, matching the reference
 /// (`transformation.py:1427-1430`: `max(1, int(round(value)))`).
 fn json_number_as_u64(v: &Value) -> Option<u64> {
     if let Some(n) = v.as_u64() {
@@ -2925,7 +3081,7 @@ fn map_context_management_to_edits(cm: &Value) -> Option<Vec<Value>> {
 /// JSON Schema keywords Anthropic's structured-output (`output_config.format`)
 /// validator does NOT implement. Sending a schema that uses any of these
 /// causes a 400 from the Anthropic API, so they must be stripped before the
-/// request leaves the process. (LiteLLM commit `46440e2df4` / U32.)
+/// request leaves the process. (U32.)
 ///
 /// The set is intentionally minimal — only keywords Anthropic explicitly
 /// documents as unsupported for `output_format`. Other JSON Schema features
@@ -3635,7 +3791,7 @@ fn build_delta_chunk(
     // delta, matching DeepSeek/Grok streaming so reasoning clients work
     // unchanged across providers.
     //
-    // U24 (LiteLLM commit bbd52984b1): Anthropic occasionally emits a
+    // U24: Anthropic occasionally emits a
     // single `content_block_delta` event carrying BOTH a `thinking_delta`
     // and a `signature_delta` (the digital signature for the thinking
     // block). The previous code dispatched on `delta.type` as a single

@@ -131,7 +131,7 @@ pub struct S3LogConfig {
     pub endpoint: Option<String>,
     /// When `true`, include a redacted copy of the response body alongside
     /// the request body in each S3 log object. Defaults to `true` (matching
-    /// LiteLLM's S3 logging, which persists both halves of the exchange).
+    /// the reference S3 logging, which persists both halves of the exchange).
     #[serde(default)]
     pub log_response_body: Option<bool>,
 }

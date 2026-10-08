@@ -103,6 +103,7 @@ pub(crate) fn provider_auth_headers(
             .ok_or_else(|| ApiError::internal("no bearer credential available for passthrough"))?;
         headers.insert("authorization".to_string(), format!("Bearer {key}"));
     }
+    oxllm_core::provider::apply_auth_overrides(deployment, creds, &mut headers);
     Ok(headers)
 }
 
@@ -198,7 +199,7 @@ pub fn upstream_base_url(deployment: &Deployment) -> Result<String, ApiError> {
 /// append short suffixes (`"batches"`, `"rerank"`) where the in-base `/v1`
 /// is correct. Feeding a version-prefixed client path into that same table
 /// would double the prefix (`https://api.anthropic.com/v1/v1/messages`) —
-/// a guaranteed upstream 404. This matches LiteLLM's model: per-provider
+/// a guaranteed upstream 404. This matches the reference model: per-provider
 /// catch-all routes use a version-less base and let the endpoint path carry
 /// `/v1/`. When `api_base` is explicitly configured it is used verbatim
 /// (the deployment owner controls the join).
@@ -615,8 +616,8 @@ async fn hooked_raw(
 
     if status.is_success() {
         // U3: when the upstream reported its own computed cost via the
-        // LiteLLM/oxllm response-cost header, that value is authoritative
-        // (LiteLLM parity) — stash it so `post_success` records it instead
+        // recognized gateway response-cost header, that value is authoritative
+        // — stash it so `post_success` records it instead
         // of the systematically-undercounted prompt-only estimate the local
         // price table would derive from header-only token attribution.
         pipeline.call_ctx.cost_override = upstream_cost;
@@ -728,7 +729,7 @@ async fn raw_forward(
     require_inference_model(upstream_path, req.model, &request_body)?;
     let resolved_model = resolve_model(state, req.model, &request_body, req.provider_hint)?;
     // The Raw tier does not run the EndpointPipeline, which means it skips
-    // the model ACL check `for_request` performs. LiteLLM enforces model
+    // the model ACL check `for_request` performs. The reference enforces model
     // ACLs at the auth layer for every route; replicate that here so a key
     // restricted to `models: ["gpt-4o"]` cannot bypass the ACL by routing
     // through a Raw-mode endpoint.
@@ -1080,6 +1081,33 @@ pub(crate) async fn send_upstream_tracked(
     ),
     ApiError,
 > {
+    let params = &deployment.oxllm_params;
+    let body = if !body.is_empty()
+        && is_json_content_type(content_type)
+        && (params
+            .extra_body
+            .as_ref()
+            .is_some_and(|extra| !extra.is_empty())
+            || params
+                .additional_drop_params
+                .as_ref()
+                .is_some_and(|drops| !drops.is_empty()))
+    {
+        let mut value: Value = serde_json::from_slice(&body).map_err(|_| {
+            ApiError::bad_request("invalid JSON body for configured request shaping")
+        })?;
+        crate::orchestration::upstream::shape_outbound_body(
+            &mut value,
+            params.additional_drop_params.as_deref(),
+            params.extra_body.as_ref(),
+        );
+        Bytes::from(
+            serde_json::to_vec(&value)
+                .map_err(|_| ApiError::internal("failed to serialize configured request body"))?,
+        )
+    } else {
+        body
+    };
     let creds = resolve_credentials(state, deployment).await?;
     let provider = state.registry.resolve_for_deployment(deployment);
     let auth_headers = provider_auth_headers(provider, deployment, &creds)?;
@@ -1177,7 +1205,7 @@ pub(crate) async fn send_upstream_tracked(
     let status = response.status();
     // U3: extract cost/usage headers BEFORE sanitizing (which consumes the
     // reqwest::Response) so passthrough routes can track spend when the
-    // upstream reports total tokens, and honour the LiteLLM response-cost
+    // upstream reports total tokens, and honour the gateway response-cost
     // contract when the upstream reports its own computed cost.
     let usage = crate::pipeline::extract_upstream_usage(response.headers());
     let upstream_cost =
@@ -1598,7 +1626,7 @@ fn resolve_model(
         return Ok(m.to_string());
     }
     // Fallback for bodies that nest the model under a request array (notably
-    // Anthropic Message Batches: `requests[0].params.model`). LiteLLM's router
+    // Anthropic Message Batches: `requests[0].params.model`). The reference router
     // uses the same nested extraction. This avoids a double JSON parse in the
     // handler — the body is parsed once here in `hooked_raw` and the model is
     // resolved from the same `Value`.
@@ -3122,11 +3150,11 @@ mod tests {
         state
     }
 
-    // HIGH: when an upstream reports x-litellm-response-cost, that value is
+    // HIGH: when an upstream reports the legacy response-cost header, that value is
     // authoritative — it must appear in both the spend log (via the cost
     // hook's ResponseSummary) and the x-oxllm-response-cost response header,
     // not the systematically-undercounted prompt-only estimate the local
-    // price table would otherwise derive from `x-litellm-total-tokens`.
+    // price table would otherwise derive from the legacy total-token header.
     #[tokio::test]
     async fn hooked_passthrough_honours_upstream_response_cost() {
         use crate::pipeline::{
@@ -3191,7 +3219,7 @@ mod tests {
     }
 
     // HIGH: the oxllm-native alias (x-oxllm-response-cost) takes precedence
-    // over the LiteLLM alias when both are present.
+    // over the legacy alias when both are present.
     #[tokio::test]
     async fn hooked_passthrough_oxllm_cost_header_takes_priority() {
         use crate::pipeline::{

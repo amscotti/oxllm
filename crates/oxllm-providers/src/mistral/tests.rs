@@ -211,7 +211,7 @@ fn test_golden_file_parity() {
     assert_semantically_equal(&out, &response);
 }
 
-// --- Additional request parameter tests (ported from LiteLLM test_optional_params.py and test_mistral_api.py) ---
+// --- Additional request parameter tests (ported from reference optional-param and Mistral API tests) ---
 
 #[test]
 fn request_preserves_mistral_accepted_extra_params() {
@@ -221,7 +221,7 @@ fn request_preserves_mistral_accepted_extra_params() {
     // the list and are stripped by the host's `drop_params` path — see
     // `drop_params_strips_openai_only_field_from_mistral_request`. `metadata`
     // is not in Mistral's documented `/chat/completions` surface and is
-    // excluded to avoid a 422 (parity with LiteLLM's
+    // excluded to avoid a 422 (parity with the reference
     // `get_supported_openai_params`, which also omits it).
     let p = MistralProvider;
     let req = json!({
@@ -1060,7 +1060,7 @@ fn request_keeps_empty_assistant_with_tool_calls() {
 
 #[test]
 fn mistral_maps_unknown_tool_choice_string_to_any() {
-    // LOW: any string that is not `auto`/`none` is mapped to `any` (LiteLLM
+    // LOW: any string that is not `auto`/`none` is mapped to `any` (reference
     // catch-all), not just the exact value `required`.
     let p = MistralProvider;
     let req = json!({
@@ -1113,7 +1113,7 @@ fn magistral_reasoning_effort_preserves_list_content_system_message() {
 #[test]
 fn magistral_thinking_param_injects_system_prompt() {
     // MEDIUM: `thinking` is an alternative trigger for the magistral reasoning
-    // system prompt (parity with LiteLLM, which treats both `reasoning_effort`
+    // system prompt (parity with the reference, which treats both `reasoning_effort`
     // and `thinking` as triggers).
     let p = MistralProvider;
     let req = json!({
@@ -1274,7 +1274,7 @@ fn request_strips_extra_fields_from_tool_calls() {
 #[test]
 fn request_keeps_assistant_with_function_call_and_empty_content() {
     // LOW: a legacy assistant message carrying `function_call` with empty
-    // content is NOT dropped (parity with LiteLLM's typed
+    // content is NOT dropped (parity with the reference typed
     // `_is_empty_assistant_message` which keeps messages where any typed
     // field is non-null).
     let p = MistralProvider;

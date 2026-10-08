@@ -2,7 +2,7 @@
 //!
 //! - **Phase 1 (explicit token):** when `oxllm_params.api_key` is set it is
 //!   returned verbatim as a [`ResolvedCredentials::ApiKey`]. As a fallback,
-//!   the LiteLLM-documented env vars `BEDROCK_MANTLE_API_KEY` and
+//!   the documented env vars `BEDROCK_MANTLE_API_KEY` and
 //!   `AWS_BEARER_TOKEN_BEDROCK` are consulted in that order
 //!   (`BedrockMantleAuthMixin._resolve_bearer_token`).
 //! - **Phase 2 (auto-generated token):** otherwise a Bedrock Mantle bearer
@@ -187,7 +187,7 @@ impl CredentialResolver for BedrockMantleCredentialResolver {
             });
         }
 
-        // Phase 1b: LiteLLM documents `BEDROCK_MANTLE_API_KEY` /
+        // Phase 1b: the reference documents `BEDROCK_MANTLE_API_KEY` /
         // `AWS_BEARER_TOKEN_BEDROCK` as env-var fallbacks for a pre-built
         // bearer token (`BedrockMantleAuthMixin._resolve_bearer_token`:
         // `api_key or BEDROCK_MANTLE_API_KEY or AWS_BEARER_TOKEN_BEDROCK`).
@@ -271,7 +271,7 @@ impl CredentialResolver for BedrockMantleCredentialResolver {
 /// shared [`resolve_access_secret_session`] helper (same precedence as the
 /// Bedrock native resolver), so future additions land in one place. Region
 /// and `expires_secs` are mantle-specific and resolved here: region consults
-/// `aws_region_name` (LiteLLM-canonical) then `aws_region`, then
+/// `aws_region_name` (canonical) then `aws_region`, then
 /// `BEDROCK_MANTLE_REGION` so a Mantle deployment can target a different
 /// region than the ambient AWS config.
 fn resolve_aws_material(
@@ -289,7 +289,12 @@ fn resolve_aws_material(
          to a pre-built bedrock-api-key token",
     )?;
 
-    let region = str_from_extra(extra, "aws_region_name")
+    let region = deployment
+        .oxllm_params
+        .api_base
+        .as_deref()
+        .and_then(mantle_region_from_api_base)
+        .or_else(|| str_from_extra(extra, "aws_region_name"))
         .or_else(|| str_from_extra(extra, "aws_region"))
         .or_else(|| env_lookup("BEDROCK_MANTLE_REGION"))
         .or_else(|| env_lookup("AWS_REGION_NAME"))
@@ -328,6 +333,21 @@ fn resolve_aws_material(
     })
 }
 
+/// Official Mantle endpoints pin the token scope to their host region.
+/// Arbitrary custom bases leave region resolution to deployment/env settings.
+fn mantle_region_from_api_base(base: &str) -> Option<String> {
+    let url = url::Url::parse(base).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let region = url
+        .host_str()?
+        .strip_prefix("bedrock-mantle.")?
+        .strip_suffix(".api.aws")?;
+    validate_aws_region(region).ok()?;
+    Some(region.to_string())
+}
+
 /// Pull a string value out of the serde-flatten `extra` map.
 fn str_from_extra(extra: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
     extra
@@ -348,6 +368,31 @@ fn num_from_value(v: &serde_json::Value) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_mantle_base_pins_the_scope_region_over_ambient_settings() {
+        let mut deployment = Deployment::default();
+        deployment.oxllm_params.api_base =
+            Some("https://bedrock-mantle.us-west-2.api.aws/openai/v1".into());
+        deployment
+            .oxllm_params
+            .extra
+            .insert("aws_region_name".into(), serde_json::json!("us-east-1"));
+        let env: EnvLookup = Arc::new(|name| match name {
+            "AWS_ACCESS_KEY_ID" => Some("test-access".into()),
+            "AWS_SECRET_ACCESS_KEY" => Some("test-secret".into()),
+            "AWS_REGION" => Some("eu-west-1".into()),
+            _ => None,
+        });
+        assert_eq!(
+            resolve_aws_material(&deployment, &env).unwrap().region,
+            "us-west-2"
+        );
+        assert_eq!(
+            mantle_region_from_api_base("https://bedrock-mantle.us-west-2.api.aws.evil.example/v1"),
+            None
+        );
+    }
     use oxllm_core::deployment::OxllmParams;
 
     /// A fixed env + clock so resolver behavior is fully deterministic.
@@ -518,10 +563,10 @@ mod tests {
         assert!(matches!(err, Error::Config(_)), "got {err:?}");
     }
 
-    /// LiteLLM's `BedrockMantleAuthMixin._resolve_bearer_token` falls back to
+    /// The reference `BedrockMantleAuthMixin._resolve_bearer_token` falls back to
     /// `BEDROCK_MANTLE_API_KEY` then `AWS_BEARER_TOKEN_BEDROCK` when no
     /// `api_key` is configured (`common_utils.py`). A config migrated from
-    /// LiteLLM that relies on the env var must resolve to that exact bearer
+    /// an existing proxy that relies on the env var must resolve to that exact bearer
     /// token rather than silently minting a different one from AWS
     /// credentials (or erroring with "missing AWS credentials").
     #[tokio::test]
@@ -549,7 +594,7 @@ mod tests {
     }
 
     /// The secondary alias `AWS_BEARER_TOKEN_BEDROCK` is consulted only when
-    /// `BEDROCK_MANTLE_API_KEY` is absent (matching LiteLLM's `or` chain).
+    /// `BEDROCK_MANTLE_API_KEY` is absent (matching the reference `or` chain).
     #[tokio::test]
     async fn aws_bearer_token_bedrock_env_var_is_used_as_bearer() {
         let env: std::collections::HashMap<&'static str, String> =
@@ -591,7 +636,7 @@ mod tests {
         }
     }
 
-    /// The LiteLLM-canonical `aws_region_name` config key must resolve the
+    /// The canonical `aws_region_name` config key must resolve the
     /// region for a mantle deployment (parity with the native resolver).
     #[tokio::test]
     async fn per_deployment_aws_region_name_key_is_honoured() {
@@ -991,7 +1036,7 @@ mod tests {
         assert!(matches!(err, Error::Config(_)), "got {err:?}");
     }
 
-    /// An invalid AWS region must be rejected up front (mirrors LiteLLM's
+    /// An invalid AWS region must be rejected up front (mirrors the reference
     /// `_validate_aws_region_name`). A typo like `"us-east-1 "` (trailing
     /// space) would otherwise produce an obscure `SignatureDoesNotMatch`.
     #[tokio::test]

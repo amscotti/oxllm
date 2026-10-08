@@ -4,7 +4,10 @@
 //! format and its own native format. All methods are **synchronous pure
 //! functions** — no network, no async.
 
+mod auth;
 pub mod realtime;
+
+pub use auth::apply_auth_overrides;
 
 pub use realtime::RealtimeProvider;
 
@@ -135,6 +138,12 @@ pub trait EmbeddingProvider: Send + Sync {
     /// Build the upstream embeddings URL for this deployment.
     fn embedding_url(&self, deployment: &Deployment) -> String;
 
+    /// Request-aware URL for wildcard deployments. Fixed deployments use the
+    /// ordinary URL unless the provider overrides this method.
+    fn embedding_url_for_request(&self, deployment: &Deployment, _request: &Value) -> String {
+        self.embedding_url(deployment)
+    }
+
     /// Add auth headers for the embeddings call.
     fn apply_auth(
         &self,
@@ -201,7 +210,7 @@ pub enum ResolvedCredentials {
     },
     /// Azure AD / Entra ID bearer token. Sent as
     /// `Authorization: Bearer <token>` (NOT the `api-key` header), matching
-    /// LiteLLM's `_base_validate_azure_environment` AAD fallback. The host is
+    /// the reference Azure-environment AAD fallback. The host is
     /// responsible for obtaining and refreshing the token (client secret,
     /// managed identity, OIDC, …) before resolving this variant; the provider
     /// transform only attaches it.

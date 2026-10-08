@@ -418,7 +418,7 @@ fn response_prefers_billed_units_over_tokens_for_usage_basis() {
 /// LOW: a tool-call message with no text must surface `content: null` (not
 /// `""`) so strict OpenAI clients can branch on `content.is_null()` to
 /// distinguish a tool-call response from a text response, matching
-/// LiteLLM/OpenAI conventions.
+/// OpenAI-compatible conventions.
 #[test]
 fn response_tool_call_message_content_is_null() {
     let p = CohereProvider;
@@ -632,7 +632,7 @@ fn embedding_response_handles_object_form() {
 }
 
 /// Image-embedding calls report tokens under `billed_units.images`, not
-/// `input_tokens`. LiteLLM sums both into `prompt_tokens`; an image-only
+/// `input_tokens`. The reference sums both into `prompt_tokens`; an image-only
 /// response must meter the image tokens rather than report 0.
 #[test]
 fn embedding_response_meters_image_tokens_when_no_input_tokens() {
@@ -1008,7 +1008,7 @@ fn embedding_response_handles_single_embedding_object() {
 }
 
 // =============================================================================
-// Ported from LiteLLM `tests/llm_translation/test_rerank.py`.
+// Ported from the reference `tests/llm_translation/test_rerank.py`.
 //
 // These cover the Cohere rerank transform surface: URL construction for
 // custom bases, request payload shape, and response handling. Network/E2E
@@ -1116,7 +1116,7 @@ fn rerank_request_omits_top_n_when_null() {
 }
 
 // =============================================================================
-// LiteLLM feature-gap parity: max_completion_tokens alias, Cohere-native
+// Reference feature-gap parity: max_completion_tokens alias, Cohere-native
 // pass-through params, citations, and tool-plan / citation streaming.
 // =============================================================================
 
@@ -1186,7 +1186,7 @@ fn request_forwards_documents_and_drops_removed_v1_fields() {
     assert!(out.get("prompt_truncation").is_none());
 }
 
-/// Feature 2: native params are also readable from `extra_body` (LiteLLM
+/// Feature 2: native params are also readable from `extra_body` (reference
 /// pass-through convention).
 #[test]
 fn request_native_params_read_from_extra_body() {
@@ -1217,9 +1217,9 @@ fn request_top_level_native_param_beats_extra_body() {
 }
 
 /// `force_single_step` is NOT auto-set when omitted, even when the last
-/// message is from the user. The auto-set heuristic is a LiteLLM **v1**
+/// message is from the user. The auto-set heuristic is a reference **v1**
 /// transform behavior; this provider targets the v2 endpoint, which (per
-/// LiteLLM's `v2_transformation.py`) does not apply it. v2 parity.
+/// the reference `v2_transformation.py`) does not apply it. v2 parity.
 #[test]
 fn request_force_single_step_not_auto_set_when_last_message_is_user() {
     let p = CohereProvider;
@@ -1267,7 +1267,7 @@ fn request_force_single_step_explicit_is_omitted() {
 }
 
 /// Non-streaming citations are surfaced as a provider extension. Per the
-/// Cohere v2 Chat API and LiteLLM's `v2_transformation.transform_response`,
+/// Cohere v2 Chat API and the reference `v2_transformation.transform_response`,
 /// citations live under `message.citations` (not top-level) on the
 /// non-streaming path — this is the real API shape.
 #[test]
@@ -2019,7 +2019,7 @@ fn stream_tool_call_event_reads_delta_tool_calls() {
 }
 
 /// MEDIUM: `input_type` for embeddings is overridable via `extra_body`
-/// (LiteLLM pass-through), validated against Cohere's allow-list.
+/// (native pass-through), validated against Cohere's allow-list.
 #[test]
 fn embedding_request_input_type_override_from_extra_body() {
     let p = CohereProvider;
@@ -2130,7 +2130,7 @@ fn stream_v2_tool_call_arguments_assemble_across_deltas() {
 }
 
 /// LOW: standard OpenAI sampling params are read from `extra_body` too (the
-/// LiteLLM pass-through convention), matching the Cohere-native params.
+/// native pass-through convention), matching the Cohere-native params.
 #[test]
 fn request_standard_params_read_from_extra_body() {
     let p = CohereProvider;

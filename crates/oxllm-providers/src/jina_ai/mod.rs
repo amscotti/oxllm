@@ -116,7 +116,7 @@ impl RerankProvider for JinaAIProvider {
     fn rerank_url(&self, deployment: &Deployment) -> String {
         // Append semantics: a custom `api_base` has `/v1/rerank` appended
         // unless it already ends in `/v1/rerank` or `/v1`. Parity note:
-        // LiteLLM's `JinaAIRerankConfig.get_complete_url` uses
+        // The reference Jina rerank URL builder uses
         // `httpx.URL.copy_with(path="/v1/rerank")` which *replaces* the
         // entire path of a custom base (so `https://host/some/path` →
         // `https://host/v1/rerank`). We diverge and append, keeping
@@ -168,7 +168,7 @@ impl RerankProvider for JinaAIProvider {
         // `results` array signals a malformed/empty/error response — surface
         // it rather than synthesizing a fake empty success that would mask
         // the failure and skip the host's retry/error-hook path. Mirrors
-        // LiteLLM's `JinaAIRerankConfig.transform_rerank_response`.
+        // the reference Jina rerank response transform.
         let raw_results = body.get("results").and_then(|v| v.as_array());
         let results: Vec<Value> = match raw_results {
             Some(arr) => arr.iter().map(map_rerank_result).collect(),

@@ -23,14 +23,14 @@ where
     }
 }
 
-/// Top-level proxy config, matching the LiteLLM config shape.
+/// Top-level proxy config, preserving the established gateway config shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
     /// The model list — one entry per upstream deployment.
     pub model_list: Vec<ConfigModel>,
     /// Global gateway settings. Uses `deserialize_or_default` so an explicit
     /// `null` body (e.g. when the block contains only comments) still parses
-    /// (Bug #49). The legacy `litellm_settings` key is accepted as an alias
+    /// (Bug #49). The legacy settings key is accepted as an alias
     /// for configs written before the rename.
     #[serde(
         default,
@@ -125,6 +125,14 @@ pub struct OxllmSettings {
     /// Strip unsupported params instead of erroring.
     #[serde(default)]
     pub drop_params: Option<bool>,
+    /// Enable Bedrock tool/thinking history repairs. A deployment can override
+    /// this setting; adjacent Converse roles are normalized independently.
+    #[serde(default)]
+    pub modify_params: Option<bool>,
+    /// Legacy global IPv4-only switch. `general_settings.http_force_ipv4`
+    /// takes precedence when explicitly configured.
+    #[serde(default)]
+    pub force_ipv4: Option<bool>,
     /// Routing knobs (strategy, retries, cooldown, fallback chains, retry
     /// policy). Flattened so the YAML keys stay at the top level of
     /// `oxllm_settings`; `router_settings` values take precedence when a
@@ -178,12 +186,12 @@ pub struct OxllmSettings {
     #[serde(default)]
     pub success_callback: Option<Vec<String>>,
     /// List of failure-callback slugs to invoke after a failed upstream
-    /// response (LiteLLM `failure_callback`). A slug listed here fires the
+    /// response (`failure_callback`). A slug listed here fires the
     /// corresponding hook's `post_failure` in addition to (or instead of)
     /// `post_success` when it is also in `success_callback`.
     #[serde(default)]
     pub failure_callback: Option<Vec<String>>,
-    /// Dual-fire callback slugs (LiteLLM `callbacks`). A slug listed here
+    /// Dual-fire callback slugs (`callbacks`). A slug listed here
     /// fires the corresponding hook on BOTH success and failure — equivalent
     /// to adding the slug to both `success_callback` and
     /// `failure_callback`.
@@ -296,7 +304,7 @@ pub struct GeneralSettings {
     /// When set, requests whose resolved client IP is not inside any of the
     /// listed ranges are rejected with 403. When unset (default), all client
     /// IPs are allowed. An explicitly empty list (`allowed_ips: []`) denies
-    /// ALL requests (fail-closed, matching LiteLLM's `_check_valid_ip`) —
+    /// ALL requests (fail-closed) —
     /// remove the setting to allow everyone. The client IP is resolved via
     /// the same `trusted_proxy_cidrs` logic used by the auth brake.
     #[serde(default)]
@@ -348,6 +356,10 @@ pub struct GeneralSettings {
     /// (default) no connect timeout is applied.
     #[serde(default)]
     pub http_connect_timeout_secs: Option<u64>,
+    /// Restrict outbound upstream and image-download connections to IPv4.
+    /// Unset inherits `oxllm_settings.force_ipv4`; defaults to false.
+    #[serde(default, alias = "force_ipv4")]
+    pub http_force_ipv4: Option<bool>,
     /// When `true`, the opt-in value-pattern redaction pass
     /// ([`redact_secret_values_in_place`]) is applied to every telemetry /
     /// exporter payload in addition to the unconditional key-name denylist.
@@ -360,6 +372,12 @@ pub struct GeneralSettings {
     /// [`redact_secret_values_in_place`]: crate::hooks::redact::redact_secret_values_in_place
     #[serde(default)]
     pub redact_secret_values: Option<bool>,
+    /// Accept a master key shorter than 16 bytes. Honored only when the
+    /// resolved environment is `development`. `validate` rejects the flag
+    /// in every other environment,
+    /// including when the key itself is long enough.
+    #[serde(default)]
+    pub allow_short_master_key: Option<bool>,
     /// Unknown keys captured for forward compatibility.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,

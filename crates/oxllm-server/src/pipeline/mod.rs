@@ -47,27 +47,27 @@ pub const COST_HEADER: &str = "x-oxllm-response-cost";
 /// provider-native response body to extract usage.
 pub const UPSTREAM_TOTAL_TOKENS_HEADER: &str = "x-oxllm-total-tokens";
 
-/// U3: LiteLLM-compatible alias for total tokens. Checked as a fallback so
-/// oxllm works as a pass-through target behind LiteLLM proxies.
+/// U3: legacy alias for total tokens. Checked as a fallback so
+/// oxllm works as a pass-through target behind existing proxies.
 pub const UPSTREAM_TOTAL_TOKENS_HEADER_LITELLM: &str = "x-litellm-total-tokens";
 
 /// U3: header carrying the cost an upstream pass-through target computed for
 /// the whole request. When present, the value overrides oxllm's local cost
 /// recomputation so chained-gateway deployments bill the caller the same total
-/// the upstream reported (LiteLLM parity — see
-/// `litellm/proxy/pass_through_endpoints/upstream_usage_headers.py`).
+/// the upstream reported (response-cost contract parity — see
+/// `proxy/pass_through_endpoints/upstream_usage_headers.py`).
 pub const UPSTREAM_RESPONSE_COST_HEADER: &str = "x-oxllm-response-cost";
 
-/// U3: LiteLLM-compatible alias for the upstream-reported response cost.
+/// U3: legacy alias for the upstream-reported response cost.
 /// Checked as a fallback so oxllm works as a pass-through target behind
-/// LiteLLM proxies.
+/// existing proxies.
 pub const UPSTREAM_RESPONSE_COST_HEADER_LITELLM: &str = "x-litellm-response-cost";
 
 /// U3: extract token usage from upstream response headers.
 ///
-/// Pass-through targets (another oxllm instance, or a LiteLLM proxy) can report
-/// the total token count via the `x-oxllm-total-tokens` (or LiteLLM-compatible
-/// `x-litellm-total-tokens`) response header. Since the passthrough handler
+/// Pass-through targets (another oxllm instance, or an existing proxy) can report
+/// the total token count via the `x-oxllm-total-tokens` header or its legacy
+/// alias. Since the passthrough handler
 /// cannot reliably parse the provider-native response body to split prompt vs
 /// completion tokens, all reported tokens are attributed to `prompt_tokens` so
 /// that cost is at least tracked (approximate) rather than dropped entirely.
@@ -101,8 +101,8 @@ pub fn extract_upstream_usage(headers: &HeaderMap) -> Option<UsageSummary> {
 
 /// U3: the outcome of reading an upstream-reported response-cost header.
 ///
-/// LiteLLM distinguishes three cases for an upstream pass-through target
-/// (another oxllm instance, or a LiteLLM proxy):
+/// The response-cost contract distinguishes three cases for a pass-through target
+/// (another oxllm instance, or an existing proxy):
 /// - the target did not send a cost header → it does not own the cost, so the
 ///   local price-table estimate runs as normal ([`UpstreamResponseCost::Absent`]
 ///   → `None` override);
@@ -114,7 +114,7 @@ pub fn extract_upstream_usage(headers: &HeaderMap) -> Option<UsageSummary> {
 ///   rather than falling back to a local estimate it just contradicted
 ///   ([`UpstreamResponseCost::Invalid`] → `Some(0.0)` override).
 ///
-/// The last case is the LiteLLM parity fix: LiteLLM's
+/// The last case is the response-cost parity fix: the reference
 /// `success_handler._set_cost_per_request` short-circuits whenever
 /// `has_upstream_reported_usage` is true (the target sent any cost/tokens
 /// header), so an unparseable reported cost records `0`, never the local
@@ -122,7 +122,7 @@ pub fn extract_upstream_usage(headers: &HeaderMap) -> Option<UsageSummary> {
 /// [`UpstreamResponseCost::into_override`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UpstreamResponseCost {
-    /// Neither the oxllm nor the LiteLLM cost header was present: the upstream
+    /// Neither the native nor the legacy cost header was present: the upstream
     /// did not speak the cost contract, so local price-table compute runs.
     Absent,
     /// The upstream reported a valid, finite, non-negative cost.
@@ -138,7 +138,7 @@ impl UpstreamResponseCost {
     /// call context. [`UpstreamResponseCost::Absent`] yields `None` so
     /// [`post_success`] runs local price-table compute; `Valid` and
     /// `Invalid` yield `Some` so `post_success` honours the upstream's
-    /// ownership of the cost (LiteLLM parity — an invalid reported cost bills
+    /// ownership of the cost (contract parity — an invalid reported cost bills
     /// `0`, never the local estimate).
     pub fn into_override(self) -> Option<f64> {
         match self {
@@ -150,10 +150,10 @@ impl UpstreamResponseCost {
 }
 
 /// U3: extract a pre-computed cost reported by an upstream pass-through target
-/// (another oxllm instance, or a LiteLLM proxy) via the
-/// [`UPSTREAM_RESPONSE_COST_HEADER`] (or the LiteLLM-compatible alias).
+/// (another oxllm instance, or an existing proxy) via the
+/// [`UPSTREAM_RESPONSE_COST_HEADER`] (or the legacy alias).
 ///
-/// LiteLLM's contract is that an upstream that reports its own cost *owns* the
+/// The cost contract is that an upstream that reports its own cost *owns* the
 /// cost for the request: the reported value wins over any local recomputation,
 /// even when the value is `0`. Callers that receive [`UpstreamResponseCost::Valid`]
 /// or [`UpstreamResponseCost::Invalid`] from this helper stamp the corresponding
@@ -166,8 +166,8 @@ impl UpstreamResponseCost {
 ///
 /// A header that is present but unparseable, NaN/±∞, or negative yields
 /// [`UpstreamResponseCost::Invalid`] — distinct from [`UpstreamResponseCost::Absent`]
-/// — so the caller can bill `0` (LiteLLM parity) instead of letting a local
-/// estimate through. The LiteLLM reference applies the same
+/// — so the caller can bill `0` (contract parity) instead of letting a local
+/// estimate through. The reference applies the same
 /// `math.isfinite && >= 0` guard to the *value*, but additionally tracks
 /// whether the contract was spoken at all (`has_upstream_reported_usage`).
 pub fn extract_upstream_response_cost(headers: &HeaderMap) -> UpstreamResponseCost {
@@ -281,6 +281,11 @@ pub const RATELIMIT_RESET_TOKENS: &str = "x-ratelimit-reset-tokens";
 /// (`routing_strategy: session_affinity`).
 pub const SESSION_ID_HEADER: &str = "x-oxllm-session-id";
 
+/// Alias accepted for clients that already send the legacy session header.
+/// `x-oxllm-session-id` wins when both are present. An empty value falls
+/// through to this header, then to the request body.
+pub const LITELLM_SESSION_ID_HEADER: &str = "x-litellm-session-id";
+
 /// Request header carrying a routing tag (`routing_strategy: tag_based`).
 /// Clients send `x-oxllm-tag: canary` to select deployments whose
 /// `model_info.tags` contains `"canary"`.
@@ -292,22 +297,27 @@ pub fn extract_session_id(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Session id for sticky routing. The explicit `x-oxllm-session-id` header
-/// always wins. When it is absent, Anthropic `/v1/messages` clients (Claude
-/// Code, the Anthropic SDK) encode the session in `metadata.user_id` as
-/// either `…_session_<id>` or `{ "session_id": "<id>" }`. Without this
-/// fallback, `session_affinity` shuffles those clients because they never
-/// send the oxllm header.
+/// wins. An empty value falls through to the legacy session header, then to
+/// Anthropic `/v1/messages` `metadata.user_id` (`…_session_<id>` or
+/// `{ "session_id": "<id>" }`).
 pub fn extract_session_id_with_body(headers: &HeaderMap, body: Option<&Value>) -> Option<String> {
-    if let Some(id) = headers
-        .get(SESSION_ID_HEADER)
+    if let Some(id) = header_session_id(headers, SESSION_ID_HEADER) {
+        return Some(id);
+    }
+    if let Some(id) = header_session_id(headers, LITELLM_SESSION_ID_HEADER) {
+        tracing::debug!("session id taken from x-litellm-session-id");
+        return Some(id);
+    }
+    body.and_then(anthropic_session_id_from_metadata)
+}
+
+fn header_session_id(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-    {
-        return Some(id);
-    }
-    body.and_then(anthropic_session_id_from_metadata)
 }
 
 /// Characters allowed in an Anthropic-derived session id (UUIDs, CLI ids).
@@ -972,7 +982,7 @@ pub fn sanitize_timeout_secs(timeout_secs: f64) -> Duration {
 /// any stream whose total duration exceeds the budget even while chunks keep
 /// flowing. Streaming callers pass `None` (no total deadline; the send is
 /// bounded separately and the body is bounded per-chunk by the stream pump's
-/// idle timeout, mirroring LiteLLM's per-read httpx timeout semantics).
+/// idle timeout, mirroring the reference per-read httpx timeout semantics).
 pub async fn execute_upstream_json(
     state: &AppState,
     deployment: &Deployment,
@@ -2472,6 +2482,50 @@ mod tests {
     }
 
     #[test]
+    fn extract_session_id_accepts_litellm_alias() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            LITELLM_SESSION_ID_HEADER,
+            HeaderValue::from_static("alias-sess"),
+        );
+        assert_eq!(extract_session_id(&headers).as_deref(), Some("alias-sess"));
+    }
+
+    #[test]
+    fn extract_session_id_oxllm_header_wins_over_alias() {
+        let mut headers = HeaderMap::new();
+        headers.insert(SESSION_ID_HEADER, HeaderValue::from_static("ox"));
+        headers.insert(LITELLM_SESSION_ID_HEADER, HeaderValue::from_static("alias"));
+        assert_eq!(extract_session_id(&headers).as_deref(), Some("ox"));
+    }
+
+    #[test]
+    fn extract_session_id_empty_oxllm_header_falls_through_to_alias() {
+        let mut headers = HeaderMap::new();
+        headers.insert(SESSION_ID_HEADER, HeaderValue::from_static("  "));
+        headers.insert(
+            LITELLM_SESSION_ID_HEADER,
+            HeaderValue::from_static("alias-sess"),
+        );
+        let body = json!({"metadata": {"user_id": "user_x_session_from-body"}});
+        assert_eq!(
+            extract_session_id_with_body(&headers, Some(&body)).as_deref(),
+            Some("alias-sess")
+        );
+    }
+
+    #[test]
+    fn extract_session_id_empty_alias_falls_through_to_body() {
+        let mut headers = HeaderMap::new();
+        headers.insert(LITELLM_SESSION_ID_HEADER, HeaderValue::from_static(""));
+        let body = json!({"metadata": {"user_id": "user_x_session_from-body"}});
+        assert_eq!(
+            extract_session_id_with_body(&headers, Some(&body)).as_deref(),
+            Some("from-body")
+        );
+    }
+
+    #[test]
     fn extract_tag_reads_header() {
         let mut headers = HeaderMap::new();
         headers.insert(TAG_HEADER, HeaderValue::from_static("canary"));
@@ -2994,7 +3048,7 @@ mod tests {
 
     #[test]
     fn extract_upstream_response_cost_allows_zero() {
-        // LiteLLM precedence: an upstream that reports cost = 0 owns the
+        // Cost-contract precedence: an upstream that reports cost = 0 owns the
         // cost for the request; 0 is a valid override, not "no value".
         let mut headers = HeaderMap::new();
         headers.insert(UPSTREAM_RESPONSE_COST_HEADER, HeaderValue::from_static("0"));
@@ -3007,7 +3061,7 @@ mod tests {
     #[test]
     fn extract_upstream_response_cost_negative_is_invalid_not_absent() {
         // MEDIUM (C12): a present-but-invalid cost header must be `Invalid`,
-        // not `Absent`, so the caller bills 0 (LiteLLM parity) rather than
+        // not `Absent`, so the caller bills 0 (contract parity) rather than
         // falling back to a local estimate the upstream just contradicted.
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -3070,7 +3124,7 @@ mod tests {
     #[test]
     fn upstream_response_cost_into_override_mapping() {
         // The three states map to the cost_override decision: absent → local
-        // compute (None); valid → the reported value; invalid → 0 (LiteLLM
+        // compute (None); valid → the reported value; invalid → 0 (contract
         // parity: a target that spoke the contract owns the cost, so an
         // unusable value bills 0 rather than a local estimate).
         assert_eq!(UpstreamResponseCost::Absent.into_override(), None);
@@ -3086,9 +3140,9 @@ mod tests {
         );
     }
 
-    // MEDIUM (C12): LiteLLM parity — when an upstream sends a present-but-
+    // MEDIUM (C12): cost-contract parity — when an upstream sends a present-but-
     // invalid cost header (NaN / unparseable / negative), `post_success` must
-    // record cost 0.0, NOT the local price-table estimate. LiteLLM's
+    // record cost 0.0, NOT the local price-table estimate. The reference
     // `success_handler._set_cost_per_request` short-circuits whenever
     // `has_upstream_reported_usage` is true, so an unusable reported cost
     // records 0 rather than billing an estimate the upstream contradicted.
@@ -3335,7 +3389,7 @@ mod tests {
 
     // MEDIUM (C10): a per-second deployment pricing override
     // (`input_cost_per_second` in oxllm_params) must bill
-    // `rate * response_time_ms / 1000` instead of token math — LiteLLM's
+    // `rate * response_time_ms / 1000` instead of token math — the reference
     // per-second custom-pricing semantics for duration-priced models.
     #[tokio::test]
     async fn post_success_bills_per_second_deployment_override_via_duration() {

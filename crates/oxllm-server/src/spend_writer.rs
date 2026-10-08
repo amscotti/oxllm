@@ -63,7 +63,7 @@ impl SpendWriter {
     /// `oxllm_spend_entries_dropped_total{reason=...}` so operators can
     /// alert on silent spend telemetry loss. The bounded channel +
     /// observable loss counter is the intended durability contract
-    /// (LiteLLM has no on-disk spill either — its in-memory queue is
+    /// (the reference has no on-disk spill either — its in-memory queue is
     /// unbounded and silently lost on crash).
     pub async fn queue(&self, entry: SpendEntry) {
         match self.tx.try_send(entry) {

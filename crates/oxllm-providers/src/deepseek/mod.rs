@@ -2,7 +2,7 @@
 //!
 //! Wire target: `https://api.deepseek.com/beta/chat/completions`.
 //!
-//! The default base URL mirrors LiteLLM's `DeepSeekChatConfig` (`/beta`),
+//! The default base URL mirrors the reference `DeepSeekChatConfig` (`/beta`),
 //! which is the endpoint that accepts the native `thinking` parameter this
 //! module maps from `reasoning_effort`. DeepSeek has since promoted most
 //! features to `/v1`, but `/beta` remains the safe default for thinking-mode
@@ -12,7 +12,7 @@
 //! parsing and the supported-params list are delegated to the shared
 //! [`OpenAiCompatProvider`] engine. DeepSeek diverges on three request-shape
 //! concerns that [`ChatProvider::transform_request`] applies on top of the
-//! shared body builder (parity with LiteLLM's `DeepSeekChatConfig`):
+//! shared body builder (parity with the reference `DeepSeekChatConfig`):
 //!
 //! - **`thinking` parameter mapping**: DeepSeek's native thinking control is
 //!   `{"type": "enabled" | "disabled"}`. An OpenAI-style `reasoning_effort` is
@@ -41,7 +41,7 @@ use oxllm_core::endpoint::Endpoint;
 use oxllm_core::provider::{ChatProvider, Provider, ProviderId, ResolvedCredentials};
 use serde_json::{Map, Value};
 
-/// The default DeepSeek OpenAI-compatible base URL. Uses `/beta` for LiteLLM
+/// The default DeepSeek OpenAI-compatible base URL. Uses `/beta` for reference
 /// parity and thinking-mode support (`thinking={"type":"enabled"}`); the
 /// `/v1` endpoint does not reliably accept the `thinking` parameter.
 pub const DEFAULT_DEEPSEEK_BASE: &str = "https://api.deepseek.com/beta";
@@ -96,7 +96,7 @@ fn apply_deepseek_request_transforms(out: &mut Value, request: &Value) {
 
 /// Resolve DeepSeek's native `thinking` parameter, mapping OpenAI-style
 /// `reasoning_effort` when no explicit `thinking` was sent (parity with
-/// LiteLLM's `DeepSeekChatConfig.map_openai_params`). An explicit `thinking`
+/// the reference DeepSeek parameter mapping). An explicit `thinking`
 /// dict with a recognized `type` always wins; otherwise `reasoning_effort`
 /// (`"none"` → disabled, anything else → enabled) is consumed.
 /// `reasoning_effort` is never forwarded verbatim.
@@ -132,7 +132,7 @@ fn thinking_type(obj: &Map<String, Value>) -> Option<&str> {
 }
 
 /// Filter the `tools` array to only `type: "function"` entries (parity with
-/// LiteLLM's `DeepSeekChatConfig._drop_unsupported_tools`). DeepSeek rejects any
+/// the reference DeepSeek unsupported-tool filtering). DeepSeek rejects any
 /// other tool variant with `unknown variant '<type>', expected 'function'`.
 /// When no function tool survives, `tools`, `tool_choice`, and
 /// `parallel_tool_calls` are all dropped; a `tool_choice` that named a dropped
@@ -199,7 +199,7 @@ fn is_always_on_reasoning_model(model: &str) -> bool {
 }
 
 /// Inject `reasoning_content` on assistant messages that are missing it, for
-/// thinking-mode multi-turn conversations (parity with LiteLLM's
+/// thinking-mode multi-turn conversations (parity with the reference
 /// `DeepSeekChatConfig._fill_reasoning_content`). DeepSeek's API rejects
 /// requests where a prior assistant turn lacks `reasoning_content` with
 /// *"The reasoning_content in the thinking mode must be passed back to the API."*

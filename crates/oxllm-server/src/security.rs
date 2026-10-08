@@ -924,7 +924,7 @@ where
 /// routinely exceed the cap) is truncated to [`MAX_ERROR_BODY_BYTES`] and the
 /// upstream status is preserved — re-mapping the provider's real
 /// 401/403/429/503 to an oxllm 500 because its error page is large would hide
-/// the actionable status and body from the client (LiteLLM surfaces the
+/// the actionable status and body from the client (the reference surfaces the
 /// upstream error status regardless of body size). See
 /// `read_error_body_capped`.
 pub async fn sanitize_upstream_response(response: reqwest::Response) -> Result<Response, ApiError> {
@@ -1360,7 +1360,7 @@ pub async fn auth_brake_guard(
 /// IP-allowlist middleware. When `general_settings.allowed_ips` is configured,
 /// requests whose resolved client IP does not fall inside any of the listed
 /// CIDR ranges are rejected with 403. When unset, all IPs are allowed. An
-/// explicitly empty list (`allowed_ips: []`) denies all requests — LiteLLM
+/// explicitly empty list (`allowed_ips: []`) denies all requests — the reference
 /// parity: `_check_valid_ip` treats an empty allowlist as matching no one
 /// (fail-closed), so the setting can never be read as "allow everyone".
 ///
@@ -1434,7 +1434,7 @@ pub fn parse_cidr_list(raw: &[String]) -> Vec<ipnet::IpNet> {
 /// that consume this list. See [`validate_upstream_ip`] for the
 /// request-time entry point.
 ///
-/// Note: LiteLLM enforces this as a default-deny via Python's
+/// Note: the reference enforces this as a default-deny via Python's
 /// `ipaddress.ip_address.is_global` (RFC 6890) plus an explicit exception
 /// list for cloud-internal IPs that *are* globally routable. oxllm uses an
 /// explicit allow/deny list instead; [`CLOUD_METADATA_EXCEPTIONS`] holds the
@@ -1472,9 +1472,9 @@ pub const PRIVATE_CIDRS: &[&str] = &[
 /// Globally-routable cloud-fabric IPs that are reachable from inside a cloud
 /// VM via special in-fabric routing and therefore must be blocked by the
 /// SSRF guard even though they are not part of any RFC 6890 private range.
-/// Mirrors LiteLLM's `_CLOUD_METADATA_EXCEPTIONS`
-/// (`litellm_core_utils/url_utils.py`), extended with the Alibaba Cloud
-/// metadata service (a shared gap in LiteLLM itself).
+/// Mirrors the reference cloud-metadata exception list,
+/// extended with the Alibaba Cloud
+/// metadata service (a shared gap in the reference).
 ///
 /// - **`168.63.129.16/32`** — Azure Wire Server. Reachable from inside any
 ///   Azure VM; provides guest-agent / VM management services.
@@ -1856,19 +1856,30 @@ pub async fn is_private_host_async(host: &str) -> bool {
 /// POST path and the user-supplied image-URL download path are protected at
 /// the connection layer regardless of the preceding best-effort pre-check.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct SsrfResolver;
+pub struct SsrfResolver {
+    allow_private: bool,
+    ipv4_only: bool,
+}
 
 impl SsrfResolver {
-    /// Build a resolver. Stateless; the value exists only to satisfy
-    /// [`reqwest::dns::Resolve`].
+    /// Build a resolver that rejects private ranges and permits both families.
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    pub(crate) fn with_options(allow_private: bool, ipv4_only: bool) -> Self {
+        Self {
+            allow_private,
+            ipv4_only,
+        }
     }
 }
 
 impl reqwest::dns::Resolve for SsrfResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();
+        let allow_private = self.allow_private;
+        let ipv4_only = self.ipv4_only;
         Box::pin(async move {
             let host_for_lookup = host.clone();
             let addrs = match tokio::task::spawn_blocking(move || {
@@ -1880,16 +1891,23 @@ impl reqwest::dns::Resolve for SsrfResolver {
                 Ok(Err(e)) => return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
                 Err(e) => return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
             };
-            let filtered: Vec<std::net::SocketAddr> =
-                addrs.filter(|sa| check_ip_allowed(sa.ip())).collect();
+            let filtered: Vec<std::net::SocketAddr> = addrs
+                .filter(|sa| {
+                    (allow_private || check_ip_allowed(sa.ip())) && (!ipv4_only || sa.is_ipv4())
+                })
+                .collect();
             if filtered.is_empty() {
                 tracing::warn!(
                     host = %host,
-                    "SSRF resolver: all resolved addresses are in a blocked private range"
+                    ipv4_only,
+                    "DNS resolver: no address matches the configured network policy"
                 );
-                return Err(
-                    format!("all addresses for '{host}' are in a blocked private range").into(),
-                );
+                return Err(if ipv4_only {
+                    format!("no permitted IPv4 address for '{host}'")
+                } else {
+                    format!("all addresses for '{host}' are in a blocked private range")
+                }
+                .into());
             }
             Ok(Box::new(filtered.into_iter()) as reqwest::dns::Addrs)
         })
@@ -2996,7 +3014,7 @@ mod tests {
 
     #[test]
     fn ip_allowed_empty_list_denies_all() {
-        // LiteLLM parity: `_check_valid_ip` with an empty list denies every
+        // IP-filter parity: an empty list denies every
         // address — an explicit `allowed_ips: []` must never read as
         // "allow everyone".
         let allowed: Vec<ipnet::IpNet> = vec![];
@@ -3800,7 +3818,7 @@ mod tests {
 
     #[test]
     fn check_ip_allowed_rejects_ipv6_multicast() {
-        // LiteLLM blocks multicast via `ip.is_multicast` for both IPv4 and
+        // The reference blocks multicast via `ip.is_multicast` for both IPv4 and
         // IPv6; oxllm's `PRIVATE_CIDRS` covers IPv4 (`224.0.0.0/4`) and must
         // also cover the IPv6 multicast range `ff00::/8` to keep parity with
         // the default-deny posture. Practical risk is low (TCP to multicast
@@ -3978,7 +3996,7 @@ mod tests {
     fn check_ip_allowed_rejects_cloud_metadata_exceptions() {
         // Globally-routable cloud-fabric IPs reachable from inside a cloud VM
         // must be blocked by the SSRF guard even though they are not in any
-        // RFC 6890 private range. Mirrors LiteLLM's
+        // RFC 6890 private range. Mirrors the reference
         // `_CLOUD_METADATA_EXCEPTIONS` (Azure Wire Server) plus the Alibaba
         // Cloud metadata service.
         assert!(
@@ -4317,7 +4335,7 @@ mod tests {
         use axum::routing::get;
         use tower::ServiceExt;
 
-        // `allowed_ips: []` must deny every request (LiteLLM's `_check_valid_ip`
+        // `allowed_ips: []` must deny every request (the reference IP check
         // compares against the list directly), never silently allow all.
         let config = crate::config::types::ProxyConfig {
             model_list: vec![],

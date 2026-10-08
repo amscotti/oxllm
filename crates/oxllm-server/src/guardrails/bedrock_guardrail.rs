@@ -376,7 +376,7 @@ impl BedrockGuardrail {
     ///
     /// **Scope note:** only INPUT (request-side) scanning is wired today.
     /// The Bedrock `ApplyGuardrail` API also supports an OUTPUT scan path
-    /// (used by LiteLLM to scan the model's response), but oxllm does not
+    /// (used by the reference to scan the model's response), but oxllm does not
     /// yet invoke Bedrock from the response/streaming path. The `source`
     /// parameter on [`Self::apply`] / [`Self::apply_many`] is retained so
     /// OUTPUT scanning can be added without an API change, and the cache

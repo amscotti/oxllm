@@ -6,7 +6,7 @@
 //! Perplexity exposes an OpenAI-compatible surface, so URL building, auth,
 //! stream parsing and the model-prefix strip are delegated to the shared
 //! [`OpenAiCompatProvider`] engine. Perplexity diverges on a few points that
-//! the wrapper applies (parity with LiteLLM's `PerplexityChatConfig`):
+//! the wrapper applies (parity with the reference `PerplexityChatConfig`):
 //!
 //! - **Citation / search-query usage surfaced**: Perplexity's Sonar/online
 //!   models bill citation tokens and per-query search fees, reported via the
@@ -39,7 +39,7 @@ const STRIP: &str = "perplexity";
 /// ([`crate::openai_compat::SUPPORTED_CHAT_PARAMS`]) that Perplexity's API
 /// accepts. Perplexity rejects `seed`, `logprobs`,
 /// `logit_bias`, `store`, `metadata`, `modalities`, `audio`, and `service_tier`
-/// with a 400 (parity with LiteLLM's `PerplexityChatConfig.get_supported_openai_params`).
+/// with a 400 (parity with the reference Perplexity supported-param list).
 /// `tools` / `tool_choice` ARE accepted (verified live 2026-08: sonar-pro
 /// performs function calling with them; plain `sonar` answers a clear
 /// upstream 400 "Tool calling is not supported for this model" — pass-through
@@ -98,7 +98,7 @@ pub fn strip_perplexity_prefix(model: &str) -> &str {
 /// chat response body (the output of the shared compat `transform_response`).
 /// Promotes citation tokens and the search-query count into the usage object
 /// so the cost path (`extract_usage` + `cost_from_rates`) can price them
-/// (parity with LiteLLM's `_enhance_usage_with_perplexity_fields`).
+/// (parity with the reference Perplexity usage enrichment).
 #[cfg(test)]
 pub(crate) fn apply_perplexity_response_transforms_for_test(out: &mut Value) {
     apply_perplexity_response_transforms(out)
@@ -107,7 +107,7 @@ pub(crate) fn apply_perplexity_response_transforms_for_test(out: &mut Value) {
 fn apply_perplexity_response_transforms(out: &mut Value) {
     // Citation tokens: Perplexity does not report a pre-counted value, so
     // derive an estimate from the top-level `citations` array length (one
-    // token per citation, floor 1 when citations exist) — matching LiteLLM's
+    // token per citation, floor 1 when citations exist) — matching the reference
     // heuristic. A precise count, if ever surfaced under
     // `usage.citation_tokens`, wins.
     let citation_tokens = out

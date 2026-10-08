@@ -1,0 +1,321 @@
+//! Azure AI Foundry chat and text embeddings. Claude uses native Anthropic
+//! messages; other chat models and text embeddings use the OpenAI wire shape.
+//! Explicit resource bases, endpoint queries and deployment names are retained.
+
+use std::collections::HashMap;
+
+use oxllm_core::provider::{
+    ChatProvider, EmbeddingProvider, Provider, ProviderId, ResolvedCredentials,
+};
+use oxllm_core::{Deployment, Endpoint, Error, Result};
+use serde_json::{Value, json};
+
+use crate::anthropic::AnthropicProvider;
+use crate::openai_compat::OpenAiCompatProvider;
+
+const COMPAT: OpenAiCompatProvider = OpenAiCompatProvider::new(
+    "azure_ai",
+    "https://azure-ai-api-base-not-configured.invalid",
+    "azure_ai",
+    true,
+    true,
+    true,
+);
+
+/// Azure AI Foundry adapter for vendor chat and text embeddings.
+#[derive(Debug, Clone, Default)]
+pub struct AzureAiProvider;
+
+impl AzureAiProvider {
+    fn resolved(request: &Value, deployment: &Deployment) -> Result<Deployment> {
+        if deployment
+            .oxllm_params
+            .api_base
+            .as_deref()
+            .is_none_or(|base| base.trim().is_empty())
+        {
+            return Err(Error::Config(
+                "azure_ai deployment requires api_base".into(),
+            ));
+        }
+        let configured = deployment
+            .oxllm_params
+            .model
+            .strip_prefix("azure_ai/")
+            .unwrap_or(&deployment.oxllm_params.model);
+        let model = if configured.contains('*') {
+            request
+                .get("model")
+                .and_then(Value::as_str)
+                .map(|model| model.strip_prefix("azure_ai/").unwrap_or(model))
+                .ok_or_else(|| {
+                    Error::BadRequest("wildcard azure_ai deployment requires a model".into())
+                })?
+        } else {
+            configured
+        };
+        if model.is_empty() || model.contains('*') {
+            return Err(Error::BadRequest(
+                "azure_ai requires a concrete deployment/model name".into(),
+            ));
+        }
+        let mut resolved = deployment.clone();
+        resolved.oxllm_params.model = format!("azure_ai/{model}");
+        Ok(resolved)
+    }
+
+    /// Whether this deployment uses Foundry's native Anthropic Messages route.
+    pub fn is_anthropic(deployment: &Deployment) -> bool {
+        let model = deployment
+            .oxllm_params
+            .model
+            .strip_prefix("azure_ai/")
+            .unwrap_or(&deployment.oxllm_params.model);
+        let base_model = deployment
+            .model_info
+            .as_ref()
+            .and_then(|info| info.base_model.as_deref())
+            .or_else(|| {
+                deployment
+                    .oxllm_params
+                    .extra
+                    .get("base_model")
+                    .and_then(Value::as_str)
+            });
+        let path = deployment
+            .oxllm_params
+            .api_base
+            .as_deref()
+            .unwrap_or("")
+            .split(['?', '#'])
+            .next()
+            .unwrap_or("");
+        let path = path
+            .split_once("://")
+            .and_then(|(_, rest)| rest.find('/').map(|index| &rest[index..]))
+            .unwrap_or("");
+        model.starts_with("claude-")
+            || model.starts_with("anthropic/")
+            || base_model.is_some_and(|model| model.contains("claude-"))
+            || path.split('/').any(|segment| segment == "anthropic")
+    }
+
+    fn anthropic_deployment(deployment: &Deployment) -> Deployment {
+        let mut native = deployment.clone();
+        let model = deployment
+            .oxllm_params
+            .model
+            .strip_prefix("azure_ai/")
+            .unwrap_or(&deployment.oxllm_params.model);
+        native.oxllm_params.model = if model.starts_with("anthropic/") {
+            model.to_string()
+        } else {
+            format!("anthropic/{model}")
+        };
+        native
+    }
+
+    fn auth(
+        deployment: &Deployment,
+        creds: &ResolvedCredentials,
+        headers: &mut HashMap<String, String>,
+    ) {
+        if Self::is_anthropic(deployment) {
+            headers.insert(
+                "anthropic-version".into(),
+                crate::anthropic::ANTHROPIC_VERSION.into(),
+            );
+        }
+        if let Some(token) = creds.best_effort_bearer() {
+            if matches!(creds, ResolvedCredentials::AzureAd { .. }) {
+                headers.insert("authorization".into(), format!("Bearer {token}"));
+            } else if Self::is_anthropic(deployment)
+                || deployment
+                    .oxllm_params
+                    .api_base
+                    .as_deref()
+                    .is_some_and(crate::util::is_foundry_base)
+            {
+                headers.insert("api-key".into(), token.to_string());
+            } else {
+                headers.insert("authorization".into(), format!("Bearer {token}"));
+            }
+        }
+        oxllm_core::provider::apply_auth_overrides(deployment, creds, headers);
+    }
+
+    fn anthropic_chunk(chunk: &str) -> bool {
+        crate::util::extract_sse_data(chunk)
+            .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+            .and_then(|value| value.get("type").and_then(Value::as_str).map(String::from))
+            .is_some_and(|kind| {
+                kind.starts_with("message_")
+                    || kind.starts_with("content_block_")
+                    || matches!(kind.as_str(), "ping" | "error")
+            })
+    }
+}
+
+impl ChatProvider for AzureAiProvider {
+    fn endpoint_url(&self, deployment: &Deployment) -> String {
+        let native = Self::is_anthropic(deployment);
+        crate::util::foundry_endpoint_url(
+            deployment,
+            if native {
+                "messages"
+            } else {
+                "chat/completions"
+            },
+            native,
+        )
+    }
+
+    fn endpoint_url_for_request(&self, deployment: &Deployment, request: &Value) -> String {
+        self.endpoint_url(
+            &Self::resolved(request, deployment).unwrap_or_else(|_| deployment.clone()),
+        )
+    }
+
+    fn apply_auth(
+        &self,
+        deployment: &Deployment,
+        creds: &ResolvedCredentials,
+        headers: &mut HashMap<String, String>,
+    ) {
+        Self::auth(deployment, creds, headers);
+    }
+
+    fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
+        let resolved = Self::resolved(request, deployment)?;
+        if Self::is_anthropic(&resolved) {
+            AnthropicProvider.transform_request(request, &Self::anthropic_deployment(&resolved))
+        } else {
+            let mut body = ChatProvider::transform_request(&COMPAT, request, &resolved)?;
+            if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+                for message in messages {
+                    if let Some(object) = message.as_object_mut() {
+                        for field in [
+                            "thinking_blocks",
+                            "reasoning_content",
+                            "provider_specific_fields",
+                            "cache_control",
+                        ] {
+                            object.remove(field);
+                        }
+                        if let Some(content) = object.get("content").and_then(Value::as_array)
+                            && !content.is_empty()
+                            && content.iter().all(|block| {
+                                block.get("type").and_then(Value::as_str) == Some("text")
+                            })
+                        {
+                            let text = content
+                                .iter()
+                                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            object.insert("content".into(), json!(text));
+                        }
+                    }
+                }
+            }
+            Ok(body)
+        }
+    }
+
+    fn transform_response(&self, body: &Value, model: &str) -> Result<Value> {
+        if body.get("type").and_then(Value::as_str) == Some("message") {
+            AnthropicProvider.transform_response(body, model)
+        } else {
+            ChatProvider::transform_response(&COMPAT, body, model)
+        }
+    }
+
+    fn transform_response_with_request(
+        &self,
+        body: &Value,
+        model: &str,
+        request: &Value,
+    ) -> Result<Value> {
+        if body.get("type").and_then(Value::as_str) == Some("message") {
+            AnthropicProvider.transform_response_with_request(body, model, request)
+        } else {
+            ChatProvider::transform_response(self, body, model)
+        }
+    }
+
+    fn transform_stream_chunk(&self, chunk: &str) -> Result<Option<Value>> {
+        if Self::anthropic_chunk(chunk) {
+            AnthropicProvider.transform_stream_chunk(chunk)
+        } else {
+            COMPAT.transform_stream_chunk(chunk)
+        }
+    }
+
+    fn transform_stream_chunk_stateful(
+        &self,
+        chunk: &str,
+        state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+        request: &Value,
+    ) -> Result<Option<Value>> {
+        if Self::anthropic_chunk(chunk) {
+            AnthropicProvider.transform_stream_chunk_stateful(chunk, state, request)
+        } else {
+            COMPAT.transform_stream_chunk_stateful(chunk, state, request)
+        }
+    }
+
+    fn supported_params(&self) -> Option<Vec<&str>> {
+        let mut params = COMPAT.supported_params().unwrap_or_default();
+        for param in AnthropicProvider.supported_params().unwrap_or_default() {
+            if !params.contains(&param) {
+                params.push(param);
+            }
+        }
+        Some(params)
+    }
+}
+
+impl EmbeddingProvider for AzureAiProvider {
+    fn embedding_url(&self, deployment: &Deployment) -> String {
+        crate::util::foundry_endpoint_url(deployment, "embeddings", false)
+    }
+
+    fn apply_auth(
+        &self,
+        deployment: &Deployment,
+        creds: &ResolvedCredentials,
+        headers: &mut HashMap<String, String>,
+    ) {
+        Self::auth(deployment, creds, headers);
+    }
+
+    fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
+        EmbeddingProvider::transform_request(
+            &COMPAT,
+            request,
+            &Self::resolved(request, deployment)?,
+        )
+    }
+
+    fn transform_response(&self, body: &Value, model: &str) -> Result<Value> {
+        EmbeddingProvider::transform_response(&COMPAT, body, model)
+    }
+}
+
+impl Provider for AzureAiProvider {
+    fn id(&self) -> ProviderId {
+        "azure_ai"
+    }
+    fn supports(&self, endpoint: Endpoint) -> bool {
+        matches!(endpoint, Endpoint::ChatCompletions | Endpoint::Embeddings)
+    }
+    fn chat(&self) -> Option<&dyn ChatProvider> {
+        Some(self)
+    }
+    fn embeddings(&self) -> Option<&dyn EmbeddingProvider> {
+        Some(self)
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -3263,7 +3263,7 @@ async fn daily_activity_postgres_sql_quotes_timestamp_column() {
 }
 
 /// LOW: org spend attribution is resolved at query time via JOIN, not stored
-/// at write time (LiteLLM writes immutable `LiteLLM_DailyOrgSpend` rollups).
+/// at write time (the reference writes immutable daily-org-spend rollups).
 /// After a key is moved to a new org via `update_key`, all historical spend
 /// for that key is re-attributed to the new org. This test locks in that
 /// documented behavior so a future change to write-time attribution is
@@ -3295,7 +3295,7 @@ async fn query_spend_by_org_reattributes_after_key_is_moved() {
     db.update_key(&key).await.expect("update key");
 
     // Historical spend is now reported under org-moved — query-time JOIN,
-    // not write-time rollup. (LiteLLM would still see org-original here.)
+    // not write-time rollup. (The reference would still see org-original here.)
     let after = db.query_spend_by_org(None, None).await.expect("query");
     let org_moved = after
         .iter()

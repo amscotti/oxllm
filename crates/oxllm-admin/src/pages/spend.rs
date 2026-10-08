@@ -322,7 +322,7 @@ pub(crate) fn budget_spend_tier(pct: f64) -> &'static str {
     }
 }
 
-/// Pull the total spend from a `/spend/total` payload. LiteLLM's responses
+/// Pull the total spend from a `/spend/total` payload. The reference responses
 /// vary by version: most return `{"total_spend": <f>}` but some return a
 /// nested `results` array. We pick the first numeric value we find.
 pub(crate) fn spend_total_from_response(v: &Value) -> f64 {
@@ -360,7 +360,7 @@ pub(crate) fn spend_total_from_response(v: &Value) -> f64 {
 /// row would show the same worldwide spend against its own budget.
 ///
 /// The query window is derived from each entity's `budget_duration`
-/// (LiteLLM-style: `1d`, `7d`, `30d`, `1mo`, `1w`, ...) so the bar reflects
+/// (`1d`, `7d`, `30d`, `1mo`, `1w`, ...) so the bar reflects
 /// the same window the proxy enforces. Rows with a missing/unparseable
 /// duration fall back to a 30-day window. Calls are fanned out with bounded
 /// concurrency (`CONCURRENCY`); rows past `ENRICHMENT_CAP` are skipped to
@@ -483,7 +483,7 @@ pub(crate) async fn enrich_with_budget_spend_bounded(
 }
 
 /// Compute the `/spend/total` `start_date` for a given `budget_duration`,
-/// aligned to LiteLLM's semantics. Units mirror LiteLLM's `duration_parser`:
+/// aligned to the reference semantics. Units mirror its duration parser:
 /// `s`/`m`/`h` collapse to today (sub-day window), `d`/`w`/`mo` map to N-1
 /// days back so the window covers N calendar days inclusive of today
 /// (`1d` -> today, `7d` -> today-6, `30d` -> today-29, matching the previous

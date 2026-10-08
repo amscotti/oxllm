@@ -39,7 +39,7 @@ pub async fn get_routes(
 /// `POST /config/update` — write a new (or partial) config body to the YAML
 /// file the proxy loaded from and let the hot-reload watcher apply it.
 ///
-/// The request body is a JSON document matching the LiteLLM config shape. It
+/// The request body is a JSON document matching the gateway config shape. It
 /// is re-emitted as YAML and written verbatim to [`config::current_config_path`],
 /// overwriting the previous file. The reload watcher then rebuilds the
 /// [`crate::state::AppState`] from the new file — this handler deliberately
@@ -63,7 +63,7 @@ pub async fn get_routes(
 /// programmatically in tests) and there is therefore no path to write back
 /// to.
 ///
-/// U17 (LiteLLM commit `e9ac84dc8b`): LiteLLM's `save_config` serialized the
+/// U17: the reference `save_config` serialized the
 /// in-memory config (with environment-variable-expanded secrets baked in) into
 /// the DB, leaking secrets the operator never intended to persist. oxllm is
 /// safe: this handler writes only the **caller-provided** `value` to disk — it
@@ -110,38 +110,26 @@ async fn update_config_with_auth_requirement(
     // `os.environ/` expansion + the same post-deserialize checks (SSRF,
     // thresholds) and, when `OXLLM_REQUIRE_AUTH` is set, refuse a body
     // that would drop every auth path.
-    let mut to_validate = value.clone();
-    if let Err(e) = config::loader::resolve_env_vars(&mut to_validate) {
-        tracing::warn!(error = %e, "POST /config/update rejected: env resolution failed");
-        return Err(ApiError::bad_request(format!(
-            "config body failed env resolution: {e}"
-        )));
-    }
-    let parsed: config::ProxyConfig = match serde_json::from_value(to_validate) {
-        Ok(c) => c,
+    let to_validate = value.clone();
+    let validation_path = path.clone();
+    let parsed = match tokio::task::spawn_blocking(move || {
+        config::loader::validate_config_value(to_validate, &validation_path)
+    })
+    .await
+    .map_err(|_| ApiError::internal("config validation task failed"))?
+    {
+        Ok(config) => config,
         Err(e) => {
             tracing::warn!(
                 error = %e,
-                "POST /config/update rejected: body does not deserialize as ProxyConfig"
+                "POST /config/update rejected: config validation failed"
             );
             return Err(ApiError::bad_request(format!(
-                "config body is not a valid ProxyConfig: {e}"
+                "config body is not a valid ProxyConfig: {e:#}"
             )));
         }
     };
-    if let Err(e) = config::loader::validate_proxy_config(&parsed) {
-        tracing::warn!(error = %e, "POST /config/update rejected: config validation failed");
-        return Err(ApiError::bad_request(format!(
-            "config body failed validation: {e}"
-        )));
-    }
-    if require_auth
-        && !crate::app::auth_is_configured(
-            &parsed.general_settings.master_key,
-            &parsed.general_settings.jwt_secret,
-            &parsed.general_settings.database_url,
-        )
-    {
+    if require_auth && !crate::app::settings_auth_is_configured(&parsed.general_settings) {
         return Err(ApiError::bad_request(
             "OXLLM_REQUIRE_AUTH is set but the new config has no master_key, \
              jwt_secret, or database_url",
@@ -590,7 +578,7 @@ mod tests {
             .expect("MCP config")[0];
         mcp.server_url =
             "https://mcp-user:mcp-password@[broken/rpc?API%5FKEY=mcp-query-secret".into();
-        let error = config::loader::validate_proxy_config(&typed).expect_err("invalid MCP URL");
+        let error = config::loader::validate_proxy_config(&mut typed).expect_err("invalid MCP URL");
         for rendered in [format!("{error:#}"), format!("{error:?}")] {
             for secret in ["mcp-user", "mcp-password", "mcp-query-secret"] {
                 assert!(
@@ -833,7 +821,7 @@ mod tests {
 
     // ---- U17: config update must never snapshot env vars / resolved config --
     //
-    // LiteLLM commit e9ac84dc8b: `save_config` serialized the in-memory config
+    // The reference `save_config` serialized the in-memory config
     // (with env-var-expanded secrets) into the DB. oxllm's `update_config`
     // writes only the caller-provided body. This test verifies the written
     // file contains exactly the caller's JSON, not a snapshot of the resolved

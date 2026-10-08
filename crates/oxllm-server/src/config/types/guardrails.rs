@@ -88,7 +88,7 @@ pub struct PresidioConfig {
 /// rather than score-driven: the response carries a
 /// `required_action.action_type` of `"monitor_action"`, `"block_action"`,
 /// or `"anonymize_action"`. Oxllm blocks when the policy reports
-/// `block_action` (matching LiteLLM's verified integration).
+/// `block_action` (matching the verified reference integration).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AimConfig {
@@ -114,7 +114,7 @@ pub struct AimConfig {
 /// Configuration for the Lakera AI prompt-injection detection API.
 ///
 /// Lakera Guard calls `POST {endpoint}/v2/guard` with the chat messages and
-/// blocks when the response reports `flagged: true` (matching LiteLLM v2's
+/// blocks when the response reports `flagged: true` (matching the reference v2
 /// `lakera_ai_v2.LakeraAIResponse` shape and `if lakera_response.get("flagged")
 /// is True` semantics). Fail-open: on service errors the request is allowed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,7 +139,7 @@ pub struct LakeraConfig {
     pub timeout_secs: Option<u64>,
     /// Action when Lakera flags a request: `"block"` (default) rejects with
     /// 400; `"monitor"` logs the violation server-side and allows the request
-    /// (matching LiteLLM v2's `on_flagged: "monitor"` at
+    /// (matching the reference v2 `on_flagged: "monitor"` at
     /// `lakera_ai_v2.py:261`). Useful for gradual rollouts where operators
     /// want to observe detections before enforcing blocks.
     #[serde(default)]

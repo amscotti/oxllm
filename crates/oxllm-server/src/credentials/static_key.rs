@@ -23,13 +23,14 @@ pub struct StaticKeyResolver;
 #[async_trait]
 impl CredentialResolver for StaticKeyResolver {
     async fn resolve(&self, deployment: &Deployment) -> Result<ResolvedCredentials, Error> {
+        deployment.oxllm_params.validate_auth_overrides()?;
         // Azure keyless/Entra ID: an explicitly configured access token
         // (`extra.azure_ad_token`, resolved once at config load like every
         // other `os.environ/` value) takes precedence over the shared key and
         // is sent as `Authorization: Bearer`. Without this branch the
         // `ResolvedCredentials::AzureAd` variant was unreachable, so Entra
         // ID deployments had no config path at all.
-        if deployment.provider_slug() == "azure" {
+        if matches!(deployment.provider_slug(), "azure" | "azure_ai") {
             if let Some(token) = deployment
                 .oxllm_params
                 .extra

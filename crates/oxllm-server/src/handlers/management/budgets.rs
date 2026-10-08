@@ -44,7 +44,7 @@ pub struct NewBudgetRequest {
 /// (`hooks/alerting.rs` gates on `soft_budget > 0.0`, which is `false` for
 /// NaN, and the trigger `current >= soft_budget.unwrap_or(INFINITY)` never
 /// fires for `+Inf`), and a negative value would be silently coerced away at
-/// enforcement time. LiteLLM applies the identical `math.isfinite(...) and
+/// enforcement time. The reference applies the identical `math.isfinite(...) and
 /// ... >= 0` check (`budget_management_endpoints.py`).
 fn validate_soft_budget(soft_budget: Option<f64>) -> Result<(), ApiError> {
     if let Some(b) = soft_budget {
@@ -59,7 +59,7 @@ fn validate_soft_budget(soft_budget: Option<f64>) -> Result<(), ApiError> {
 }
 
 /// Reject structurally malformed `model_max_budget` payloads at the API
-/// boundary. LiteLLM parses each value as a `BudgetConfig` Pydantic model
+/// boundary. The reference parses each value as a `BudgetConfig` Pydantic model
 /// (`budget_management_endpoints.py` → `validate_model_max_budget`); oxllm
 /// stores the field as opaque JSON, so without a structural check a stray
 /// string, number, or `{"oops": "garbage"}` object would persist silently
@@ -75,7 +75,7 @@ fn validate_model_max_budget(model_max_budget: &Option<serde_json::Value>) -> Re
         return Ok(());
     };
     // `null` is treated as "absent" by `serialize_json`, so accept it here
-    // for symmetry (LiteLLM's `if model_max_budget is not None` also skips
+    // for symmetry (the reference `if model_max_budget is not None` also skips
     // validation on null/None).
     if v.is_null() {
         return Ok(());
@@ -311,7 +311,7 @@ pub async fn budget_info(
     Ok(Json(record).into_response())
 }
 
-/// Request body for bulk `POST /budget/info` (LiteLLM-compatible).
+/// Request body for bulk `POST /budget/info`.
 #[derive(Debug, Deserialize)]
 pub struct BudgetInfoBody {
     pub budgets: Vec<String>,
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn validate_model_max_budget_accepts_null_as_absent() {
         // null maps to None at serialization time (see serialize_json) and
-        // LiteLLM's validator skips on None, so accept it here.
+        // The reference validator skips on None, so accept it here.
         assert!(validate_model_max_budget(&Some(serde_json::Value::Null)).is_ok());
     }
 

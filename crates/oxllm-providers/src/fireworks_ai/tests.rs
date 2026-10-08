@@ -188,11 +188,11 @@ fn supported_params_published() {
     assert!(params.contains(&"tools"));
 }
 
-// --- Tests ported from LiteLLM test_fireworks_ai_translation.py ---
+// --- Tests ported from the reference test_fireworks_ai_translation.py ---
 
 #[test]
 fn request_passes_tool_choice_through() {
-    // LiteLLM maps tool_choice "required" -> "any" for Fireworks, but the
+    // The reference maps tool_choice "required" -> "any" for Fireworks, but the
     // oxllm compat provider is near-identity: it forwards tool_choice
     // unchanged (including "auto" and "required").
     let p = FireworksAiProvider;
@@ -921,7 +921,7 @@ fn request_respects_explicit_include_usage_false() {
         "stream_options": {"include_usage": false},
     });
     let out = ChatProvider::transform_request(&p, &req, &deployment()).expect("ok");
-    // Explicit false is respected (parity with LiteLLM).
+    // Explicit false is respected (reference parity).
     assert_eq!(out["stream_options"]["include_usage"], false);
 }
 

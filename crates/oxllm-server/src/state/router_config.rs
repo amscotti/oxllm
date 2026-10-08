@@ -1,6 +1,6 @@
 //! `RouterConfig` assembly from [`ProxyConfig`].
 //!
-//! LiteLLM accepts routing knobs in either `oxllm_settings` or
+//! Routing knobs are accepted in either `oxllm_settings` or
 //! `router_settings` (the latter is the canonical location in newer
 //! configs). [`build_router_config`] consults both and prefers
 //! `router_settings` when a field is set in both places.
@@ -26,7 +26,7 @@ pub(crate) fn build_router_config(config: &ProxyConfig) -> anyhow::Result<Router
         validate_quality_scores(scores)?;
     }
 
-    // LiteLLM accepts routing knobs in either `oxllm_settings` or
+    // Routing knobs are accepted in either `oxllm_settings` or
     // `router_settings` (the latter is the canonical location in newer
     // configs). Prefer `router_settings` field-by-field so both shapes work.
     let knobs = RoutingKnobs::merge(&settings.routing, &router.routing);
@@ -296,7 +296,7 @@ fn parse_fallback_rules(value: Option<&serde_json::Value>) -> Vec<FallbackRule> 
             };
             map.iter()
                 .map(|(primary, fallbacks)| {
-                    // LiteLLM allows either an array of fallback names or a
+                    // Fallbacks allow either an array of fallback names or a
                     // bare string shorthand: `{"gpt-4o": "claude"}` is treated
                     // as `{"gpt-4o": ["claude"]}`. `null` means "no fallbacks"
                     // for this primary and is honored silently.
@@ -327,7 +327,7 @@ fn parse_fallback_rules(value: Option<&serde_json::Value>) -> Vec<FallbackRule> 
         .collect()
 }
 
-/// Parse `default_fallbacks`. LiteLLM accepts two shapes:
+/// Parse `default_fallbacks`. Two shapes are accepted:
 ///
 /// - the list form — `default_fallbacks: ["model-a", "model-b"]`: one
 ///   chain applied to ANY unknown model group, stored as a single rule
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn parse_fallback_rules_string_shorthand() {
-        // LiteLLM allows a bare string: `{"gpt-4o": "claude"}` is equivalent
+        // A bare string is allowed: `{"gpt-4o": "claude"}` is equivalent
         // to `{"gpt-4o": ["claude"]}`.
         let val = json!([{"gpt-4o": "claude"}]);
         let rules = parse_fallback_rules(Some(&val));
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn build_router_config_allowed_fails_from_settings() {
-        // LiteLLM-style configs put allowed_fails under oxllm_settings;
+        // Existing configs put allowed_fails under oxllm_settings;
         // they must not be silently dropped.
         let policy = std::collections::HashMap::from([("500".to_string(), 4u32)]);
         let settings = settings_with(RoutingKnobs {
@@ -825,7 +825,7 @@ mod tests {
     #[test]
     fn build_router_config_router_settings_takes_precedence() {
         // Both oxllm_settings and router_settings carry a value; the latter
-        // wins (LiteLLM semantics).
+        // wins (reference semantics).
         let config = ProxyConfig {
             model_list: vec![],
             oxllm_settings: settings_with(RoutingKnobs {

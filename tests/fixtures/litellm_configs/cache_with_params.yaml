@@ -1,15 +1,15 @@
-# Adapted from ../litellm/tests/proxy_unit_tests/example_config_yaml/cache_with_params.yaml
+# Adapted from the reference cache_with_params.yaml fixture.
 model_list:
   - model_name: openai-model
     litellm_params:
       model: gpt-3.5-turbo
 
 oxllm_settings:
-  # LiteLLM uses cache: true + cache_params; oxllm uses a single `cache` object.
+  # The reference uses cache: true + cache_params; oxllm uses a single `cache` object.
   cache:
     type: redis
     host: redis.example.test
-    # LiteLLM-only keys should be ignored with a warning, not fail parse.
+    # Reference-only keys should be ignored with a warning, not fail parse.
     cache_params:
       supported_call_types:
         - embedding

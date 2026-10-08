@@ -16,10 +16,10 @@ const PING_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Liveness probe. Returns `200 {"status":"healthy"}` while serving, and
 /// `503 {"status":"shutting_down"}` once graceful shutdown has begun — mirroring
-/// LiteLLM's `/health/liveliness`, which consults
+/// the reference `/health/liveliness`, which consults
 /// `GracefulShutdownManager.is_shutting_down()` so the kubelet gets a clean 503
 /// (instead of a probe timeout) and stops routing new traffic into a draining
-/// pod (`litellm/proxy/health_endpoints/_health_endpoints.py:1555-1571`).
+/// pod (`proxy/health_endpoints/_health_endpoints.py:1555-1571`).
 pub async fn health(State(shared): State<SharedState>) -> Response {
     let state = shared.load_full();
     if state.is_shutting_down() {
@@ -38,8 +38,8 @@ pub async fn health(State(shared): State<SharedState>) -> Response {
 ///
 /// Once graceful shutdown has begun it short-circuits to
 /// `503 {"status":"shutting_down"}` (without pinging backends), mirroring
-/// LiteLLM's `/health/readiness`
-/// (`litellm/proxy/health_endpoints/_health_endpoints.py:1659-1669`).
+/// the reference `/health/readiness`
+/// (`proxy/health_endpoints/_health_endpoints.py:1659-1669`).
 ///
 /// The DB and cache pings run concurrently (`tokio::join!`) so the worst-case
 /// latency is `PING_TIMEOUT`, not `2 * PING_TIMEOUT`. The cache check consults
@@ -559,7 +559,7 @@ mod tests {
     }
 
     /// Once graceful shutdown begins, both probes must return
-    /// `503 {"status":"shutting_down"}` immediately — mirroring LiteLLM's
+    /// `503 {"status":"shutting_down"}` immediately — mirroring the reference
     /// `is_shutting_down()` semantics so the kubelet gets a clean 503 instead
     /// of a probe timeout. Readiness must short-circuit before pinging any
     /// backend (the `checks` map is absent). Verified by flipping the same

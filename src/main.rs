@@ -114,11 +114,8 @@ async fn main() -> anyhow::Result<()> {
             match oxllm_server::load_config(&config) {
                 Ok(cfg) => {
                     let model_count = cfg.model_list.len();
-                    let auth_enabled = oxllm_server::app::auth_is_configured(
-                        &cfg.general_settings.master_key,
-                        &cfg.general_settings.jwt_secret,
-                        &cfg.general_settings.database_url,
-                    );
+                    let auth_enabled =
+                        oxllm_server::app::settings_auth_is_configured(&cfg.general_settings);
                     // Pre-flight must fail exactly like `serve` would: run the
                     // same OXLLM_REQUIRE_AUTH guard `oxllm_server::run`
                     // enforces, so a config the server would refuse to start
@@ -352,7 +349,7 @@ mod tests {
 
     /// C60 MEDIUM: `validate` must report the same auth status `run()` would
     /// enforce. An operator who configures only JWT (or only the virtual-key
-    /// DB) — a common LiteLLM deployment shape — must see `auth_enabled=true`,
+    /// DB) — a common gateway deployment shape — must see `auth_enabled=true`,
     /// not be misled into thinking the proxy will start in open mode. The
     /// subcommand now uses the shared `auth_is_configured` helper; this pins
     /// that contract end-to-end from a parsed config.

@@ -329,7 +329,7 @@ impl AzureBlobCache {
     ///
     /// Issues `PUT /{container}?restype=container` (Create Container),
     /// tolerating `201 Created` and `409 Conflict` (already exists) as
-    /// success. Mirrors LiteLLM's `with suppress(ResourceExistsError):
+    /// success. Mirrors the reference `with suppress(ResourceExistsError):
     /// self.container_client.create_container()` so a freshly configured
     /// container does not silently degrade to a permanent no-op cache (every
     /// `set` PUT would otherwise 404 and be swallowed as a `warn`).

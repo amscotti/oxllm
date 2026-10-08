@@ -87,7 +87,7 @@ pub fn project_spend_key(project_id: &str) -> String {
 /// deployment key (`{model_name}:{oxllm_params.model}`, see
 /// [`oxllm_core::router::deployment_key`]) — the same identifier the
 /// `dep_rpm:` / `dep_tpm:` counters use. It intentionally contains a `:`
-/// separating the model name from the litellm-params model, which is why the
+/// separating the model name from the deployment-params model, which is why the
 /// scheduler scopes spend-key parsing to the `team`/`user`/`org`/`project`/
 /// `model` prefixes and leaves `dep:`/`provider:` keys to the router.
 pub fn deployment_spend_key(deployment_key: &str) -> String {

@@ -17,9 +17,9 @@ fn deployment() -> Deployment {
 }
 
 // =============================================================================
-// Ported from LiteLLM `tests/llm_translation/test_voyage_ai.py`.
+// Ported from the reference `tests/llm_translation/test_voyage_ai.py`.
 //
-// LiteLLM's Voyage suite is heavily mock-based (it patches `litellm.embedding`
+// The reference Voyage suite is heavily mock-based (it patches the embedding call
 // and asserts the Python call surface) and covers contextual embeddings, which
 // are out of scope for the oxllm transform surface. The ports below adapt the
 // transformable behaviors to `transform_request` / `transform_response`:

@@ -74,7 +74,7 @@ impl Expiry<String, CachedEntry> for EntryExpiry {
 /// long-but-safe window instead of a panic.
 const MAX_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 
-/// Upper bound on the byte size of a single cached value, mirroring LiteLLM's
+/// Upper bound on the byte size of a single cached value, mirroring the reference
 /// `MAX_SIZE_PER_ITEM_IN_MEMORY_CACHE_IN_KB` (1 MiB). [`InMemoryCache::set`]
 /// skips (and logs) values larger than this so a single large response body
 /// cannot consume disproportionate memory. Moka's `max_capacity` bounds entry
@@ -416,7 +416,7 @@ impl CacheTrait for InMemoryCache {
 
     /// Increment a counter by `by`, atomically.
     ///
-    /// U7: unlike the LiteLLM in-memory cache (commit `432954a2ab`) whose
+    /// U7: unlike the reference in-memory cache whose
     /// `increment` was non-atomic and lost counts under concurrency, this
     /// implementation acquires `self.counters.write().await` for the entire
     /// read-modify-write critical section, so concurrent callers can never
@@ -588,8 +588,8 @@ impl CacheTrait for InMemoryCache {
 ///
 /// When Redis is `None`, behaves as a pure in-memory cache.
 ///
-/// U16 (LiteLLM commit `ae8dc1f39f`): the read path must NEVER re-publish a
-/// memory value back to Redis. The LiteLLM bug was that after a key update
+/// U16: the read path must NEVER re-publish a
+/// memory value back to Redis. The reference bug was that after a key update
 /// deleted the Redis blob, the read-path writer re-published the stale
 /// in-memory blob to Redis, un-doing the invalidation across replicas. oxllm
 /// is safe by design: `get` only backfills **Redis → memory** (one-way, with
@@ -1483,7 +1483,7 @@ mod tests {
         assert_eq!(cache.counter_value("spend:x").await, Some(0.75));
     }
 
-    /// LiteLLM `test_dual_cache_get_set`: after set, get should hit memory without Redis.
+    /// After set, get should hit memory without Redis.
     #[cfg(feature = "redis")]
     #[tokio::test]
     async fn dual_cache_get_prefers_memory_after_set() {
@@ -1530,7 +1530,7 @@ mod tests {
 
     // ---- U16: read path must never re-publish memory → Redis ----------------
     //
-    // LiteLLM commit ae8dc1f39f: after a key update deleted the Redis blob,
+    // After a key update deleted the Redis blob,
     // the read-path writer re-published the stale in-memory blob back to
     // Redis, un-doing the cross-replica invalidation. oxllm's `DualCache::get`
     // only backfills **Redis → memory** (never the reverse), so a stale memory
@@ -1650,7 +1650,7 @@ mod tests {
     }
 
     /// MEDIUM: `set` must skip (and not store) values larger than the
-    /// per-item cap, mirroring LiteLLM's `check_value_size`
+    /// per-item cap, mirroring the reference `check_value_size`
     /// (`MAX_SIZE_PER_ITEM_IN_MEMORY_CACHE_IN_KB`, default 1 MiB). Moka's
     /// `max_capacity` bounds entry *count*, not total bytes, so without this
     /// cap a single cached response body (up to 50 MiB on the response side)

@@ -2,7 +2,7 @@
 -- v0_schema_version_statement + v1_statements_for(Question).
 -- Keep this independent of current migration generators. In particular,
 -- teams.blocked, organization v4 fields and spend v8+ fields do not exist,
--- and models uses the original litellm_params column name.
+-- and models uses the original legacy params column name.
 CREATE TABLE _schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE keys (
     key_id TEXT PRIMARY KEY, key_hash TEXT UNIQUE NOT NULL, key_alias TEXT,

@@ -140,7 +140,7 @@ impl std::fmt::Debug for RedactedHeaders<'_> {
 
 /// `Debug` adapter over the forward-compat `extra` map that masks every
 /// string leaf as [`REDACTED`] while keeping keys and non-string values
-/// visible. `extra` captures every unrecognized `litellm_params` entry, so
+/// visible. `extra` captures every unrecognized deployment-params entry, so
 /// credential-shaped params (`azure_ad_token`, `google_application_credentials`,
 /// …) land here with `os.environ/` values already resolved — default-deny on
 /// strings is the only listing that cannot rot as new credential params
@@ -186,6 +186,54 @@ impl std::fmt::Debug for RedactedValue<'_> {
     }
 }
 
+/// One Anthropic prompt-cache breakpoint.
+///
+/// `location` is `message`. Set `role` (`system`) or a message `index`
+/// (`-1` is the last message). The Anthropic transform writes
+/// `cache_control: {type: ephemeral}` there when the client did not.
+/// Existing caller controls take precedence and new marks stay within the
+/// four-block provider limit. Missing request targets are skipped.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheControlInjectionPoint {
+    /// `message`. Other locations are a transform error.
+    pub location: String,
+    /// Message role to mark. `system` targets the split-out system block.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Index into the source message list. Negative indexes count from the
+    /// end. Missing/out-of-range request targets are skipped.
+    #[serde(default)]
+    pub index: Option<i64>,
+}
+
+impl CacheControlInjectionPoint {
+    /// Validate the supported message selector before serving requests.
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.location != "message" {
+            return Err(crate::Error::Config(
+                "cache_control_injection_points location must be message".into(),
+            ));
+        }
+        if self.role.is_some() == self.index.is_some() {
+            return Err(crate::Error::Config(
+                "cache_control_injection_points entry needs exactly one of role or index".into(),
+            ));
+        }
+        if self
+            .role
+            .as_deref()
+            .is_some_and(|role| !matches!(role, "system" | "user" | "assistant" | "tool"))
+        {
+            return Err(crate::Error::Config(
+                "cache_control_injection_points role must be system, user, assistant or tool"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Provider config for a deployment (the `oxllm_params` block).
 ///
 /// `Debug` is hand-written so the secret-bearing fields (`api_key`, AWS
@@ -204,6 +252,14 @@ pub struct OxllmParams {
     /// API key.
     #[serde(default)]
     pub api_key: Option<String>,
+    /// Replace the provider's authentication header (for example `api-key`).
+    /// Non-Authorization headers default to a raw credential value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header: Option<String>,
+    /// Authentication value prefix, such as `Bearer` or `Token`. `raw`,
+    /// `none`, or an empty string sends the credential without a prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_scheme: Option<String>,
     /// AWS access key id for `bedrock` and `bedrock_mantle` deployments. When
     /// omitted the host falls back to the `AWS_ACCESS_KEY_ID` environment
     /// variable at request time.
@@ -220,7 +276,7 @@ pub struct OxllmParams {
     /// Base URL override.
     #[serde(default)]
     pub api_base: Option<String>,
-    /// Request timeout in seconds. Stored as `f64` so LiteLLM-legal floats
+    /// Request timeout in seconds. Stored as `f64` so fractional timeouts
     /// like `timeout: 0.5` parse (Bug #49).
     #[serde(default)]
     pub timeout: Option<f64>,
@@ -242,7 +298,7 @@ pub struct OxllmParams {
     /// is uniform random (the default).
     #[serde(default)]
     pub weight: Option<u32>,
-    /// Optional priority-order tier (LiteLLM parity): lower `order` =
+    /// Optional priority-order tier: lower `order` =
     /// higher priority. When at least one candidate deployment sets
     /// `order`, the router only considers the lowest-order tier of
     /// healthy deployments; unset counts as the lowest-priority tier.
@@ -252,7 +308,7 @@ pub struct OxllmParams {
     /// Optional per-deployment input cost override (USD per token). When
     /// any pricing field is set, a pricing override takes effect; missing
     /// per-token rates default from the embedded price table (per-field
-    /// merge, matching LiteLLM's `Router._create_deployment`).
+    /// merge against the model's rate card).
     #[serde(default)]
     pub input_cost_per_token: Option<f64>,
     /// Optional per-deployment output cost override (USD per token).
@@ -267,7 +323,7 @@ pub struct OxllmParams {
     pub output_cost_per_reasoning_token: Option<f64>,
     /// Optional per-deployment cache-read input token cost override.
     /// Falls back to the price-table cache-read rate (inherited, matching
-    /// LiteLLM's `_inherit_builtin_cache_pricing`) when `None` and the
+    /// built-in cache-pricing inheritance) when `None` and the
     /// model resolves in the table; otherwise the override's input rate.
     #[serde(default)]
     pub cache_read_input_token_cost: Option<f64>,
@@ -278,12 +334,16 @@ pub struct OxllmParams {
     #[serde(default)]
     pub cache_creation_input_token_cost: Option<f64>,
     /// Optional per-deployment cost override for cache-creation input tokens
-    /// that persist for 1 hour (Anthropic's 1h-ephemeral cache tier, LiteLLM
+    /// that persist for 1 hour (Anthropic's 1h-ephemeral cache tier,
     /// `cache_creation_input_token_cost_above_1hr`). Falls back to the
     /// price-table 1h rate (inherited) when `None` and the model resolves in
     /// the table.
     #[serde(default)]
     pub cache_creation_input_token_cost_above_1hr: Option<f64>,
+    /// Apply deployment context-tier prices at the exact threshold when true.
+    /// Unset uses an exclusive boundary.
+    #[serde(default)]
+    pub tier_threshold_is_inclusive: Option<bool>,
     /// Optional duration price (USD per second of elapsed request time).
     /// Takes precedence over legacy input/output duration rates. Per-token
     /// overrides take precedence over every duration rate.
@@ -328,6 +388,31 @@ pub struct OxllmParams {
     /// affect the primary response.
     #[serde(default)]
     pub silent_model: Option<String>,
+    /// Per-deployment override of the global `drop_params` flag. `Some`
+    /// wins over the global setting; `None` inherits it.
+    #[serde(default)]
+    pub drop_params: Option<bool>,
+    /// Repair incomplete Bedrock tool/thinking history. Adjacent Converse
+    /// roles are always normalized; this override inherits the global setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modify_params: Option<bool>,
+    /// Top-level keys removed before and after the provider transform, so
+    /// renamed parameters are also dropped. Applied even when a key is
+    /// supported or listed in `allowed_openai_params`.
+    #[serde(default)]
+    pub additional_drop_params: Option<Vec<String>>,
+    /// Keys preserved by the supported-param strip and restored if the
+    /// provider's allow-list omitted them. Additional drops still win.
+    #[serde(default)]
+    pub allowed_openai_params: Option<Vec<String>>,
+    /// Shallow object merged over the outbound body after the provider
+    /// transform. Configured values win over client/provider values; the
+    /// resolved `model` is protected and additional drops still win.
+    #[serde(default)]
+    pub extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Anthropic cache breakpoints. See [`CacheControlInjectionPoint`].
+    #[serde(default)]
+    pub cache_control_injection_points: Option<Vec<CacheControlInjectionPoint>>,
     /// Unknown params captured for forward compatibility.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -338,6 +423,8 @@ impl std::fmt::Debug for OxllmParams {
         f.debug_struct("OxllmParams")
             .field("model", &self.model)
             .field("api_key", &redact(&self.api_key))
+            .field("auth_header", &self.auth_header)
+            .field("auth_scheme", &self.auth_scheme)
             .field("aws_access_key_id", &redact(&self.aws_access_key_id))
             .field(
                 "aws_secret_access_key",
@@ -374,6 +461,10 @@ impl std::fmt::Debug for OxllmParams {
             .field("output_cost_per_second", &self.output_cost_per_second)
             .field("cost_per_second", &self.cost_per_second)
             .field(
+                "tier_threshold_is_inclusive",
+                &self.tier_threshold_is_inclusive,
+            )
+            .field(
                 "extra_headers",
                 &self.extra_headers.as_ref().map(RedactedHeaders),
             )
@@ -381,23 +472,61 @@ impl std::fmt::Debug for OxllmParams {
             .field("max_budget", &self.max_budget)
             .field("budget_duration", &self.budget_duration)
             .field("silent_model", &self.silent_model)
+            .field("drop_params", &self.drop_params)
+            .field("modify_params", &self.modify_params)
+            .field("additional_drop_params", &self.additional_drop_params)
+            .field("allowed_openai_params", &self.allowed_openai_params)
+            .field("extra_body", &self.extra_body.as_ref().map(RedactedExtra))
+            .field(
+                "cache_control_injection_points",
+                &self.cache_control_injection_points,
+            )
             .field("extra", &RedactedExtra(&self.extra))
             .finish()
     }
 }
 
 impl OxllmParams {
+    /// Validate authentication override syntax before constructing headers.
+    pub fn validate_auth_overrides(&self) -> crate::Result<()> {
+        let is_token = |value: &str| {
+            !value.is_empty()
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+        };
+        if self
+            .auth_header
+            .as_deref()
+            .is_some_and(|header| !is_token(header))
+        {
+            return Err(crate::Error::Config(
+                "auth_header must be a valid HTTP header name".into(),
+            ));
+        }
+        if self
+            .auth_scheme
+            .as_deref()
+            .is_some_and(|scheme| !scheme.is_empty() && !is_token(scheme))
+        {
+            return Err(crate::Error::Config(
+                "auth_scheme must be an HTTP authentication token or raw".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Returns the deployment-level pricing override when **any** pricing
     /// field is set, merging per field with the embedded price table.
     ///
-    /// LiteLLM's `Router._create_deployment` copies every non-None
-    /// `CustomPricingLiteLLMParams` field into `model_info` independently,
+    /// Custom pricing copies every non-None
+    /// pricing field into the model's rate card independently,
     /// so a config that overrides only `input_cost_per_token` bills input
     /// at the custom rate and output at the table rate. This mirrors that:
     /// missing input/output rates default from the price table (0.0 when
     /// the model is unlisted, with a `debug` log on the partial
     /// input/output case so the fallback is observable), and unset cache
-    /// rates inherit the table's cache rates (LiteLLM's
+    /// rates inherit the table's cache rates (the
     /// `_inherit_builtin_cache_pricing`) instead of falling back to the
     /// custom input rate — user-specified fields always win. A satellite-
     /// only override (reasoning/cache rates set, both base rates unset) on
@@ -406,7 +535,7 @@ impl OxllmParams {
     ///
     /// Per-second fields (`input_cost_per_second` / `output_cost_per_second`)
     /// only take effect when no per-token field is set; when both are
-    /// configured the per-token rates win (LiteLLM precedence) and a
+    /// configured the per-token rates win and a
     /// `debug` log is emitted.
     ///
     /// All of these events log at `debug` (not `warn`): this method runs
@@ -415,12 +544,15 @@ impl OxllmParams {
     /// persistent partial/precedence configuration must not emit a warn per
     /// request — the codebase's convention for per-pick events is debug.
     pub fn pricing_override(&self) -> Option<crate::cost::DeploymentPricing> {
+        let tiers = crate::cost::cost_tiers_from_extra(&self.extra);
+        let tier_set = !tiers.is_empty();
         let per_token_set = self.input_cost_per_token.is_some()
             || self.output_cost_per_token.is_some()
             || self.output_cost_per_reasoning_token.is_some()
             || self.cache_read_input_token_cost.is_some()
             || self.cache_creation_input_token_cost.is_some()
-            || self.cache_creation_input_token_cost_above_1hr.is_some();
+            || self.cache_creation_input_token_cost_above_1hr.is_some()
+            || tier_set;
         let per_second_set = self.cost_per_second.is_some()
             || self.input_cost_per_second.is_some()
             || self.output_cost_per_second.is_some();
@@ -482,6 +614,8 @@ impl OxllmParams {
                 .cache_creation_input_token_cost_above_1hr
                 .or(table.and_then(|p| p.cache_creation_input_token_cost_above_1hr)),
             output_cost_per_reasoning_token: self.output_cost_per_reasoning_token,
+            tiers,
+            tier_threshold_is_inclusive: self.tier_threshold_is_inclusive.unwrap_or(false),
             ..Default::default()
         })
     }
@@ -503,6 +637,42 @@ impl OxllmParams {
     }
 }
 
+/// `oxllm_params` keys that stay in the flattened `extra` map because a
+/// provider or credential resolver reads them. Anything else is warned at
+/// load. Parsed `*_above_*_tokens` price keys are consumed separately.
+pub fn is_known_oxllm_param_extra(key: &str) -> bool {
+    matches!(
+        key,
+        "aws_region_name"
+            | "aws_region"
+            | "aws_bedrock_token_expires"
+            | "vertex_project"
+            | "vertex_credentials"
+            | "vertex_location"
+            | "use_converse"
+            | "use_converse_api"
+            | "azure_deployment"
+            | "azure_ad_token"
+            | "watsonx_token"
+            | "watsonx_api_key"
+            | "watsonx_project"
+            | "organization"
+            | "project"
+            | "http_referer"
+            | "x_title"
+            | "guardrail_id"
+            | "guardrailIdentifier"
+            | "guardrail_version"
+            | "guardrailVersion"
+            | "trace"
+            | "performanceConfig"
+            | "performance_config"
+            | "base_model"
+            | "max_input_tokens"
+            | "max_output_tokens"
+    )
+}
+
 /// Optional metadata for a deployment.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -518,6 +688,12 @@ pub struct ModelInfo {
     /// Tags for tag-based routing (e.g. `["canary"]`, `["stable"]`).
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Environments in which this deployment is loaded. Absent means the
+    /// deployment loads in every environment. Compared with
+    /// `OXLLM_ENVIRONMENT`, then the legacy environment alias, defaulting to
+    /// `development`.
+    #[serde(default)]
+    pub supported_environments: Option<Vec<String>>,
     /// Unknown fields for forward compatibility.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -786,7 +962,7 @@ mod tests {
 
     #[test]
     fn test_pricing_override_partial_input_only_merges_table_rates() {
-        // LiteLLM merges custom pricing per field: an override with only
+        // Merge custom pricing per field: an override with only
         // `input_cost_per_token` set bills input at the custom rate and
         // output at the price-table rate (gpt-4o output = 1e-5), instead of
         // silently dropping the whole override.
@@ -836,7 +1012,7 @@ mod tests {
 
     #[test]
     fn test_pricing_override_inherits_table_cache_rates() {
-        // LiteLLM's `_inherit_builtin_cache_pricing`: a custom-priced
+        // Built-in cache-pricing inheritance: a custom-priced
         // Anthropic deployment with no cache fields bills cache reads at
         // the table rate (3e-7), NOT the custom input rate (3e-6) — a 10x
         // over-bill on cache-heavy traffic otherwise.
@@ -894,7 +1070,7 @@ mod tests {
     }
 
     /// LOW (C10): `cache_creation_input_token_cost_above_1hr` is a
-    /// `CustomPricingLiteLLMParams` field in LiteLLM, so a migrated config
+    /// custom-pricing field, so a migrated config
     /// setting it must take effect instead of silently landing in `extra`.
     #[test]
     fn test_pricing_override_explicit_1hr_cache_rate_wins_over_inheritance() {
@@ -1053,7 +1229,7 @@ mod tests {
 
     #[test]
     fn test_pricing_override_per_second_only() {
-        // LiteLLM CustomPricingLiteLLMParams carries per-second rates; a
+        // Custom pricing carries per-second rates; a
         // per-second-only override bills duration, not tokens.
         let params = OxllmParams {
             model: "sagemaker/duration-model".to_string(),
@@ -1074,7 +1250,7 @@ mod tests {
 
     #[test]
     fn test_pricing_override_per_token_wins_over_per_second() {
-        // LiteLLM precedence: when both per-token and per-second custom
+        // Pricing precedence: when both per-token and per-second custom
         // rates are configured, the per-token rates bill and the per-second
         // fields are dropped from the effective override.
         let params = OxllmParams {
@@ -1366,7 +1542,7 @@ mod tests {
         );
     }
 
-    /// MEDIUM (C10): `extra` captures every unrecognized `litellm_params`
+    /// MEDIUM (C10): `extra` captures every unrecognized deployment-params
     /// entry — including credential-shaped ones like `azure_ad_token`, with
     /// `os.environ/` values already resolved at config load. The hand-written
     /// `Debug`'s documented "cannot leak live keys" guarantee must hold for

@@ -237,7 +237,7 @@ impl S3LogHook {
 
         // LOW #7: include a redacted response body in the S3 log object so
         // operators have both halves of the exchange for audit / replay
-        // (matching LiteLLM's S3 logging, which persists both). Gated behind
+        // (matching the reference S3 logging, which persists both). Gated behind
         // `log_response_body` (default true) so an operator concerned about
         // storage cost can opt out.
         if self.config.log_response_body {
@@ -684,7 +684,7 @@ secret_access_key: secretkey
 
     /// LOW #7: the S3 log must include a redacted response body alongside
     /// the request body so operators have both halves of the exchange for
-    /// audit / replay (matching LiteLLM's S3 logging).
+    /// audit / replay (matching the reference S3 logging).
     #[tokio::test]
     async fn build_log_includes_redacted_response_body() {
         let hook = S3LogHook::new(&raw_config(), false).expect("build");

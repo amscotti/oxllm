@@ -466,7 +466,8 @@ fn provider_id_and_supports() {
     let p = BedrockProvider;
     assert_eq!(p.id(), "bedrock");
     assert!(p.supports(Endpoint::ChatCompletions));
-    assert!(!p.supports(Endpoint::Embeddings));
+    assert!(p.supports(Endpoint::Embeddings));
+    assert!(p.embeddings().is_some());
 }
 
 #[test]
@@ -1000,10 +1001,10 @@ fn transform_request_overrides_model_for_non_anthropic_models() {
 }
 
 // =============================================================================
-// Ported from LiteLLM `tests/llm_translation/test_bedrock_nova_embedding.py`.
+// Ported from the reference `tests/llm_translation/test_bedrock_nova_embedding.py`.
 //
 // oxllm's Bedrock provider does not yet implement the Amazon Nova multimodal
-// embedding transform (`AmazonNovaEmbeddingConfig` in LiteLLM). The genuinely
+// embedding transform (`AmazonNovaEmbeddingConfig` in the reference). The genuinely
 // portable parts of that suite are the *provider detection* tests
 // (`TestNovaProviderDetection`): model names beginning with `amazon.` (incl.
 // Nova) are non-Anthropic, so they route through the Bedrock passthrough path
@@ -1119,19 +1120,22 @@ fn nova_response_passthrough_for_unrecognised_vendor_shape() {
     );
 }
 
-/// Nova embedding support is not yet wired into the Bedrock provider: it only
-/// advertises `ChatCompletions`. This guards against silently routing
-/// `/v1/embeddings` to a host that would emit Nova-native JSON the embedding
-/// pipeline cannot decode.
+/// Cohere and Titan embed ids are translated. Other Bedrock models, including
+/// Nova, are rejected in the embed transform so they are not forwarded as an
+/// OpenAI body.
 #[test]
-fn bedrock_provider_does_not_advertise_embeddings() {
+fn bedrock_embeddings_reject_non_embed_models() {
     let p = BedrockProvider;
-    assert!(p.supports(Endpoint::ChatCompletions));
-    assert!(
-        !p.supports(Endpoint::Embeddings),
-        "Nova embeddings are not yet implemented; Embeddings must not be advertised"
-    );
-    assert!(p.embeddings().is_none());
+    assert!(p.supports(Endpoint::Embeddings));
+    assert!(p.embeddings().is_some());
+    let dep = bedrock_deployment("bedrock/amazon.nova-micro-v1:0");
+    let err = oxllm_core::EmbeddingProvider::transform_request(
+        p.embeddings().expect("embeddings"),
+        &json!({"input": "hello"}),
+        &dep,
+    )
+    .expect_err("nova is not an embed model");
+    assert!(err.to_string().contains("does not support embeddings"));
 }
 
 // =============================================================================
@@ -1218,7 +1222,7 @@ fn transform_response_without_thinking_blocks_has_no_reasoning_fields() {
 //
 // AWS Bedrock applies inline guardrails via URL query parameters on the
 // InvokeModel endpoint (`?guardrailIdentifier=...&guardrailVersion=...`).
-// Configured via `extra.guardrail_id`/`guardrail_version` (LiteLLM-style) or
+// Configured via `extra.guardrail_id`/`guardrail_version` (snake_case) or
 // the AWS-native camelCase variants.
 // =============================================================================
 
@@ -2151,7 +2155,7 @@ mod converse_tests {
     }
 
     /// Empty inference params still produce an `inferenceConfig: {}` field
-    /// (matches LiteLLM — request shape stays stable).
+    /// (matches the reference — request shape stays stable).
     #[test]
     fn converse_request_always_emits_inference_config_even_when_empty() {
         let req = json!({
@@ -2327,7 +2331,7 @@ mod converse_tests {
 
     /// Converse tool input_schema sanitization: `type:"custom"` (the Claude
     /// Code custom-tool marker) must be normalized to `type:"object"` so
-    /// Bedrock's JSON Schema validator accepts the schema. LiteLLM does the
+    /// Bedrock's JSON Schema validator accepts the schema. The reference does the
     /// equivalent in `normalize_json_schema_custom_types_to_object`.
     #[test]
     fn converse_tool_input_schema_type_custom_normalized() {
@@ -2702,7 +2706,7 @@ mod converse_tests {
     /// `tool_calls[].index` must be the position within the `tool_calls`
     /// array (0, 1, 2, …), not the content-block index. A
     /// `[text, toolUse, toolUse]` turn yields indices `[0, 1]`, matching
-    /// OpenAI's non-streaming `chat.completion` shape and LiteLLM's
+    /// OpenAI's non-streaming `chat.completion` shape and the reference
     /// `_get_indexed_tool_calls`.
     #[test]
     fn converse_response_tool_call_index_is_array_position_not_block_index() {
@@ -3292,7 +3296,7 @@ mod converse_tests {
 
     // ========================================================================
     // Batch 2: guardrailConfig → guarded_text auto-conversion
-    // (mirrors LiteLLM `_convert_consecutive_user_messages_to_guarded_text`)
+    // (mirrors the reference consecutive-user-message guardrail conversion)
     // ========================================================================
 
     /// No `guardrailConfig` → user text is left as a plain `{text: "…"}`
@@ -3394,13 +3398,13 @@ mod converse_tests {
         ]);
         let out = converse::transform_request_converse(&req, "m", &extra).expect("ok");
         let msgs = out["messages"].as_array().expect("messages");
-        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs.len(), 1);
         assert_eq!(
             msgs[0]["content"][0]["guardContent"]["text"]["text"],
             "first"
         );
         assert_eq!(
-            msgs[1]["content"][0]["guardContent"]["text"]["text"],
+            msgs[0]["content"][1]["guardContent"]["text"]["text"],
             "second"
         );
     }

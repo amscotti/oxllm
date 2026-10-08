@@ -2,7 +2,7 @@
 //!
 //! For OpenAI models we use [`tiktoken_rs`] (the same BPE tokenizer OpenAI
 //! ships). For other providers we fall back to `cl100k_base` — the same
-//! default encoding LiteLLM uses for unrecognised models (`_fix_model_name`
+//! default encoding the reference uses for unrecognised models (`_fix_model_name`
 //! normalises unknown names to `gpt-3.5-turbo`, which is `cl100k_base`). Only
 //! if `cl100k_base` itself fails to load do we degrade to a `byte length / 4`
 //! ASCII heuristic. Estimation never panics on user input — tokenizer errors
@@ -18,7 +18,7 @@ use std::collections::HashSet;
 /// - `o200k_base` for GPT-4o / 4o-mini / o1-family (newer encoding).
 /// - `cl100k_base` for GPT-4 / GPT-3.5 (legacy encoding).
 /// - Returns `None` for non-OpenAI models; the caller falls back to
-///   `cl100k_base` (matching LiteLLM's `token_counter`), then to the byte
+///   `cl100k_base` (matching the reference token counter), then to the byte
 ///   heuristic if cl100k is unavailable.
 ///
 /// Ordering is significant: the `gpt-4.1` / `gpt-4.5` / `gpt-5` (and
@@ -136,7 +136,7 @@ fn cl100k() -> Option<&'static tiktoken_rs::CoreBPE> {
 ///   `gpt-4` / `gpt-3.5` → `cl100k_base`) are counted exactly via
 ///   `tiktoken_rs`.
 /// - All other models (Claude, Gemini, Cohere, …) fall back to `cl100k_base`,
-///   matching LiteLLM's `token_counter` (which normalises unknown names to
+///   matching the reference token counter (which normalises unknown names to
 ///   `gpt-3.5-turbo`); the previous `byte length / 4` heuristic materially
 ///   mis-estimated both ASCII and CJK for those providers.
 /// - Text is encoded with `encode_ordinary` (no special-token collapsing),
@@ -156,8 +156,8 @@ pub fn estimate_tokens(text: &str, model: &str) -> u64 {
 }
 
 /// Report the `tokenizer_type` string for [`estimate_tokens`] on `model`,
-/// matching the `tokenizer_type` field of LiteLLM's `TokenCountResponse`.
-/// LiteLLM returns `str(_select_tokenizer(model)["type"])`, which is
+/// matching the reference token-count response's `tokenizer_type` field.
+/// The reference returns `str(_select_tokenizer(model)["type"])`, which is
 /// `"openai_tokenizer"` or `"huggingface_tokenizer"` — never an encoding name
 /// (`proxy_server.py` `tokenizer_used`, `utils.py _return_openai_tokenizer`).
 /// oxllm counts every model with tiktoken BPE (o200k/cl100k), so the truthful
@@ -194,7 +194,7 @@ pub fn warm_tokenizers() {
 /// post-success settlement.
 const PER_IMAGE_FLOOR_TOKENS: u64 = 85;
 
-/// Conservative floor for a `detail:"high"` image. LiteLLM's
+/// Conservative floor for a `detail:"high"` image. The reference
 /// `calculate_img_tokens(mode="high")` returns `85 + (170 × tiles)` after
 /// decoding the image dimensions; the minimum (a single tile) is therefore
 /// `255`. We cannot decode dimensions on the hot path without a blocking fetch
@@ -211,10 +211,10 @@ const PER_AUDIO_FLOOR_TOKENS: u64 = 50;
 
 /// Estimate the prompt-token contribution of a message's `content` field.
 /// String content is tokenized directly; array content is summed across parts.
-/// Mirrors LiteLLM's `_count_content_list` (`token_counter.py:692-740`): text,
+/// Mirrors the reference `_count_content_list` (`token_counter.py:692-740`): text,
 /// image, audio, `tool_use`, `tool_result`, `thinking`, `tool_reference` and
 /// bare-string elements are all counted, and any unrecognised block is
-/// serialized so it never silently scores 0 on a billing path (LiteLLM raises
+/// serialized so it never silently scores 0 on a billing path (the reference raises
 /// here; we degrade to a conservative count instead of panicking).
 fn count_content_tokens(content: &Value, model: &str) -> u64 {
     match content {
@@ -247,7 +247,7 @@ fn image_part_tokens(p: &Value) -> u64 {
 }
 
 /// Token contribution of a single content-block element, covering every block
-/// type LiteLLM's `_count_content_list` recognises. A bare-string element
+/// type the reference `_count_content_list` recognises. A bare-string element
 /// (`isinstance(c, str)`) is counted as text; an unrecognised object type is
 /// serialized so it contributes nonzero rather than being dropped.
 fn count_content_part(p: &Value, model: &str) -> u64 {
@@ -293,13 +293,13 @@ fn count_content_part(p: &Value, model: &str) -> u64 {
 }
 
 /// Per-message structural overhead (OpenAI convention: every message follows
-/// `<|start|>{role/name}\n{content}<|end|>\n`). LiteLLM's `_MessageCountParams`
+/// `<|start|>{role/name}\n{content}<|end|>\n`). The reference `_MessageCountParams`
 /// uses `3` for every model except the obsolete `gpt-3.5-turbo-0301` (which
 /// used `4` / a negative `tokens_per_name`); that model has been deprecated
 /// since the April 2021 cutoff and is not routed in practice, so its
 /// special-case is intentionally not implemented here. The role name is
 /// embedded in this constant and is NOT counted separately. Divergence from
-/// LiteLLM's `_count_messages` (which BPE-counts *every* string field,
+/// the reference `_count_messages` (which BPE-counts *every* string field,
 /// including `role` and unknown custom fields, plus Anthropic
 /// `search_results`): those extra few tokens per message are intentionally
 /// dropped here — the role text is covered by this constant and unknown
@@ -307,18 +307,18 @@ fn count_content_part(p: &Value, model: &str) -> u64 {
 /// under-estimate stays within the post-success settlement correction.
 const PER_MESSAGE_OVERHEAD_TOKENS: u64 = 3;
 
-/// Additional overhead when a message carries a `name` field (LiteLLM's
+/// Additional overhead when a message carries a `name` field (the reference
 /// `tokens_per_name = 1`). Applied on top of the `name` text itself.
 const PER_NAME_OVERHEAD_TOKENS: u64 = 1;
 
 /// Assistant-reply priming tokens added once for any message-bearing request.
-/// LiteLLM's `_count_extra` (`token_counter.py:505`) starts with
+/// The reference `_count_extra` (`token_counter.py:505`) starts with
 /// `num_tokens = 3  # every reply is primed with <|start|>assistant<|message|>`
 /// on the prompt-count path (`count_response_tokens is False`). This is
 /// independent of the tool-formatting `+9`/`-4` adjustments (which oxllm omits
 /// because it BPE-counts the serialized tool JSON instead), so the base `+3`
 /// applies unconditionally whenever `messages` is present. Omitted on the
-/// embeddings / rerank / prompt-only arms, where LiteLLM's `text` path applies.
+/// embeddings / rerank / prompt-only arms, where the reference `text` path applies.
 const REPLY_PRIMING_TOKENS: u64 = 3;
 
 /// Minimum token count for any non-empty tool definition: covers the
@@ -330,7 +330,7 @@ const PER_TOOL_FLOOR_TOKENS: u64 = 50;
 /// Token count for a `tool_calls[].function.arguments`, legacy
 /// `function_call.arguments`, or content-part `text` value. The OpenAI wire
 /// format specifies both `arguments` and `text` as strings, but non-conforming
-/// clients sometimes send a JSON object/array/number. LiteLLM handles this
+/// clients sometimes send a JSON object/array/number. The reference handles this
 /// defensively via `str(...)` (`token_counter.py:432, 437, 700` — its text
 /// branch counts `str(c.get("text", ""))`); we mirror that by stringifying any
 /// non-null, non-string value before counting, so a large object-form payload
@@ -352,7 +352,7 @@ fn count_arguments(value: &Value, model: &str) -> u64 {
 /// Components:
 /// - Each message: `content` text + 3-token structural overhead (OpenAI
 ///   convention; the role name is folded into the constant, not BPE-counted
-///   on top, matching LiteLLM). Assistant messages also account for
+///   on top, matching the reference). Assistant messages also account for
 ///   `tool_calls` (and the legacy `function_call`) and the per-message `name`
 ///   field — `arguments` is frequently the largest field in an agent
 ///   conversation. Image/audio content parts each contribute a floor so
@@ -362,13 +362,13 @@ fn count_arguments(value: &Value, model: &str) -> u64 {
 ///   tokens so the schema scaffolding alone counts even when
 ///   name/description are short.
 /// - `tool_choice`: `"none"` → +1, object form → +7 + the function-name
-///   tokens (LiteLLM's `_count_extra`).
+///   tokens (the reference `_count_extra`).
 /// - Embeddings (`{model, input}`) and rerank (`{model, query, documents}`)
 ///   bodies carry no `messages`; we count them too so TPM pre-throttling and
 ///   budget reservation engage before post-success settlement.
 /// - Gemini-shaped `contents` (`[{role, parts: [{text}, ...]}]`) is counted as
 ///   a best-effort sum of its `parts[*].text` fields (non-text parts are
-///   skipped); LiteLLM routes this shape through Google's `/countTokens`
+///   skipped); the reference routes this shape through Google's `/countTokens`
 ///   endpoint when `call_endpoint=True`, so the local count is an estimate.
 pub fn estimate_request_tokens(request: &Value) -> u64 {
     let model = request.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -384,7 +384,7 @@ pub fn estimate_request_tokens(request: &Value) -> u64 {
     if let Some(messages) = request.get("messages").and_then(|v| v.as_array()) {
         has_messages = true;
         for msg in messages {
-            // LiteLLM's `_count_messages` adds `tokens_per_message` for every
+            // The reference `_count_messages` adds `tokens_per_message` for every
             // entry of the array unconditionally — even a degenerate empty
             // `{}` still consumes framing tokens.
             message_count = message_count.saturating_add(1);
@@ -418,7 +418,7 @@ pub fn estimate_request_tokens(request: &Value) -> u64 {
                 }
             }
             // Per-message `name` field used to disambiguate participants.
-            // Counted as text plus the +1 structural bump (LiteLLM's
+            // Counted as text plus the +1 structural bump (the reference
             // `tokens_per_name`).
             if let Some(name) = msg.get("name").and_then(|v| v.as_str()) {
                 total = total.saturating_add(estimate_tokens(name, model));
@@ -428,7 +428,7 @@ pub fn estimate_request_tokens(request: &Value) -> u64 {
     }
     // OpenAI-style per-message structural overhead.
     total = total.saturating_add(message_count.saturating_mul(PER_MESSAGE_OVERHEAD_TOKENS));
-    // Assistant-reply priming: LiteLLM's `_count_extra` adds an unconditional
+    // Assistant-reply priming: the reference `_count_extra` adds an unconditional
     // base `+3` on the prompt-count path whenever `messages` is present. Omitted
     // for the embeddings / rerank / prompt-only arms (the `text` path).
     if has_messages {
@@ -441,7 +441,7 @@ pub fn estimate_request_tokens(request: &Value) -> u64 {
     // Gated on `messages` not being a usable *array* (not mere key absence):
     // a malformed non-array `messages` value contributes nothing to the
     // messages loop above, so the prompt/input arms must still run or such a
-    // body silently estimates 0. LiteLLM concatenates list inputs for
+    // body silently estimates 0. The reference concatenates list inputs for
     // `text`-mode counting; we mirror that for `input` arrays.
     if request.get("messages").and_then(|v| v.as_array()).is_none() {
         if let Some(input) = request.get("input") {
@@ -467,16 +467,16 @@ pub fn estimate_request_tokens(request: &Value) -> u64 {
                 }
             }
         }
-        // LiteLLM's `/utils/token_counter` accepts a top-level `prompt` string
+        // The reference `/utils/token_counter` accepts a top-level `prompt` string
         // (its `text` argument) as an alternative to `messages`. Counted as
-        // raw text with no per-message overhead, matching LiteLLM's pure-text
+        // raw text with no per-message overhead, matching the reference pure-text
         // count path. Only reached when `messages` is not a usable array so a
         // body carrying both is not double-counted.
         if let Some(prompt) = request.get("prompt").and_then(|v| v.as_str()) {
             total = total.saturating_add(estimate_tokens(prompt, model));
         }
-        // Gemini-shaped `contents` (accepted by LiteLLM's `/utils/token_counter`
-        // alongside `prompt`/`messages`). LiteLLM routes this through Google's
+        // Gemini-shaped `contents` (accepted by the reference `/utils/token_counter`
+        // alongside `prompt`/`messages`). The reference routes this through Google's
         // `/countTokens` endpoint when `call_endpoint=True`; for local counting
         // we sum the `parts[*].text` fields as a best-effort estimate so a
         // `contents`-only body no longer silently reports `total_tokens: 0`.
@@ -500,12 +500,12 @@ pub fn estimate_request_tokens(request: &Value) -> u64 {
     // Serialize each tool and run it through the same estimator as message
     // content so OpenAI models get BPE-accurate counts; non-OpenAI models
     // transparently fall back to cl100k inside `estimate_tokens`.
-    // Intentional divergence from LiteLLM's `_count_extra`, which counts a
+    // Intentional divergence from the reference `_count_extra`, which counts a
     // compact TypeScript-ish rendering (`_format_function_definitions`) plus a
     // flat `+9` (`−4` with a system message): the JSON serialization includes
     // quotes/braces and typically counts ~1.2–2× higher. For the TPM/budget
     // reservation this over-estimate is the safe direction; the `/utils/
-    // token_counter` handler strips `tools` when LiteLLM response parity is
+    // token_counter` handler strips `tools` when reference response parity is
     // required instead.
     if let Some(tools) = request.get("tools").and_then(|v| v.as_array()) {
         for tool in tools {
@@ -515,9 +515,9 @@ pub fn estimate_request_tokens(request: &Value) -> u64 {
         }
     }
 
-    // `tool_choice` framing (LiteLLM's `_count_extra`): `"none"` → +1, an
+    // `tool_choice` framing (the reference `_count_extra`): `"none"` → +1, an
     // object naming a function → +7 + the function-name tokens. The flat
-    // `+9`/system-`−4` adjustments in `_count_extra` apply to LiteLLM's
+    // `+9`/system-`−4` adjustments in `_count_extra` apply to the reference
     // TypeScript-style formatted tool representation; oxllm serializes tools
     // as JSON instead, which already accounts for that framing via BPE, so
     // those two adjustments are intentionally omitted.
@@ -575,7 +575,7 @@ mod tests {
         assert_eq!(estimate_tokens("", "gpt-4o"), 0);
     }
 
-    /// Non-OpenAI models fall back to `cl100k_base`, matching LiteLLM's
+    /// Non-OpenAI models fall back to `cl100k_base`, matching the reference
     /// `token_counter` (which normalises unknown names to `gpt-3.5-turbo`).
     #[test]
     fn estimate_tokens_non_openai_uses_cl100k_fallback() {
@@ -738,7 +738,7 @@ mod tests {
     }
 
     /// Per-message structural overhead (OpenAI's 3-token convention, matching
-    /// LiteLLM) must apply to each message in the array.
+    /// the reference) must apply to each message in the array.
     #[test]
     fn estimate_request_tokens_adds_per_message_overhead() {
         let one_msg = json!({
@@ -783,7 +783,7 @@ mod tests {
         );
     }
 
-    /// Non-OpenAI models now use `cl100k_base` (matching LiteLLM) instead of
+    /// Non-OpenAI models now use `cl100k_base` (matching the reference) instead of
     /// the `byte length / 4` heuristic, which under-counted CJK. Each CJK
     /// char is roughly one cl100k token, far above the old `4` for 18 bytes.
     #[test]
@@ -1018,7 +1018,7 @@ mod tests {
     }
 
     /// Gemini-shaped `contents` (`[{role, parts: [{text}, ...]}]`) accepted by
-    /// LiteLLM's `/utils/token_counter` must be counted locally as a
+    /// the reference `/utils/token_counter` must be counted locally as a
     /// best-effort sum of its `parts[*].text` fields, so a `contents`-only
     /// body no longer silently reports `total_tokens: 0`. Non-text parts are
     /// skipped; the estimate scales with text length.
@@ -1061,7 +1061,7 @@ mod tests {
     }
 
     /// An empty `{}` message still consumes the per-message structural
-    /// overhead, matching LiteLLM's `_count_messages` (which adds
+    /// overhead, matching the reference `_count_messages` (which adds
     /// `tokens_per_message` unconditionally per array entry). The reply-priming
     /// `+3` from `_count_extra` is also present whenever `messages` is.
     #[test]
@@ -1074,7 +1074,7 @@ mod tests {
         );
     }
 
-    /// `tool_choice` framing must contribute tokens per LiteLLM's
+    /// `tool_choice` framing must contribute tokens per the reference
     /// `_count_extra`: an object naming a function adds `+7` plus the
     /// function-name tokens.
     #[test]
@@ -1105,7 +1105,7 @@ mod tests {
         );
     }
 
-    /// A top-level `prompt` string (LiteLLM `/utils/token_counter` `text`
+    /// A top-level `prompt` string (the reference `/utils/token_counter` `text`
     /// argument) must be counted as raw text when `messages` is absent.
     #[test]
     fn estimate_request_tokens_counts_prompt_field() {
@@ -1141,7 +1141,7 @@ mod tests {
         );
     }
 
-    /// LiteLLM's `tokenizer_type` is `str(_select_tokenizer(model)["type"])` —
+    /// The reference `tokenizer_type` is `str(_select_tokenizer(model)["type"])` —
     /// `"openai_tokenizer"` / `"huggingface_tokenizer"`, never an encoding
     /// name. oxllm counts every model with tiktoken BPE, so the truthful and
     /// parity-correct value is `"openai_tokenizer"` regardless of which
@@ -1166,7 +1166,7 @@ mod tests {
         assert!(estimate_tokens("hello world", "claude-3") > 0);
     }
 
-    /// LiteLLM parity: a single short user message must score exactly
+    /// Token-count parity: a single short user message must score exactly
     /// `tokens(content) + per_message_overhead + reply_priming`. Asserting the
     /// precise composition catches the missing `+3` reply-priming and any future
     /// drift in the per-message constant.
@@ -1200,7 +1200,7 @@ mod tests {
     }
 
     /// The `+3` reply priming must NOT apply on the prompt-only / embeddings
-    /// arms (LiteLLM's `text` path has no `_count_extra`).
+    /// arms (the reference `text` path has no `_count_extra`).
     #[test]
     fn estimate_request_tokens_no_priming_on_prompt_only_arm() {
         let prompt = json!({"model": "gpt-4o", "prompt": "hi"});
@@ -1237,7 +1237,7 @@ mod tests {
     }
 
     /// A `tool_use` block must count its `name` + `input`, and a bare-string
-    /// content element must be counted as text (LiteLLM `isinstance(c, str)`).
+    /// content element must be counted as text (`isinstance(c, str)` semantics).
     #[test]
     fn estimate_request_tokens_counts_tool_use_and_bare_string_parts() {
         let bare_string = estimate_request_tokens(&json!({
@@ -1270,7 +1270,7 @@ mod tests {
     }
 
     /// A `detail:"high"` image must contribute strictly more than the low/auto
-    /// floor of 85 (LiteLLM's `calculate_img_tokens(mode="high")`).
+    /// floor of 85 (the reference `calculate_img_tokens(mode="high")`).
     #[test]
     fn estimate_request_tokens_high_detail_image_above_floor() {
         let text_only = json!({
@@ -1375,7 +1375,7 @@ mod tests {
     }
 
     /// `tool_choice: "auto"` and `"required"` must add exactly 0 tokens
-    /// (LiteLLM's `_count_extra` only special-cases `"none"` and object form).
+    /// (the reference `_count_extra` only special-cases `"none"` and object form).
     #[test]
     fn estimate_request_tokens_tool_choice_auto_and_required_add_zero() {
         let base = json!({
@@ -1396,7 +1396,7 @@ mod tests {
 
     /// A malformed content part (missing `type`, or `text` with a non-string
     /// value) must never panic. A non-string `text` is stringified and counted
-    /// (LiteLLM's `str(c.get("text", ""))`); an unrecognised object type is
+    /// (`str(c.get("text", ""))` semantics); an unrecognised object type is
     /// serialized so it contributes a nonzero floor (never silently 0 on a
     /// billing path). Per-message framing is unaffected.
     #[test]
@@ -1417,7 +1417,7 @@ mod tests {
     }
 
     /// A `{"type":"text","text":<non-string>}` part must contribute ≥ 1 token:
-    /// LiteLLM counts `str(c.get("text", ""))`, so a numeric/boolean text
+    /// The reference counts `str(c.get("text", ""))`, so a numeric/boolean text
     /// value still scores its stringified form instead of silently 0.
     #[test]
     fn estimate_request_tokens_stringifies_non_string_text_part() {
@@ -1502,7 +1502,7 @@ mod tests {
     }
 
     /// An invalid `detail` value on an image part is treated leniently: the
-    /// 85-token low/auto floor applies (LiteLLM raises on unknown detail;
+    /// 85-token low/auto floor applies (the reference raises on unknown detail;
     /// oxllm never rejects during estimation).
     #[test]
     fn estimate_request_tokens_invalid_detail_uses_low_floor() {

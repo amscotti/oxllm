@@ -1,4 +1,4 @@
-# Adapted from LiteLLM router_settings examples — exercises router_settings + public api_base URLs.
+# Adapted from reference router_settings examples — exercises routing + public api_base URLs.
 model_list:
   - model_name: gpt-4o-mini
     litellm_params:

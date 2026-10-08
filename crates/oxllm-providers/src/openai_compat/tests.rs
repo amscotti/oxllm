@@ -3,7 +3,7 @@
 //! Ported from `/Users/ascotti/code/oxllm/crates/oxllm-providers/src/openai_compatible.rs`
 //! (twin tests for the OpenAI-compatible provider). The source tests exercise
 //! full HTTP round-trips through wiremock; these adapted tests verify the
-//! pure transform/URL/auth surface against the same LiteLLM Python contract.
+//! pure transform/URL/auth surface against the same reference Python contract.
 
 use super::*;
 use oxllm_core::Endpoint;
@@ -76,6 +76,42 @@ fn endpoint_url_trims_trailing_slash() {
     assert_eq!(
         p.endpoint_url(&dep),
         "https://api.test.example.com/v1/chat/completions"
+    );
+}
+
+#[test]
+fn endpoint_url_keeps_query_on_a_full_chat_base() {
+    let p = test_provider();
+    let dep = deployment_with_base(
+        "https://example.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview",
+    );
+    assert_eq!(
+        p.endpoint_url(&dep),
+        "https://example.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview"
+    );
+}
+
+#[test]
+fn endpoint_url_appends_chat_path_and_keeps_query_and_fragment() {
+    let p = test_provider();
+    let dep = deployment_with_base(
+        "https://example.services.ai.azure.com/models?api-version=2024-05-01#west",
+    );
+    assert_eq!(
+        p.endpoint_url(&dep),
+        "https://example.services.ai.azure.com/models/chat/completions?api-version=2024-05-01#west"
+    );
+}
+
+#[test]
+fn embedding_url_keeps_query_on_a_full_embeddings_base() {
+    let p = test_provider();
+    let dep = deployment_with_base(
+        "https://example.services.ai.azure.com/models/embeddings?api-version=2024-05-01-preview",
+    );
+    assert_eq!(
+        EmbeddingProvider::embedding_url(&p, &dep),
+        "https://example.services.ai.azure.com/models/embeddings?api-version=2024-05-01-preview"
     );
 }
 
@@ -482,7 +518,7 @@ fn supported_chat_params_contains_newer_params() {
     }
 }
 
-// --- Additional parameter passthrough tests (ported from LiteLLM test_optional_params.py) ---
+// --- Additional parameter passthrough tests (ported from the reference optional-param tests) ---
 
 #[test]
 fn request_preserves_stream_options() {

@@ -43,7 +43,7 @@ fn endpoint_url_respects_custom_base() {
 
 #[test]
 fn endpoint_url_does_not_double_append_chat_completions() {
-    // LiteLLM's `get_complete_url` guards with `endswith("/chat/completions")`
+    // The reference URL builder guards with `endswith("/chat/completions")`
     // before appending; a caller who configures `api_base` as the full endpoint
     // URL must not get `/chat/completions` appended a second time.
     let p = PROVIDER;
@@ -167,7 +167,7 @@ fn transform_request_preserves_newer_openai_params() {
     assert_eq!(out["service_tier"], "default");
 }
 
-// --- Additional request parameter tests (ported from LiteLLM test_optional_params.py) ---
+// --- Additional request parameter tests (ported from the reference optional-param tests) ---
 
 #[test]
 fn request_preserves_response_format_json_object() {

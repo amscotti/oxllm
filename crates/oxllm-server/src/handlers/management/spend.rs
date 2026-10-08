@@ -1361,7 +1361,7 @@ mod tests {
     }
 
     // LOW: spend/logs v1 must support a team_id filter (parity with v2 and
-    // LiteLLM). Previously the From impl hardcoded team_id: None, so an
+    // the reference). Previously the From impl hardcoded team_id: None, so an
     // operator on the v1 endpoint could not narrow spend to a team.
     #[tokio::test]
     async fn spend_logs_v1_filters_by_team_id() {

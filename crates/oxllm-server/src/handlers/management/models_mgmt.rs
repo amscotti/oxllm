@@ -178,7 +178,7 @@ fn model_list_rows(deployments: &[Deployment]) -> Vec<serde_json::Value> {
 /// intentional and pinned by tests: `GET /model/list` surfaces every provider
 /// backing a group, while this endpoint reports a single representative
 /// pricing snapshot. Operators that need the full per-deployment topology
-/// should use `GET /config`. The LiteLLM parity call (per-deployment pricing
+/// should use `GET /config`. The reference parity call (per-deployment pricing
 /// array) is left to a future change.
 pub async fn model_info(
     State(shared): State<SharedState>,
@@ -240,7 +240,7 @@ pub struct AddModelRequest {
 /// [`encrypt_stored_secrets`].
 ///
 /// **One deployment per `model_name` via this API (intentional).** Unlike
-/// LiteLLM, which lets operators add multiple deployments under a shared
+/// the reference, which lets operators add multiple deployments under a shared
 /// `model_name` via `POST /model/new` to build load-balanced / failover
 /// groups, oxllm rejects a request whose `model_name` already exists in the
 /// live deployment list (YAML or DB) with a 400. Multi-deployment routing
@@ -333,18 +333,27 @@ pub async fn add_model(
             after.credential_cipher.as_ref(),
         )
         .ok();
+        let inactive = crate::config::loader::raw_model_info_supports_environment(
+            record.model_info.as_ref(),
+            &crate::config::loader::resolved_environment(),
+        )
+        .is_ok_and(|active| !active);
         let landed = !after
             .config
             .model_list
             .iter()
             .any(|model| model.model_name == record.model_name)
-            && expected.is_some_and(|expected| {
-                after.deployments.iter().any(|deployment| {
-                    deployment.model_name == record.model_name
-                        && after.router.cooldown_key(deployment)
-                            == after.router.cooldown_key(&expected)
-                })
-            });
+            && (inactive
+                || expected.is_some_and(|expected| {
+                    !crate::config::loader::deployment_supports_environment(
+                        &expected,
+                        &crate::config::loader::resolved_environment(),
+                    ) || after.deployments.iter().any(|deployment| {
+                        deployment.model_name == record.model_name
+                            && after.router.cooldown_key(deployment)
+                                == after.router.cooldown_key(&expected)
+                    })
+                }));
         if !landed {
             let _ = db.delete_model(&model_id).await;
             return Err(ApiError::bad_request(format!(
@@ -409,7 +418,7 @@ pub async fn update_model(
         // (e.g. tweaking `weight` or `rpm`) does not silently drop previously
         // stored secrets (`api_key`, `aws_secret_access_key`, custom headers,
         // …). A caller that wants to clear a field sends an explicit `null`
-        // for it. This mirrors LiteLLM's `update_config`, which merges
+        // for it. This mirrors the reference `update_config`, which merges
         // per-section rather than replacing the whole block. Validation runs
         // on the merged result (not the raw patch) so a partial patch that
         // omits `model` is accepted as long as the stored record carries one.
@@ -594,8 +603,8 @@ enum UndecryptableBlob {
 /// the record is written to the DB. No-op when encryption is disabled
 /// (`ENCRYPTION_KEY` unset).
 ///
-/// This mirrors LiteLLM's `_add_model_to_db`, which runs
-/// `encrypt_value_helper` over every value in `litellm_params`. oxllm encrypts
+/// This mirrors the reference model-storage helper, which runs
+/// `encrypt_value_helper` over every deployment-params value. oxllm encrypts
 /// every **string** value whose key matches the denylist shared with
 /// [`redact_secrets`] (substring match, case-insensitive) — so `api_key`,
 /// `aws_secret_access_key`, `aws_session_token`, `private_key`,
@@ -823,8 +832,8 @@ mod tests {
     // Previously only `oxllm_params.api_key` was encrypted at rest; every other
     // provider credential (`aws_secret_access_key`, `aws_session_token`,
     // `private_key`, `service_account_json`, `password`, custom
-    // `Authorization` headers) was stored plaintext in the DB. LiteLLM
-    // encrypts every value in litellm_params; oxllm now encrypts every secret
+    // `Authorization` headers) was stored plaintext in the DB. The reference
+    // encrypts every deployment-params value; oxllm now encrypts every secret
     // the redaction denylist catches. This test asserts no plaintext survives
     // the encrypt pass for the full set and that every value round-trips.
 
@@ -950,7 +959,7 @@ mod tests {
     // Header maps sent to a provider carry credentials under arbitrary header
     // names (`X-Backend-Key`) that the key-name denylist can never enumerate;
     // previously such values were stored plaintext despite ENCRYPTION_KEY
-    // being set (LiteLLM encrypts every litellm_params value). Every string
+    // being set (the reference encrypts every deployment-params value). Every string
     // inside `extra_headers` — and inside `headers` nested under `extra_body`
     // — is now treated as secret.
 

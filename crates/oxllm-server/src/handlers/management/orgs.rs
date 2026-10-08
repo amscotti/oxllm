@@ -18,7 +18,7 @@ use super::{
 
 /// Request body for `POST /organization/add`.
 ///
-/// Accepts both the legacy field names and the LiteLLM
+/// Accepts both the legacy field names and the reference
 /// `OrganizationUpdateRequestV2` aliases (`organization_alias`, `tpm_limit`,
 /// `rpm_limit`) for fields the `organizations` table actually stores. The
 /// v2 fields (`models`, `metadata`, `soft_budget`, `max_parallel_requests`,
@@ -172,7 +172,7 @@ pub async fn delete_org(
 
 /// Request body for `POST /organization/update`.
 ///
-/// LiteLLM v2 (`OrganizationUpdateRequestV2`) renamed several fields; both
+/// The reference v2 (`OrganizationUpdateRequestV2`) renamed several fields; both
 /// spellings are accepted here and persisted onto the existing columns:
 /// `organization_alias` → `org_name`, `tpm_limit` → `tpm`,
 /// `rpm_limit` → `rpm`. The v2 fields (`models`, `metadata`, `soft_budget`,
@@ -337,7 +337,7 @@ mod tests {
 
     /// v4 fields are now backed by columns and round-trip through serde.
     /// `object_permission` (still no backing column) must be silently
-    /// dropped so LiteLLM v2 clients remain compatible.
+    /// dropped so existing v2 clients remain compatible.
     #[test]
     fn update_request_accepts_v4_fields_and_drops_object_permission() {
         let json = r#"{

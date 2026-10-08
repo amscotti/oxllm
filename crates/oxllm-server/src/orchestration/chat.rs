@@ -185,16 +185,20 @@ pub(crate) async fn execute_request_chain(
                 Err(primary_outcome.into_api_error())
             }
         }
-        // LiteLLM parity (`async_function_with_fallbacks`,
-        // `litellm/router.py:6435`): a primary-model 4xx that indicates a
+        // Fallback parity (`async_function_with_fallbacks`,
+        // `router.py:6435`): a primary-model 4xx that indicates a
         // DEPLOYMENT fault (401 stale credential, 403 not entitled, 404
         // decommissioned model) walks the configured generic `fallbacks`
         // chain — the chain exists exactly to rescue a bad primary. Genuine
-        // request-content 4xx (400/413/422/…) stay terminal: an abusive
+        // request-content 4xx (400/413/422/…) stay terminal unless a zero
+        // allowed-fails entry explicitly opts that status into failover: an abusive
         // client must not fan one malformed request across every deployment
         // (see `outcomes::is_deployment_fault_status` for the deliberate
-        // divergence from LiteLLM, which falls back on any exception).
-        ModelOutcome::Client(ref e) if is_deployment_fault_status(e.status.as_u16()) => {
+        // divergence from the reference, which falls back on any exception).
+        ModelOutcome::Client(ref e)
+            if is_deployment_fault_status(e.status.as_u16())
+                || super::outcomes::explicitly_allows_client_fallback(state, e.status.as_u16()) =>
+        {
             let fbs = state.router.fallbacks_for(primary_model);
             if let Some(resp) = try_fallback_chain(
                 state,
@@ -285,7 +289,7 @@ fn resolve_default_fallback<'s>(
 /// Try a list of fallback models. Returns `Some(response)` if one succeeds.
 ///
 /// A 4xx (client) error from a fallback model does **not** abort the chain:
-/// the next fallback is tried instead, matching LiteLLM semantics. Only when
+/// the next fallback is tried instead, matching reference semantics. Only when
 /// every fallback has been exhausted is the last error surfaced. The
 /// `x-oxllm-fallback-used` header on a returned error reflects the last
 /// fallback model that was tried.
@@ -404,7 +408,7 @@ async fn try_fallback_chain(
 /// a deployment is it marked as cooling, allowing the outer loop to pick a
 /// different deployment.
 ///
-/// U18 (LiteLLM commit `48fdaaa5cd`): LiteLLM's global `num_retries` was
+/// U18: the reference global `num_retries` was
 /// stamped onto exceptions, overwriting a request-level override. oxllm does
 /// NOT have this bug because it has **no per-request `num_retries` override
 /// mechanism** — the retry budget is resolved solely from the router config
@@ -483,7 +487,7 @@ async fn try_model_with_retries(
     };
     // The lookup uses the *group* minimum threshold (min resolved
     // `prompt_cache_min_tokens` across this model group's deployments),
-    // mirroring LiteLLM's `_get_min_token_count_for_deployments`: a high-floor
+    // mirroring the reference `_get_min_token_count_for_deployments`: a high-floor
     // member (or a high global default) must not suppress a valid lookup for a
     // low-floor member that may hold a warm cache. Per-deployment thresholds
     // apply only to the pin write on success. The candidate group is the
@@ -661,6 +665,10 @@ async fn try_model_with_retries(
             "deployment rate-limited; marking cooling and trying next"
             );
             state.router.mark_cooldown_for(&cooldown_key, model);
+            pick_ctx
+                .pre_call
+                .excluded_deployment_keys
+                .push(cooldown_key.clone());
             last_outcome = Some(ModelOutcome::Retryable(e));
             continue;
         }
@@ -697,6 +705,10 @@ async fn try_model_with_retries(
                         .mark(&cooldown_key, budget_err.window);
                 }
                 last_outcome = Some(ModelOutcome::Retryable(budget_err.api_error));
+                pick_ctx
+                    .pre_call
+                    .excluded_deployment_keys
+                    .push(cooldown_key.clone());
                 continue;
             }
         };
@@ -715,6 +727,10 @@ async fn try_model_with_retries(
                     "provider resolution failed; cooling deployment and trying next"
                 );
                 state.router.mark_cooldown_for(&cooldown_key, model);
+                pick_ctx
+                    .pre_call
+                    .excluded_deployment_keys
+                    .push(cooldown_key.clone());
                 last_outcome = Some(ModelOutcome::Retryable(e));
                 continue;
             }
@@ -908,6 +924,10 @@ async fn try_model_with_retries(
                             status = status,
                             "deployment-fault context-window error; cooling and failing over to a sibling"
                         );
+                        pick_ctx
+                            .pre_call
+                            .excluded_deployment_keys
+                            .push(cooldown_key.clone());
                         last_outcome = Some(ModelOutcome::ContextWindow(
                             ApiError::upstream(status, message).with_headers(headers),
                         ));
@@ -943,6 +963,10 @@ async fn try_model_with_retries(
                             status = status,
                             "deployment-fault content-policy error; cooling and failing over to a sibling"
                         );
+                        pick_ctx
+                            .pre_call
+                            .excluded_deployment_keys
+                            .push(cooldown_key.clone());
                         last_outcome = Some(ModelOutcome::ContentPolicy(
                             ApiError::upstream(status, message).with_headers(headers),
                         ));
@@ -982,7 +1006,7 @@ async fn try_model_with_retries(
                     // recorded and behavior is unchanged.
                     let limit_reached =
                         allowed_fails_limit_reached(state, &cooldown_key, status, model);
-                    // LiteLLM parity (`litellm/router.py` `_should_retry`:
+                    // Retry parity (`router.py` `_should_retry`:
                     // AuthenticationError is retried "if other deployments
                     // available"): when the policy just declared this 4xx a
                     // deployment fault (limit crossed — stale credentials, a
@@ -1004,6 +1028,10 @@ async fn try_model_with_retries(
                             status = status,
                             "deployment-fault client error; cooling and failing over to a sibling"
                         );
+                        pick_ctx
+                            .pre_call
+                            .excluded_deployment_keys
+                            .push(cooldown_key.clone());
                         budget_reservation.release(&state.cache).await;
                         last_outcome = Some(ModelOutcome::Client(
                             ApiError::upstream(status, message).with_headers(headers),
@@ -1015,7 +1043,7 @@ async fn try_model_with_retries(
                         // `cooldown_time_secs == 0`, the failure-counting
                         // window falls back to 60s but the resulting
                         // cooldown is a no-op (the deployment is immediately
-                        // available again) — intentional, matching LiteLLM.
+                        // available again) — intentional, matching the reference.
                         state.router.mark_cooldown_for(&cooldown_key, model);
                     }
                     budget_reservation.release(&state.cache).await;
@@ -1090,18 +1118,24 @@ async fn try_model_with_retries(
         // reservation before cooling, so the next candidate picks up a
         // clean slate.
         budget_reservation.release(&state.cache).await;
-        // U1 (LiteLLM `96f58fac53`): the cooldown is applied to
+        // U1: the cooldown is applied to
         // `cooldown_key` — the stable per-deployment key, unique per
         // deployment. This means a failed sub-call only cools
         // down the deployment that actually failed, never the parent.
-        // (LiteLLM's bug was a shared error path that attributed sub-call
+        // (the reference bug was a shared error path that attributed sub-call
         // failures to the parent deployment; oxllm's per-deployment key
         // avoids this.)
         // Zero-cooldown edge case: when `cooldown_time_secs == 0`, the
         // failure-counting window falls back to 60s but the resulting
         // cooldown is a no-op (the deployment is immediately available
-        // again) — intentional, matching LiteLLM.
+        // again) — intentional, matching the reference.
         state.router.mark_cooldown_for(&cooldown_key, model);
+        // A zero persistent cooldown must not repick an exhausted member in
+        // this request. Future requests may reconsider it immediately.
+        pick_ctx
+            .pre_call
+            .excluded_deployment_keys
+            .push(cooldown_key.clone());
         // Adaptive router: debit the failing deployment's cell at the point
         // its retries are exhausted. The once-per-request learning hook
         // only ever sees the LAST stamped cell, so without this debit an
@@ -1196,8 +1230,8 @@ pub(crate) fn allowed_fails_limit_reached(
 ///
 /// When the upstream sent a `Retry-After` header (parsed via
 /// [`super::outcomes::retry_after_secs`]), the sleep is at least
-/// `retry_after + jitter` — LiteLLM's `_calculate_retry_after`
-/// (`litellm/utils.py`) honors the header whenever `0 < retry_after <= 60`
+/// `retry_after + jitter` — the reference `_calculate_retry_after`
+/// (`utils.py`) honors the header whenever `0 < retry_after <= 60`
 /// instead of burning the retry budget inside the provider's cooldown
 /// window. The exponential value wins when it is larger.
 ///
@@ -1642,7 +1676,7 @@ mod tests {
     }
 
     /// MEDIUM (C11): the retry backoff must honor an upstream `Retry-After`
-    /// of 2s (LiteLLM `_calculate_retry_after`): the sleep is at least
+    /// of 2s (`_calculate_retry_after` semantics): the sleep is at least
     /// `retry_after + jitter` rather than the raw 1s exponential base, so a
     /// provider 429 with a cooldown window is not hammered at ~1s intervals.
     /// Paused-clock: tokio auto-advances the mock clock through the sleep.
@@ -1661,7 +1695,7 @@ mod tests {
         );
     }
 
-    /// A `Retry-After` larger than LiteLLM's 60s ceiling is ignored: the
+    /// A `Retry-After` larger than the reference 60s ceiling is ignored: the
     /// exponential backoff applies instead.
     #[tokio::test(start_paused = true)]
     async fn retry_backoff_ignores_oversized_retry_after() {
@@ -1725,7 +1759,7 @@ mod tests {
     }
 
     /// A connection reset while draining a 2xx body is a transient transport
-    /// failure: it must be retried within the deployment (LiteLLM treats this
+    /// failure: it must be retried within the deployment (the reference treats this
     /// as `APIConnectionError` and retries) rather than surfacing as a hard
     /// non-retryable client error. The first attempt gets a truncated body and
     /// a closed connection; the retry hits the healthy second response and the
@@ -1944,8 +1978,8 @@ mod tests {
         AppState::with_registry(config, oxllm_providers::default_registry()).expect("state built")
     }
 
-    /// MEDIUM (C11): LiteLLM's `async_function_with_fallbacks`
-    /// (`litellm/router.py:6435`) walks the configured `fallbacks` chain on
+    /// MEDIUM (C11): the reference `async_function_with_fallbacks`
+    /// (`router.py:6435`) walks the configured `fallbacks` chain on
     /// any primary exception after retries — including a 401 (stale vendor
     /// credential). A 401 from the primary with a healthy secondary
     /// configured must therefore serve the request from the secondary;
@@ -2009,7 +2043,7 @@ mod tests {
     /// Companion guard: a genuine request-content 400 from the primary must
     /// NOT fan out to the fallback chain — an abusive client must not be
     /// able to push one malformed request to every configured deployment
-    /// (deliberate divergence from LiteLLM, which falls back on any
+    /// (deliberate divergence from the reference, which falls back on any
     /// exception; see `outcomes::is_deployment_fault_status`).
     #[tokio::test]
     async fn primary_400_does_not_fan_out_to_fallbacks() {

@@ -182,8 +182,9 @@ curl http://localhost:4000/v1/chat/completions \
 | Mistral | ✅ | ✅ | ✅ | ✅ | — |
 | Cohere | ✅ | ✅ | ✅ | ✅ | — |
 | Azure OpenAI | ✅ | ✅ | ✅ | ✅ | — |
+| Azure AI Foundry | ✅ | ✅ | ✅ (text) | ✅ | ✅ (Claude) |
 
-oxllm ships **34** provider transforms behind feature flags (all on by
+oxllm ships **35** provider transforms behind feature flags (all on by
 default) — including the ones above plus Bedrock, Bedrock Mantle, Vertex AI,
 DeepSeek, Cerebras, Fireworks AI, Databricks, Perplexity, SambaNova,
 Cloudflare, Deep Infra, AI21, NVIDIA NIM, Hugging Face, Voyage, Jina AI,
@@ -191,6 +192,11 @@ Watsonx, DashScope, Deepgram, ElevenLabs, Meta, Replicate, and Baseten. See
 `crates/oxllm-providers/src/` for the full list. The capability columns
 above cover the most common providers; the others follow the same OpenAI-
 or native-shape contracts.
+
+Foundry uses the `azure_ai/` slug; native Cohere configurations also recognize
+its text-embedding contract. See [the Foundry sample](examples/config.foundry.yaml)
+and [operations guide](docs/operations.md) for authentication overrides,
+IPv4-only transport, Converse history repairs and background Vertex renewal.
 
 Adding a provider follows a mechanical checklist — one module behind a feature
 flag. No edits to core or server code.
@@ -252,7 +258,8 @@ curl http://localhost:4000/v1/chat/completions \
 Behavior:
 
 - Same non-empty `x-oxllm-session-id` → same deployment (FNV-1a hash over a
- stable deployment key; works across multi-replica gateways).
+ stable deployment key; works across multi-replica gateways). `x-litellm-session-id`
+ is accepted when the oxllm header is absent or empty. The pin has no TTL.
 - Missing or empty header → falls back to `simple_shuffle`.
 - Cooldowns still apply: if the sticky deployment is cooling down, the request
  is re-hashed among the remaining available candidates.
@@ -265,7 +272,7 @@ realtime, images, audio, rerank, and moderations.
 
 | Header | Direction | Description |
 |--------|-----------|-------------|
-| `x-oxllm-session-id` | request | Sticky routing key (`session_affinity`) |
+| `x-oxllm-session-id` | request | Sticky routing key (`session_affinity`). `x-litellm-session-id` is the fallback when this header is absent or empty. The pin has no TTL. |
 | `x-oxllm-tag` | request | Tag(s) for `tag_based` routing and per-tag spend budgets; comma-separated list also accepted. The request body `metadata.tags` array is an alternative carrier — both merge. |
 | `x-oxllm-request-id` | response | Unique request id |
 | `x-oxllm-response-cost` | response | Computed cost (USD) when available |

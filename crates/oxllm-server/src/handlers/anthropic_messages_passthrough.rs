@@ -58,7 +58,7 @@ use crate::state::SharedState;
 /// **Non-streaming** responses are metered: usage is parsed from the
 /// Anthropic response body (`usage.input_tokens`/`output_tokens`/`cache_*`)
 /// and settled against key/team/model budgets by `post_success`, matching
-/// LiteLLM's passthrough spend tracking.
+/// the reference passthrough spend tracking.
 ///
 /// **Streaming** responses (`"stream": true`, `text/event-stream`) relay the
 /// SSE body incrementally and are not buffered here, so usage is not yet

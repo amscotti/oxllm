@@ -163,7 +163,7 @@ pub async fn cancel_batch(
 
 /// `GET /v1/messages/batches/{batch_id}/results` — download a batch's results
 /// as Anthropic JSONL. The fifth endpoint of the Anthropic Message Batches API
-/// (`litellm/llms/anthropic/files/handler.py:94` constructs the same upstream
+/// (`llms/anthropic/files/handler.py:94` constructs the same upstream
 /// path). Relayed verbatim like the other batch operations — the response body
 /// is already Anthropic-shaped JSONL.
 pub async fn retrieve_batch_results(

@@ -389,7 +389,7 @@ pub struct UpdateKeyRequest {
     /// Replacement expiry timestamp (ISO-8601). Pass an empty string `""` or
     /// `null` to clear the expiry (key never expires). Omit the field to leave
     /// it unchanged. Validated via [`super::validate_expires`] when a
-    /// non-empty, non-`null` value is supplied. Mirrors LiteLLM's mutable
+    /// non-empty, non-`null` value is supplied. Mirrors the reference mutable
     /// `duration` field on `/key/update`.
     #[serde(default)]
     pub expires: Option<String>,
@@ -420,14 +420,14 @@ pub struct UpdateKeyRequest {
 /// (`reassign_user_keys`) sidesteps this for the `team_id` field by using a
 /// single scoped bulk `UPDATE`.
 ///
-/// U12 (LiteLLM `6cc136de90`): the raw caller-supplied key value must never
+/// U12: the raw caller-supplied key value must never
 /// land in audit trails or logs. oxllm is safe here by design: this handler
 /// operates on `key_id` (a non-secret identifier like `key-abc123`), never the
 /// raw `sk-ox-...` secret. The only `tracing::info!` / `tracing::warn!` calls
 /// in this module reference `key_id`; the secret is never in scope (it lives
 /// only in the `Authorization` header used by the auth middleware). The
 /// `key_hash` (a SHA-256 digest) is cleared from the returned record before
-/// serialization. There is no LiteLLM-style `object_id` audit write that
+/// serialization. There is no reference-style `object_id` audit write that
 /// could capture the raw key.
 pub async fn update_key(
     State(shared): State<SharedState>,
@@ -805,7 +805,7 @@ mod tests {
 
     // ---- U12: raw key never leaks into audit trails / hashes ----------------
     //
-    // LiteLLM commit 6cc136de90 wrote the raw caller-supplied key into the
+    // The reference wrote the raw caller-supplied key into the
     // audit log's `object_id`. oxllm is safe by design: the only identifier
     // used in logs and the audit/spend trail is `key_id` (e.g. `key-abc123`),
     // and the raw `sk-ox-...` secret is never persisted — only its SHA-256

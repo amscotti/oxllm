@@ -1343,7 +1343,7 @@ async fn anthropic_batches_forwards_vetted_beta_header() {
 
 /// LOW (C25): the Anthropic Message Batches API has a fifth endpoint —
 /// `GET /v1/messages/batches/{batch_id}/results` — that streams batch results
-/// as Anthropic JSONL. LiteLLM supports it (`litellm/llms/anthropic/files/
+/// as Anthropic JSONL. The reference supports it (`llms/anthropic/files/
 /// handler.py:94`). oxllm previously registered create/list/retrieve/cancel
 /// but not results; a client requesting the results URL fell through to the
 /// catch-all. This test verifies the route is now registered and relays the

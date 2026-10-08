@@ -6,7 +6,7 @@
 //!   name in the body `model` field, no dated `api-version` required. Selected
 //!   with `api_version: v1`; `preview` is also a valid v1 value (the
 //!   v1-preview image/audio routes need `?api-version=preview`) and `latest`
-//!   is accepted as a LiteLLM-compatible alias but emitted as the documented
+//!   is accepted as a legacy-compatible alias but emitted as the documented
 //!   `v1` value. `api_base` may be the resource root
 //!   (`https://{resource}.openai.azure.com`), the documented v1 base
 //!   (`…/openai/v1/`), or the unified Foundry host
@@ -24,7 +24,7 @@
 //! key field). Azure has no `/moderations` endpoint — use Azure AI Content
 //! Safety.
 //!
-//! `api_version` defaults to `2025-02-01-preview` (classic; LiteLLM parity).
+//! `api_version` defaults to `2025-02-01-preview` (classic; reference parity).
 //! Prefer `api_version: v1` for new deployments: Azure's docs recommend the
 //! v1 surface and it needs no periodic version bumps. See
 //! `examples/config.example.yaml` for a configuration template.
@@ -41,7 +41,7 @@ use serde_json::Value;
 
 /// The default Azure OpenAI API version.
 ///
-/// `2025-02-01-preview` is LiteLLM's `AZURE_DEFAULT_API_VERSION` and adds
+/// `2025-02-01-preview` is the reference `AZURE_DEFAULT_API_VERSION` and adds
 /// support for o-series reasoning models, `max_completion_tokens`,
 /// `stream_options`, and the newer reasoning-effort / service-tier fields used
 /// by GPT-5 and later. Older defaults (`2024-10-21`, `2024-02-15-preview`)
@@ -434,7 +434,7 @@ fn strip_route_suffix<'a>(path: &'a str, suffix: &str) -> &'a str {
 
 /// Whether the `api_version` selects the Azure v1 API surface, which routes
 /// via `/openai/v1/...` (model in body) instead of the deployment-path URL.
-/// Mirrors LiteLLM's `_is_azure_v1_api_version`.
+/// Mirrors the reference Azure v1 API-version detection.
 fn is_azure_v1_api_version(api_version: &str) -> bool {
     matches!(api_version, "preview" | "latest" | "v1")
 }
@@ -501,7 +501,7 @@ impl ChatProvider for AzureProvider {
             }
             // An Azure AD / Entra ID bearer token is NOT a shared key — Azure
             // rejects it from the `api-key` header with a 401 — so it must go
-            // on `Authorization: Bearer`, matching LiteLLM's
+            // on `Authorization: Bearer`, matching the reference
             // `_base_validate_azure_environment` AAD fallback.
             ResolvedCredentials::AzureAd { token } => {
                 headers.insert("authorization".to_string(), format!("Bearer {token}"));
@@ -588,8 +588,8 @@ fn looks_like_jwt(value: &str) -> bool {
     value.starts_with("eyJ") && value.matches('.').count() == 2
 }
 
-/// Azure-specific request normalization, mirroring LiteLLM's
-/// `convert_to_azure_openai_messages` (`litellm_core_utils/prompt_templates/
+/// Azure-specific request normalization, mirroring the reference
+/// `convert_to_azure_openai_messages` (`core_utils/prompt_templates/
 /// factory.py`). Azure is stricter than OpenAI on two message shapes that
 /// OpenAI accepts but Azure rejects with a 400:
 ///
@@ -631,7 +631,7 @@ fn normalize_azure_request(request: &Value) -> Result<Value> {
                     .get_mut("function_call")
                     .filter(|value| !value.is_null())
                 {
-                    // LiteLLM's `_azure_tool_call_invoke_helper` coerces when
+                    // The reference Azure tool-call helper coerces when
                     // `arguments` is missing OR null (`get(...) is None`),
                     // since Azure rejects a `function_call` with no string
                     // `arguments` field with a 400.

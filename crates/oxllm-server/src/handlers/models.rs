@@ -152,7 +152,7 @@ pub async fn list_models(
 }
 
 /// Retrieve a single configured model by name. H7: OpenAI clients (and
-/// LiteLLM's own `/v1/models/{model}` endpoint) expect this route to exist.
+/// the reference `/v1/models/{model}` endpoint) expect this route to exist.
 ///
 /// Looks up the model in the configured deployments. Wildcard (`*`)
 /// deployments are excluded — they are not addressable by name. Returns
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(ids, vec!["gpt-4o", "claude-3"]);
     }
 
-    // ---- model ACL filtering (parity with LiteLLM) --------------------------
+    // ---- model ACL filtering (reference parity) -----------------------------
 
     fn restricted_auth(models: &[&str]) -> AuthUser {
         let mut auth = AuthUser::open();

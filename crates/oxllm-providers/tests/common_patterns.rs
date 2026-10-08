@@ -1,7 +1,7 @@
-//! Cross-provider test patterns ported from LiteLLM's
+//! Cross-provider test patterns ported from the reference
 //! `tests/llm_translation/base_llm_unit_tests.py`.
 //!
-//! LiteLLM defines a `BaseLLMChatTest` abstract class whose
+//! The reference defines a `BaseLLMChatTest` abstract class whose
 //! `_usage_format_tests` helper enforces the OpenAI usage invariant
 //! (`total == prompt + completion`, `cached ≤ prompt`). Every provider's
 //! `transform_response` must produce a body that obeys the same invariant.

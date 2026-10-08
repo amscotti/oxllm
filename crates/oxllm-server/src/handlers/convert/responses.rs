@@ -63,7 +63,7 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
                         // Custom tool calls carry their payload in an `input`
                         // field (raw string) rather than `arguments` (JSON
                         // string). Normalise to arguments so the chat pipeline
-                        // sees a non-empty payload — mirrors LiteLLM's
+                        // sees a non-empty payload — mirrors the reference
                         // `_transform_responses_api_function_call_to_chat_completion_message`.
                         let mut arguments = item
                             .get("arguments")
@@ -117,7 +117,7 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
                     Some("function_call_output")
                     | Some("custom_tool_call_output")
                     | Some("tool_result") => {
-                        // LiteLLM's `_is_input_item_tool_call_output` treats
+                        // The reference `_is_input_item_tool_call_output` treats
                         // `function_call_output`, `custom_tool_call_output`,
                         // and `tool_result` (Anthropic/MCP spelling) as tool
                         // outputs. Without this arm they fall into the
@@ -156,7 +156,7 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
                         // U29: reasoning input items carry prior-turn reasoning
                         // context (encrypted or summary text) that has no
                         // chat-completions equivalent. Dropping them silently
-                        // matches how LiteLLM handles the bridge path — without
+                        // matches how the reference handles the bridge path — without
                         // this they fall into the catchall and get wrapped as
                         // malformed user messages.
                         continue;
@@ -238,7 +238,7 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
     }
     if let Some(reasoning) = req.get("reasoning") {
         if !reasoning.is_null() {
-            // Mirror LiteLLM's precedence (transformation.py:216-231):
+            // Mirror the reference precedence (transformation.py:216-231):
             // - dict with `summary` → forward the whole dict so the
             //   Responses bridge can pass `summary` to providers that use it
             // - dict with only `effort` → forward just the effort string
@@ -263,7 +263,7 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
         }
     }
     if req.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
-        // U27 (LiteLLM commit a376f72400): `stream_options` is a chat
+        // U27: `stream_options` is a chat
         // completions parameter, NOT a Responses API parameter. The
         // converter must NOT forward any client-supplied `stream_options`
         // (and it doesn't — there is no `req.get("stream_options")` clone
@@ -371,7 +371,7 @@ fn normalize_function_call_output(output: &Value) -> Value {
         Value::Null => json!(""),
         Value::String(_) => output.clone(),
         Value::Array(parts) => {
-            // Mirror LiteLLM's `_normalize_function_call_output_to_tool_content`:
+            // Mirror the reference tool-output content normalization:
             // text parts (`input_text`/`output_text`/`text`) accumulate as a
             // string; image parts (`input_image`/`image_url`) promote the
             // whole output to a list of `{"type":"text"|image_url",...}`
@@ -394,7 +394,7 @@ fn normalize_function_call_output(output: &Value) -> Value {
                         // `{"type":"input_image","image_url":"data:..."}`)
                         // or an object (`{"url":"..."}`). Accept both so a
                         // bare-string value is not silently dropped. Mirrors
-                        // LiteLLM's `_normalize_function_call_output_to_tool_content`.
+                        // the reference tool-output content normalization.
                         let url = part
                             .get("image_url")
                             .and_then(|v| {
@@ -1698,7 +1698,7 @@ mod tests {
         assert_eq!(chat["stream_options"]["include_usage"], true);
     }
 
-    /// U27 (LiteLLM commit a376f72400): `stream_options` is a chat
+    /// U27: `stream_options` is a chat
     /// completions parameter, not a Responses API parameter. The converter
     /// must NOT pass through a client-supplied `stream_options` field —
     /// only the internally-injected `{include_usage: true}` (set when
@@ -2272,7 +2272,7 @@ mod tests {
 
     /// A `custom_tool_call` input item carries its payload in `input` (raw
     /// string), not `arguments`. The converter must normalise the input to
-    /// an arguments JSON string `{"content": ...}` (matching LiteLLM) so the
+    /// an arguments JSON string `{"content": ...}` (matching the reference) so the
     /// chat pipeline receives a non-empty payload. Without the fix, the
     /// payload vanished and the converted tool call had `arguments: ""`.
     #[test]
@@ -2382,7 +2382,7 @@ mod tests {
 
     /// When `reasoning` carries both `effort` and `summary`, the converter
     /// must forward the full dict (so providers that use `summary` receive
-    /// it), matching LiteLLM's precedence. Previously oxllm emitted just
+    /// it), matching the reference precedence. Previously oxllm emitted just
     /// the effort string.
     #[test]
     fn responses_reasoning_with_summary_keeps_full_dict() {
@@ -2428,7 +2428,7 @@ mod tests {
 
     /// A multimodal tool output array containing both text and image parts
     /// must promote the output to a list of `{"type":"text"|"image_url"}`
-    /// blocks so the image is not lost. Mirrors LiteLLM's
+    /// blocks so the image is not lost. Mirrors the reference
     /// `_normalize_function_call_output_to_tool_content`.
     #[test]
     fn responses_function_call_output_preserves_image_parts() {

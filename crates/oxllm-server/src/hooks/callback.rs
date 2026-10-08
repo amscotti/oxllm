@@ -139,7 +139,7 @@ impl GenericHttpCallback {
     }
 
     fn build_payload(&self, ctx: &CallContext, resp: &ResponseSummary) -> CallbackPayload {
-        // U13 (LiteLLM commit 5e34e0460b): key callback configuration
+        // U13: key callback configuration
         // (including credentials) was copied into logging metadata. oxllm is
         // safe by design: `CallContext` exposes only `api_key_hash` (a SHA-256
         // digest, never the raw key) plus non-secret identifiers (key_id,
@@ -287,7 +287,7 @@ mod tests {
 
     // ---- U13: callback payload must never carry credentials -----------------
     //
-    // LiteLLM commit 5e34e0460b copied key callback config (including
+    // The reference copied key callback config (including
     // credentials) into logging metadata. oxllm's `CallbackPayload` carries
     // only non-secret spend fields. This test serializes the payload to JSON
     // and asserts no credential-bearing key is present, pinning the invariant

@@ -77,6 +77,8 @@ pub(crate) async fn attempt_upstream_with_context(
     traceparent: Option<&str>,
     mut call_ctx: Option<&mut oxllm_core::CallContext>,
 ) -> Result<reqwest::Response, UpstreamError> {
+    let effective_deployment = deployment_with_transform_settings(deployment, &state.config);
+    let deployment = effective_deployment.as_ref();
     let chat = provider.chat().ok_or_else(|| UpstreamError::Client {
         status: 400,
         message: format!(
@@ -134,13 +136,27 @@ pub(crate) async fn attempt_upstream_with_context(
             .transform_request(request_body, deployment)
             .map_err(transform_failure)?,
     };
-    inject_stream_usage(&mut transformed, is_stream, deployment.provider_slug());
-
     let body_model = transformed
         .get("model")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let url = chat.endpoint_url_for_request(deployment, request_body);
+    let auth_deployment = if provider.id() == "azure_ai"
+        && deployment.oxllm_params.model.contains('*')
+        && let Some(model) = body_model.as_deref()
+    {
+        let mut resolved = deployment.clone();
+        resolved.oxllm_params.model = format!("azure_ai/{model}");
+        std::borrow::Cow::Owned(resolved)
+    } else {
+        std::borrow::Cow::Borrowed(deployment)
+    };
+    let azure_anthropic = provider.id() == "azure_ai"
+        && oxllm_providers::azure_ai::AzureAiProvider::is_anthropic(&auth_deployment);
+    if !azure_anthropic {
+        inject_stream_usage(&mut transformed, is_stream, deployment.provider_slug());
+    }
+    let endpoint_deployment = deployment_with_resolved_region(deployment, &creds);
+    let url = chat.endpoint_url_for_request(&endpoint_deployment, request_body);
     let url = build_upstream_url(
         url,
         body_model.as_deref(),
@@ -194,7 +210,8 @@ pub(crate) async fn attempt_upstream_with_context(
     }
 
     let mut headers = HashMap::new();
-    chat.apply_auth(deployment, &creds, &mut headers);
+    chat.apply_auth(&auth_deployment, &creds, &mut headers);
+    oxllm_core::provider::apply_auth_overrides(deployment, &creds, &mut headers);
     merge_extra_headers(&mut headers, deployment);
     if provider.id() == "bedrock"
         && url::Url::parse(&url).is_ok_and(|url| {
@@ -214,7 +231,7 @@ pub(crate) async fn attempt_upstream_with_context(
     // `apply_auth` cannot see the request body to know which tags apply. Compute
     // them from the OpenAI-shape request and merge with any deployment-supplied
     // `anthropic-beta` so the upstream accepts the gated fields instead of 400.
-    if provider.id() == "anthropic" {
+    if provider.id() == "anthropic" || azure_anthropic {
         // For wildcard deployments (`anthropic/*`) the deployment model is the
         // literal glob, not the request's actual model. `collect_beta_headers`
         // makes per-model decisions (e.g. `effort` beta only for pre-4.6), so
@@ -267,7 +284,7 @@ pub(crate) async fn attempt_upstream_with_context(
         }
     }
 
-    // LiteLLM `_get_timeout` (`litellm/router.py`): a STREAMING request
+    // The reference `_get_timeout` (`router.py`): a STREAMING request
     // resolves the idle budget via `_get_stream_timeout`
     // (`stream_timeout ?? request_timeout`) and httpx applies it per read
     // operation — a stream that keeps producing chunks is never killed by a
@@ -518,7 +535,7 @@ pub(crate) async fn attempt_upstream_with_context(
     // OpenAI: {"error":{"message":"..."}}, xAI/some gateways: {"error":"..."}.
     // When no message can be extracted (non-JSON HTML/text error pages from
     // gateways and reverse proxies), include a truncated sanitized excerpt
-    // of the raw body so operators can diagnose the incident — LiteLLM
+    // of the raw body so operators can diagnose the incident — the reference
     // surfaces the raw text in its exception message too.
     let message = body
         .get("error")
@@ -799,7 +816,7 @@ mod url_security_regressions {
 ///    `/deployments/{id}/text/chat_stream`) rather than the non-streaming
 ///    `/text/chat`. The provider trait's `endpoint_url` cannot see the stream
 ///    flag, so the non-streaming path is baked in and rewritten here. Mirrors
-///    LiteLLM's `IBMWatsonXChatConfig.get_complete_url`.
+///    the reference `IBMWatsonXChatConfig.get_complete_url`.
 pub(crate) fn build_upstream_url(
     url: String,
     body_model: Option<&str>,
@@ -881,11 +898,11 @@ fn watsonx_stream_url(url: String) -> String {
 /// Injected after the provider's `transform_request` has run (so provider
 /// transforms see the original body) and before serialization to bytes.
 /// Preserves any other fields the client may have set under `stream_options`
-/// and **never overwrites an explicit client `include_usage`** (LiteLLM's
+/// and **never overwrites an explicit client `include_usage`** (the reference
 /// `get_stream_options` also injects only when the field is absent): a
 /// client that deliberately opted out keeps its wire contract, and
 /// metering still works because the stream pump estimates usage when no
-/// usage chunk arrives (LiteLLM `stream_chunk_builder` parity).
+/// usage chunk arrives (`stream_chunk_builder` parity).
 ///
 /// `stream_options` is an OpenAI wire-format field. Providers whose
 /// `transform_request` rebuilds the body into a non-OpenAI shape must not
@@ -927,7 +944,7 @@ pub(crate) fn inject_stream_usage(body: &mut Value, is_stream: bool, provider_sl
 }
 
 /// Resolve the per-read (idle) budget for a streaming request, matching
-/// LiteLLM's `_get_stream_timeout` precedence (`litellm/router.py`): the
+/// the reference `_get_stream_timeout` precedence (`router.py`): the
 /// deployment's `stream_timeout`, then `oxllm_settings.request_timeout`,
 /// then the pump default. Shared by the upstream send (header wait) and the
 /// stream pump (per-chunk idle timeout) so both enforce the same budget —
@@ -955,6 +972,41 @@ pub(crate) fn merge_extra_headers(headers: &mut HashMap<String, String>, deploym
             headers.insert(k.to_ascii_lowercase(), v.clone());
         }
     }
+}
+
+fn deployment_with_transform_settings<'a>(
+    deployment: &'a Deployment,
+    config: &crate::config::types::ProxyConfig,
+) -> std::borrow::Cow<'a, Deployment> {
+    if deployment.provider_slug() == "bedrock"
+        && deployment.oxllm_params.modify_params.is_none()
+        && let Some(modify) = config.oxllm_settings.modify_params
+    {
+        let mut effective = deployment.clone();
+        effective.oxllm_params.modify_params = Some(modify);
+        std::borrow::Cow::Owned(effective)
+    } else {
+        std::borrow::Cow::Borrowed(deployment)
+    }
+}
+
+/// Pure providers do not read process variables. Give Bedrock's URL builder
+/// the same resolved region that the host uses to sign the request.
+pub(crate) fn deployment_with_resolved_region<'a>(
+    deployment: &'a Deployment,
+    creds: &ResolvedCredentials,
+) -> std::borrow::Cow<'a, Deployment> {
+    if deployment.provider_slug() == "bedrock" && deployment.oxllm_params.api_base.is_none() {
+        if let ResolvedCredentials::AwsSigV4 { region, .. } = creds {
+            let mut resolved = deployment.clone();
+            resolved
+                .oxllm_params
+                .extra
+                .insert("aws_region_name".into(), Value::String(region.clone()));
+            return std::borrow::Cow::Owned(resolved);
+        }
+    }
+    std::borrow::Cow::Borrowed(deployment)
 }
 
 /// Merge request-derived `anthropic-beta` tags into the header set, joining
@@ -1016,7 +1068,12 @@ pub(crate) fn apply_drop_params(
     request: &Value,
     deployment: &Deployment,
 ) -> Result<Option<Value>, oxllm_core::Error> {
-    let drop_params = state.config.oxllm_settings.drop_params.unwrap_or(false);
+    // An explicit per-deployment flag beats the global one. Unset inherits.
+    let drop_params = deployment
+        .oxllm_params
+        .drop_params
+        .or(state.config.oxllm_settings.drop_params)
+        .unwrap_or(false);
 
     // Gateway control objects must never reach a provider. The `cache`
     // opt-in object (read by the CacheHook from `ctx.request_body`) is an
@@ -1059,33 +1116,139 @@ pub(crate) fn apply_drop_params(
     });
     let request: &Value = control_stripped.as_ref().unwrap_or(request);
 
-    // Fast path: no stripping needed. We can still skip the `warn_*` call
-    // (and the implied `request.clone()` at the call site) when the provider
-    // doesn't even publish a `supported_params` list — there is nothing to
-    // warn about in that case. Returning `None` tells the caller to forward
-    // the original body to `transform_request` unchanged. Skipped when
-    // gateway controls were stripped above: the caller must see the
-    // stripped body, so fall through and transform it here instead.
-    if !drop_params && chat.supported_params().is_none() && control_stripped.is_none() {
+    let needs_outbound_shape = deployment
+        .oxllm_params
+        .additional_drop_params
+        .as_ref()
+        .is_some_and(|keys| !keys.is_empty())
+        || deployment
+            .oxllm_params
+            .extra_body
+            .as_ref()
+            .is_some_and(|body| !body.is_empty())
+        || deployment
+            .oxllm_params
+            .allowed_openai_params
+            .as_ref()
+            .is_some_and(|keys| !keys.is_empty());
+
+    // Fast path: no stripping and no post-transform shaping. Returning
+    // `None` tells the caller to forward the original body to
+    // `transform_request` unchanged. Skipped when gateway controls were
+    // stripped above, or when the deployment asks for extra drops or
+    // `extra_body`.
+    if !drop_params
+        && chat.supported_params().is_none()
+        && control_stripped.is_none()
+        && !needs_outbound_shape
+    {
         warn_unsupported_params(chat, request);
         return Ok(None);
     }
 
-    let request = if drop_params {
-        strip_unsupported_params(chat, request)
+    let allowed = deployment.oxllm_params.allowed_openai_params.as_deref();
+    let mut request = body_after_drop_policy(chat, request, drop_params, allowed);
+    remove_additional_params(
+        &mut request,
+        deployment.oxllm_params.additional_drop_params.as_deref(),
+    );
+
+    let mut transformed = chat.transform_request(&request, deployment)?;
+    let mapped = chat.supported_params();
+    restore_allowed_params(&mut transformed, &request, allowed, mapped.as_deref());
+    shape_outbound_body(
+        &mut transformed,
+        deployment.oxllm_params.additional_drop_params.as_deref(),
+        deployment.oxllm_params.extra_body.as_ref(),
+    );
+    Ok(Some(transformed))
+}
+
+/// Apply the pre-transform drop/allow policy.
+///
+/// `drop_params` strips keys the provider does not list, except keys in
+/// `allowed`. When drop is off the body is cloned unchanged (after the
+/// unsupported-param warning).
+pub(crate) fn body_after_drop_policy(
+    chat: &dyn ChatProvider,
+    request: &Value,
+    drop_params: bool,
+    allowed: Option<&[String]>,
+) -> Value {
+    if drop_params {
+        strip_unsupported_params(chat, request, allowed)
     } else {
         warn_unsupported_params(chat, request);
         request.clone()
-    };
+    }
+}
 
-    let transformed = chat.transform_request(&request, deployment)?;
-    Ok(Some(transformed))
+/// Restore explicitly allowed request keys that an adapter's allow-list
+/// omitted. Mapped provider fields win, and routing always owns `model`.
+pub(crate) fn restore_allowed_params(
+    body: &mut Value,
+    request: &Value,
+    allowed: Option<&[String]>,
+    mapped: Option<&[&str]>,
+) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    for key in allowed
+        .into_iter()
+        .flatten()
+        .filter(|key| key.as_str() != "model")
+        .filter(|key| !mapped.is_some_and(|params| params.contains(&key.as_str())))
+    {
+        if let Some(value) = request.get(key).filter(|value| !value.is_null()) {
+            obj.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+}
+
+/// Remove request keys before adapters can rename or nest them. The final
+/// outbound pass repeats this after configured body overrides.
+pub(crate) fn remove_additional_params(body: &mut Value, additional_drop: Option<&[String]>) {
+    if let Some(obj) = body.as_object_mut() {
+        for key in additional_drop.into_iter().flatten() {
+            obj.remove(key);
+        }
+    }
+}
+
+/// Shallow-merge configured body overrides, then drop named keys. The
+/// deployment overrides client/provider values, including privacy controls.
+/// Routing owns `model`; body overrides cannot replace the resolved model.
+pub(crate) fn shape_outbound_body(
+    body: &mut Value,
+    additional_drop: Option<&[String]>,
+    extra_body: Option<&serde_json::Map<String, Value>>,
+) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    if let Some(extra) = extra_body {
+        for (key, value) in extra {
+            if key != "model" {
+                obj.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    if let Some(drops) = additional_drop {
+        for key in drops {
+            obj.remove(key);
+        }
+    }
 }
 
 /// Strip top-level request keys not present in the provider's
 /// `supported_params` list. When no list is published, returns the input
 /// unchanged (the provider treats unknown keys as forward-compat).
-pub(crate) fn strip_unsupported_params(chat: &dyn ChatProvider, request: &Value) -> Value {
+pub(crate) fn strip_unsupported_params(
+    chat: &dyn ChatProvider,
+    request: &Value,
+    allowed: Option<&[String]>,
+) -> Value {
     let Some(supported) = chat.supported_params() else {
         return request.clone();
     };
@@ -1094,7 +1257,9 @@ pub(crate) fn strip_unsupported_params(chat: &dyn ChatProvider, request: &Value)
     };
     let mut out = serde_json::Map::new();
     for (key, value) in obj {
-        if supported.contains(&key.as_str()) {
+        let kept = supported.contains(&key.as_str())
+            || allowed.is_some_and(|names| names.iter().any(|name| name == key));
+        if kept {
             out.insert(key.clone(), value.clone());
         }
     }
@@ -1195,7 +1360,7 @@ mod tests {
         "frequency_penalty": 0.5,
         "logprobs": true,
         });
-        let out = strip_unsupported_params(&chat, &request);
+        let out = strip_unsupported_params(&chat, &request, None);
         assert!(out.get("frequency_penalty").is_none());
         assert!(out.get("logprobs").is_none());
         assert_eq!(out["max_tokens"], 100);
@@ -1331,7 +1496,7 @@ mod tests {
         "max_tokens": 100,
         "thinking": {"type": "enabled", "budget_tokens": 1024},
         });
-        let out = strip_unsupported_params(&chat, &request);
+        let out = strip_unsupported_params(&chat, &request, None);
         assert_eq!(out["thinking"]["type"], "enabled");
         assert_eq!(out["thinking"]["budget_tokens"], 1024);
     }
@@ -1346,7 +1511,7 @@ mod tests {
         "top_k": 40,
         "metadata": {"user_id": "u1"},
         });
-        let out = strip_unsupported_params(&chat, &request);
+        let out = strip_unsupported_params(&chat, &request, None);
         assert_eq!(out["top_k"], 40);
         assert_eq!(out["metadata"]["user_id"], "u1");
     }
@@ -1362,7 +1527,7 @@ mod tests {
         "max_tokens": 2048,
         "thinking": {"type": "enabled", "budget_tokens": 1024},
         });
-        let stripped = strip_unsupported_params(&chat, &request);
+        let stripped = strip_unsupported_params(&chat, &request, None);
         let deployment = Deployment {
             model_name: "claude".to_string(),
             oxllm_params: OxllmParams {
@@ -1466,7 +1631,7 @@ mod tests {
     fn strip_unsupported_params_passthrough_when_no_list() {
         let chat = OpenAiProvider;
         let request = json!({"a": 1, "b": 2});
-        let out = strip_unsupported_params(&chat, &request);
+        let out = strip_unsupported_params(&chat, &request, None);
         assert_eq!(out, request);
     }
 
@@ -1531,7 +1696,7 @@ mod tests {
     #[test]
     fn inject_stream_usage_preserves_explicit_client_false() {
         // MEDIUM (C11): an explicit client `include_usage` must never be
-        // overwritten (LiteLLM `get_stream_options` injects only when the
+        // overwritten (the reference `get_stream_options` injects only when the
         // field is absent). Metering for opted-out streams still works via
         // the stream pump's estimated-usage fallback.
         let mut body = json!({"stream": true, "stream_options": {"include_usage": false}});
@@ -2443,7 +2608,7 @@ mod tests {
 
     // ---- U19: HTTP client must not double-count retries ---------------------
     //
-    // LiteLLM commit fcaf673418: the deployment's `num_retries` reached the
+    // The reference deployment's `num_retries` reached the
     // provider client, which applied its own retries on top of the router
     // retry loop. oxllm's `build_http_client` sets no retry policy, so a
     // single `execute_upstream_json` call must produce exactly ONE upstream
@@ -2769,7 +2934,7 @@ mod tests {
     /// that follows the body stream — applied to a streaming request it
     /// hard-kills any stream whose total duration exceeds `timeout`, even
     /// while chunks keep flowing and `stream_timeout` would allow it
-    /// (LiteLLM applies the stream timeout as a per-read idle limit only,
+    /// (the reference applies the stream timeout as a per-read idle limit only,
     /// `_get_stream_timeout`). The upstream send for `is_stream` must carry
     /// no total deadline: a drip stream (20 chunks × 100ms ≈ 2s) must drain
     /// to completion despite `timeout: 0.5`.
@@ -2867,7 +3032,7 @@ mod tests {
         );
     }
 
-    /// The stream idle-budget precedence matches LiteLLM
+    /// The stream idle-budget precedence matches the reference
     /// `_get_stream_timeout`: deployment `stream_timeout` wins over
     /// `request_timeout`; `request_timeout` is used when `stream_timeout` is
     /// unset (so an operator raising it for long streams also extends the
@@ -3171,5 +3336,198 @@ mod tests {
                 error.message
             );
         }
+    }
+
+    fn state_with_global_drop(drop_params: bool) -> crate::state::AppState {
+        crate::state::AppState::with_registry(
+            crate::config::types::ProxyConfig {
+                model_list: vec![],
+                oxllm_settings: crate::config::types::OxllmSettings {
+                    drop_params: Some(drop_params),
+                    ..Default::default()
+                },
+                general_settings: crate::config::types::GeneralSettings::default(),
+                router_settings: Default::default(),
+                extra: serde_json::Map::new(),
+            },
+            oxllm_providers::default_registry(),
+        )
+        .expect("state")
+    }
+
+    fn anthropic_deployment() -> Deployment {
+        Deployment {
+            model_name: "claude".to_string(),
+            oxllm_params: OxllmParams {
+                model: "anthropic/claude-3-5-sonnet".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn deployment_drop_false_keeps_param_global_drop_would_strip() {
+        let chat = AnthropicProvider;
+        let request = json!({
+            "model": "claude",
+            "messages": [],
+            "max_tokens": 16,
+            "frequency_penalty": 0.4,
+        });
+        let stripped = body_after_drop_policy(&chat, &request, true, None);
+        assert!(stripped.get("frequency_penalty").is_none());
+        let kept = body_after_drop_policy(&chat, &request, false, None);
+        assert_eq!(kept["frequency_penalty"], 0.4);
+    }
+
+    #[test]
+    fn allowed_param_survives_strip_until_additional_drop_removes_it() {
+        let chat = AnthropicProvider;
+        let request = json!({
+            "model": "claude",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.2,
+            "frequency_penalty": 0.4,
+        });
+        let allowed = vec!["frequency_penalty".to_string()];
+        let kept = strip_unsupported_params(&chat, &request, Some(&allowed));
+        assert_eq!(kept["frequency_penalty"], 0.4);
+        assert_eq!(kept["temperature"], 0.2);
+
+        let state = state_with_global_drop(true);
+        let mut deployment = anthropic_deployment();
+        deployment.oxllm_params.allowed_openai_params = Some(allowed);
+        deployment.oxllm_params.additional_drop_params = Some(vec![
+            "temperature".to_string(),
+            "frequency_penalty".to_string(),
+        ]);
+        let out = apply_drop_params(&state, &chat, &request, &deployment)
+            .expect("transform")
+            .expect("shaped body");
+        assert!(out.get("temperature").is_none(), "{out}");
+        assert!(out.get("frequency_penalty").is_none(), "{out}");
+    }
+
+    #[test]
+    fn extra_body_overrides_provider_keys_and_cannot_replace_routed_model() {
+        let state = state_with_global_drop(false);
+        let chat = AnthropicProvider;
+        let mut deployment = anthropic_deployment();
+        deployment.oxllm_params.extra_body = Some(serde_json::Map::from_iter([
+            ("store".to_string(), json!(false)),
+            ("temperature".to_string(), json!(0.0)),
+            ("model".to_string(), json!("unrouted-model")),
+        ]));
+        let request = json!({
+            "model": "claude",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.7,
+        });
+        let out = apply_drop_params(&state, &chat, &request, &deployment)
+            .expect("transform")
+            .expect("shaped body");
+        assert_eq!(out["store"], false);
+        assert_eq!(out["temperature"], 0.0, "deployment override wins: {out}");
+        assert_eq!(out["model"], "claude-3-5-sonnet");
+    }
+
+    #[test]
+    fn additional_drop_removes_temperature_anthropic_would_copy() {
+        let state = state_with_global_drop(false);
+        let chat = AnthropicProvider;
+        let mut deployment = anthropic_deployment();
+        deployment.oxllm_params.additional_drop_params = Some(vec!["temperature".to_string()]);
+        let request = json!({
+            "model": "claude",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.3,
+        });
+        let out = apply_drop_params(&state, &chat, &request, &deployment)
+            .expect("transform")
+            .expect("shaped body");
+        assert!(out.get("temperature").is_none(), "{out}");
+    }
+
+    #[test]
+    fn allowed_params_survive_an_adapter_that_rebuilds_the_body() {
+        let state = state_with_global_drop(true);
+        let mut deployment = anthropic_deployment();
+        deployment.oxllm_params.allowed_openai_params = Some(vec!["frequency_penalty".into()]);
+        let request =
+            json!({"messages": [{"role": "user", "content": "hi"}], "frequency_penalty": 0.4});
+        let out = apply_drop_params(&state, &AnthropicProvider, &request, &deployment)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out["frequency_penalty"], 0.4);
+    }
+
+    #[test]
+    fn allowed_known_params_keep_their_provider_native_mapping() {
+        let state = state_with_global_drop(true);
+        let mut deployment = anthropic_deployment();
+        deployment.oxllm_params.model = "anthropic/claude-sonnet-4-20250514".into();
+        deployment.oxllm_params.allowed_openai_params = Some(vec!["reasoning_effort".into()]);
+        let request = json!({"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": "medium", "max_tokens": 16000});
+        let out = apply_drop_params(&state, &AnthropicProvider, &request, &deployment)
+            .unwrap()
+            .unwrap();
+        assert!(out.get("reasoning_effort").is_none());
+        assert_eq!(out["thinking"]["type"], "enabled");
+    }
+
+    #[test]
+    fn drops_happen_before_openai_renames_max_tokens() {
+        let state = state_with_global_drop(false);
+        let mut deployment = anthropic_deployment();
+        deployment.oxllm_params.model = "openai/gpt-6-sol".into();
+        deployment.oxllm_params.additional_drop_params = Some(vec!["max_tokens".into()]);
+        let request = json!({"messages": [{"role": "user", "content": "hi"}], "max_tokens": 40});
+        let out = apply_drop_params(&state, &OpenAiProvider, &request, &deployment)
+            .unwrap()
+            .unwrap();
+        assert!(out.get("max_tokens").is_none());
+        assert!(out.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn configured_privacy_override_wins_before_additional_drop() {
+        let mut body = json!({"model": "routed", "store": true, "temperature": 0.5});
+        let extra = serde_json::json!({"model": "other", "store": false, "temperature": 0.1});
+        shape_outbound_body(&mut body, Some(&["temperature".into()]), extra.as_object());
+        assert_eq!(body["model"], "routed");
+        assert_eq!(body["store"], false);
+        assert!(body.get("temperature").is_none());
+    }
+
+    #[test]
+    fn resolved_bedrock_region_is_shared_by_chat_and_embedding_urls() {
+        let deployment = Deployment {
+            oxllm_params: OxllmParams {
+                model: "bedrock/us.cohere.embed-v4:0".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let creds = ResolvedCredentials::AwsSigV4 {
+            access_key: "test".into(),
+            secret_key: "secret".into(),
+            session_token: None,
+            region: "us-west-2".into(),
+        };
+        let resolved = deployment_with_resolved_region(&deployment, &creds);
+        let provider = oxllm_providers::bedrock::BedrockProvider;
+        assert!(
+            provider
+                .endpoint_url(&resolved)
+                .starts_with("https://bedrock-runtime.us-west-2.amazonaws.com/")
+        );
+        assert!(
+            provider
+                .embeddings()
+                .unwrap()
+                .embedding_url(&resolved)
+                .starts_with("https://bedrock-runtime.us-west-2.amazonaws.com/")
+        );
     }
 }

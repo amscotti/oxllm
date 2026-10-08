@@ -64,7 +64,7 @@ fn endpoint_url_respects_custom_base() {
 fn endpoint_url_does_not_double_append_chat_completions() {
     // MEDIUM: a caller who configures `api_base` as the full chat endpoint
     // URL must not get `/chat/completions` appended twice (mirrors the
-    // `openai_compat` sibling's guard and LiteLLM's `get_complete_url`).
+    // `openai_compat` sibling's guard and the reference URL builder).
     let p = OpenRouterProvider;
     let mut dep = deployment();
     dep.oxllm_params.api_base = Some("https://example.org/api/v1/chat/completions".to_string());

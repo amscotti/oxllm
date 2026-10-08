@@ -21,6 +21,11 @@ use crate::security::{
 /// files without reusing a stale path.
 static CONFIG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// Every file that contributed to the most recent successful load, starting
+/// with the write-back path. The hot-reload watcher observes all of them.
+/// `current_config_path` stays the file `/config/update` writes.
+static CONFIG_CONTRIBUTORS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
 /// Serialize any test that reads or writes [`CONFIG_PATH`] so the
 /// `/config/update` handler test and the loader's config-path tests do not
 /// race each other when `cargo test` runs them in parallel. Held across the
@@ -66,18 +71,40 @@ pub async fn load_config_async(path: &str) -> Result<ProxyConfig> {
 }
 
 fn finish_load(content: &str, path: &str) -> Result<ProxyConfig> {
-    let config = parse_config_str(content)
-        .with_context(|| format!("failed to parse config from: {path}"))?;
+    let mut value: Value = serde_yml::from_str(content)
+        .with_context(|| format!("failed to parse YAML from: {path}"))?;
+    let mut contributors = Vec::new();
+    expand_includes(&mut value, std::path::Path::new(path), &mut contributors)
+        .with_context(|| format!("failed to expand includes from: {path}"))?;
+
+    let config =
+        value_to_config(value).with_context(|| format!("failed to parse config from: {path}"))?;
 
     // Record where we loaded from so `/config/update` can write back here.
     // Updated on every load (initial + hot-reload); the path is stable across
     // reloads in production but a `Mutex` (not `OnceLock`) keeps tests honest
     // when several temp-file configs are loaded in one binary.
+    // Contributors include the root file plus every nested include. The
+    // write-back path stays the root.
     if let Ok(mut guard) = CONFIG_PATH.lock() {
         *guard = Some(PathBuf::from(path));
     }
+    if let Ok(mut guard) = CONFIG_CONTRIBUTORS.lock() {
+        let mut recorded = vec![PathBuf::from(path)];
+        recorded.extend(contributors);
+        *guard = recorded;
+    }
 
     Ok(config)
+}
+
+/// Files watched for hot reload after the latest successful load.
+pub fn config_contributor_paths() -> Vec<PathBuf> {
+    CONFIG_CONTRIBUTORS
+        .lock()
+        .ok()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
 }
 
 /// Returns the path the proxy most recently loaded its config from, if any.
@@ -89,29 +116,95 @@ pub fn current_config_path() -> Option<PathBuf> {
 
 /// Parse a config from a YAML string (useful for tests).
 pub fn parse_config_str(yaml: &str) -> Result<ProxyConfig> {
-    let mut value: Value = serde_yml::from_str(yaml).context("failed to parse YAML")?;
+    let value: Value = serde_yml::from_str(yaml).context("failed to parse YAML")?;
+    if value.get("include").is_some() {
+        bail!("include requires a config file path; use load_config");
+    }
+    value_to_config(value)
+}
 
-    resolve_env_vars(&mut value)?;
+fn value_to_config(mut value: Value) -> Result<ProxyConfig> {
+    filter_raw_supported_environments(&mut value)?;
+    let substitutions = resolve_env_vars(&mut value)?;
 
-    // Apply the LiteLLM `environment_variables` block (a top-level mapping of
+    // Apply the legacy `environment_variables` block (a top-level mapping of
     // NAME: value) BEFORE any other initialization: hooks, the cache, and DB
     // setup all read env vars during state construction, so they must be in
     // the process environment first. Runs at config-load time only; hot-reload
     // re-applies current values but never removes ones deleted from the YAML.
     apply_environment_variables(&value)?;
 
-    let config: ProxyConfig =
-        serde_json::from_value(value).context("failed to deserialize config into typed struct")?;
+    let mut config = deserialize_with_env_coercion(value, &substitutions)?;
 
     log_unknown_keys(&config);
-    validate_proxy_config(&config)?;
+    validate_proxy_config(&mut config)?;
     Ok(config)
+}
+
+/// Validate a proposed root config without publishing its path or changing
+/// process variables. Includes resolve relative to the file being replaced.
+#[cfg(any(feature = "db", test))]
+pub(crate) fn validate_config_value(
+    mut value: Value,
+    path: &std::path::Path,
+) -> Result<ProxyConfig> {
+    expand_includes(&mut value, path, &mut Vec::new())?;
+    filter_raw_supported_environments(&mut value)?;
+    let mut config: ProxyConfig = deserialize_env_value(value)?;
+    log_unknown_keys(&config);
+    validate_proxy_config(&mut config)?;
+    Ok(config)
+}
+
+/// Resolve and deserialize env references using the target field's scalar type.
+#[cfg(any(feature = "db", test))]
+pub(crate) fn deserialize_env_value<T: serde::de::DeserializeOwned>(mut value: Value) -> Result<T> {
+    let substitutions = resolve_env_vars(&mut value)?;
+    deserialize_with_env_coercion(value, &substitutions)
 }
 
 /// Post-deserialize checks shared by file load and `POST /config/update`.
 /// Does not resolve env vars or mutate process environment.
-pub fn validate_proxy_config(config: &ProxyConfig) -> Result<()> {
+pub fn validate_proxy_config(config: &mut ProxyConfig) -> Result<()> {
+    normalize_retry_aliases(config)?;
     crate::auth::validate_auth_config(&config.general_settings)?;
+    filter_supported_environments(config);
+    for model in &config.model_list {
+        model
+            .oxllm_params
+            .validate_auth_overrides()
+            .with_context(|| {
+                format!(
+                    "invalid authentication override for model '{}'",
+                    model.model_name
+                )
+            })?;
+        if let Some(points) = &model.oxllm_params.cache_control_injection_points {
+            for point in points {
+                point.validate().with_context(|| {
+                    format!(
+                        "invalid cache_control_injection_points for model '{}'",
+                        model.model_name
+                    )
+                })?;
+            }
+        }
+    }
+    if config.oxllm_settings.prompt_caching_enabled == Some(false) {
+        for model in &config.model_list {
+            if model
+                .oxllm_params
+                .cache_control_injection_points
+                .as_ref()
+                .is_some_and(|points| !points.is_empty())
+            {
+                bail!(
+                    "model '{}' sets cache_control_injection_points while oxllm_settings.prompt_caching_enabled is false",
+                    model.model_name
+                );
+            }
+        }
+    }
     let allow_private = config
         .general_settings
         .allow_private_api_base
@@ -499,23 +592,23 @@ fn validate_soft_budget_pct(field: &str, pct: Option<f64>) -> Result<()> {
 ///
 /// # Limitations
 ///
-/// - **String-only.** Substitution targets `Value::String` nodes and writes
-///   the env value back as a string. A numeric or boolean config field set
-///   via `os.environ/` (e.g. `rpm: os.environ/RPM`) yields the JSON string
-///   `"100"`, which then fails typed deserialization with
-///   `invalid type: string "100", expected u32`. Set such fields directly in
-///   the YAML/numeric form, or pass them through the real process
-///   environment.
+/// - **Coercion is limited to substituted values.** Substitution writes the
+///   env value back as a string. If typed deserialization then fails, each
+///   value rejected by a numeric/bool field is coerced and deserialization is
+///   retried. String fields and ordinary YAML strings are not coerced. An
+///   unparseable substituted value fails the load and names the field path
+///   and the variable without disclosing its value.
 /// - **Ordering.** This runs *before* `apply_environment_variables`, so
 ///   `os.environ/` references resolve against the pre-existing process
 ///   environment — not against values just declared in an
 ///   `environment_variables` block. (That block is a no-op in shipped builds
 ///   anyway; see its doc-comment.)
-pub fn resolve_env_vars(value: &mut Value) -> Result<()> {
+pub fn resolve_env_vars(value: &mut Value) -> Result<Vec<EnvSubstitution>> {
     let mut errors = Vec::new();
-    resolve_inner(value, "", &mut errors);
+    let mut substitutions = Vec::new();
+    resolve_inner(value, "", "", &mut errors, &mut substitutions);
     if errors.is_empty() {
-        Ok(())
+        Ok(substitutions)
     } else {
         bail!(
             "config references unset environment variable at: {}",
@@ -524,24 +617,52 @@ pub fn resolve_env_vars(value: &mut Value) -> Result<()> {
     }
 }
 
-fn resolve_inner(value: &mut Value, path: &str, errors: &mut Vec<String>) {
+/// One `os.environ/` substitution, remembered so a later typed-parse failure
+/// can coerce the string or name the field and variable.
+#[derive(Debug, Clone)]
+pub struct EnvSubstitution {
+    /// JSON pointer of the substituted node.
+    pub pointer: String,
+    /// Dotted config path used in error text.
+    pub path: String,
+    /// Environment variable name.
+    pub var_name: String,
+    /// Substituted value.
+    pub value: String,
+}
+
+fn resolve_inner(
+    value: &mut Value,
+    path: &str,
+    pointer: &str,
+    errors: &mut Vec<String>,
+    substitutions: &mut Vec<EnvSubstitution>,
+) {
     match value {
         Value::Object(map) => {
             for (key, val) in map.iter_mut() {
                 let child_path = child_object_path(path, key);
-                resolve_inner(val, &child_path, errors);
+                let child_pointer = format!("{pointer}/{}", pointer_escape(key));
+                resolve_inner(val, &child_path, &child_pointer, errors, substitutions);
             }
         }
         Value::Array(arr) => {
             for (i, val) in arr.iter_mut().enumerate() {
                 let child_path = format!("{path}[{i}]");
-                resolve_inner(val, &child_path, errors);
+                let child_pointer = format!("{pointer}/{i}");
+                resolve_inner(val, &child_path, &child_pointer, errors, substitutions);
             }
         }
         Value::String(s) => {
             if let Some(env_name) = s.strip_prefix("os.environ/") {
                 match std::env::var(env_name) {
                     Ok(val) => {
+                        substitutions.push(EnvSubstitution {
+                            pointer: pointer.to_string(),
+                            path: path.to_string(),
+                            var_name: env_name.to_string(),
+                            value: val.clone(),
+                        });
                         *s = val;
                     }
                     Err(_) => {
@@ -554,6 +675,10 @@ fn resolve_inner(value: &mut Value, path: &str, errors: &mut Vec<String>) {
     }
 }
 
+fn pointer_escape(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
 fn child_object_path(parent: &str, key: &str) -> String {
     if parent.is_empty() {
         key.to_string()
@@ -562,7 +687,403 @@ fn child_object_path(parent: &str, key: &str) -> String {
     }
 }
 
-/// Apply the LiteLLM `environment_variables` block (a top-level YAML mapping
+/// Expand `include:` before env substitution.
+///
+/// Each entry is a path relative to the file that declares it. The declaring
+/// file is the base. Each included file is merged on top: lists concatenate
+/// base-then-included, and every other value, including `oxllm_settings`,
+/// `general_settings`, and `router_settings`, is replaced as a whole. Nested
+/// includes are queued after the siblings already waiting, so they overlay
+/// those siblings. A file already merged through another path is skipped. A
+/// cycle is an error that names the chain.
+fn expand_includes(
+    value: &mut Value,
+    path: &std::path::Path,
+    contributors: &mut Vec<PathBuf>,
+) -> Result<()> {
+    use std::collections::{HashMap, HashSet, VecDeque};
+    use std::path::{Path, PathBuf};
+
+    fn identity(path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    let root_key = identity(path);
+    canonicalize_settings_key(value)?;
+    let mut loaded = HashSet::from([root_key.clone()]);
+    let mut graph: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    let mut pending = VecDeque::new();
+    for entry in take_include_list(value, path)? {
+        graph.entry(root_key.clone()).or_default().push(identity(
+            &path.parent().unwrap_or_else(|| Path::new(".")).join(&entry),
+        ));
+        pending.push_back((entry, path.to_path_buf(), vec![root_key.clone()]));
+    }
+
+    while let Some((entry, declared_in, chain)) = pending.pop_front() {
+        let parent = declared_in.parent().unwrap_or_else(|| Path::new("."));
+        let child_path = parent.join(&entry);
+        let child_key = identity(&child_path);
+        if chain.iter().any(|seen| seen == &child_key) {
+            let mut names: Vec<String> = chain.iter().map(|p| p.display().to_string()).collect();
+            names.push(child_key.display().to_string());
+            bail!("include cycle: {}", names.join(" -> "));
+        }
+        if !loaded.insert(child_key.clone()) {
+            continue;
+        }
+        let child_content = std::fs::read_to_string(&child_path).with_context(|| {
+            format!(
+                "failed to read include '{}' from {}",
+                entry,
+                declared_in.display()
+            )
+        })?;
+        let mut child: Value = serde_yml::from_str(&child_content)
+            .with_context(|| format!("failed to parse include {}", child_path.display()))?;
+        canonicalize_settings_key(&mut child)?;
+        let nested = take_include_list(&mut child, &child_path)?;
+        graph.insert(
+            child_key.clone(),
+            nested
+                .iter()
+                .map(|entry| {
+                    identity(
+                        &child_path
+                            .parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join(entry),
+                    )
+                })
+                .collect(),
+        );
+        let current = std::mem::take(value);
+        *value = merge_included_config(current, child);
+        contributors.push(child_path.clone());
+        let mut child_chain = chain;
+        child_chain.push(child_key);
+        for nested_entry in nested {
+            pending.push_back((nested_entry, child_path.clone(), child_chain.clone()));
+        }
+    }
+    // A shared include may have been merged before another branch reaches it.
+    // Check all edges, including skipped duplicates, so those cycles still fail.
+    let mut complete = HashSet::new();
+    let mut chain = Vec::new();
+    let mut stack = vec![(root_key, false)];
+    while let Some((node, exiting)) = stack.pop() {
+        if exiting {
+            chain.pop();
+            complete.insert(node);
+            continue;
+        }
+        if let Some(start) = chain.iter().position(|seen| seen == &node) {
+            let names: Vec<_> = chain[start..]
+                .iter()
+                .chain(std::iter::once(&node))
+                .map(|path: &PathBuf| path.display().to_string())
+                .collect();
+            bail!("include cycle: {}", names.join(" -> "));
+        }
+        if complete.contains(&node) {
+            continue;
+        }
+        chain.push(node.clone());
+        stack.push((node.clone(), true));
+        if let Some(children) = graph.get(&node) {
+            stack.extend(children.iter().rev().cloned().map(|child| (child, false)));
+        }
+    }
+    Ok(())
+}
+
+/// Normalize the legacy settings alias before whole-block include merging.
+fn canonicalize_settings_key(value: &mut Value) -> Result<()> {
+    let Some(object) = value.as_object_mut() else {
+        return Ok(());
+    };
+    if let Some(settings) = object.remove("litellm_settings") {
+        if object.contains_key("oxllm_settings") {
+            bail!("configure only one of oxllm_settings and its legacy alias in each file");
+        }
+        object.insert("oxllm_settings".into(), settings);
+    }
+    Ok(())
+}
+
+fn take_include_list(value: &mut Value, path: &std::path::Path) -> Result<Vec<String>> {
+    let Some(obj) = value.as_object_mut() else {
+        bail!("config {} must be a mapping", path.display());
+    };
+    let Some(raw) = obj.remove("include") else {
+        return Ok(Vec::new());
+    };
+    if raw.is_null() {
+        return Ok(Vec::new());
+    }
+    let Some(items) = raw.as_array() else {
+        bail!("include in {} must be a list of paths", path.display());
+    };
+    let mut paths = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(path_str) = item.as_str() else {
+            bail!("include entry in {} must be a string path", path.display());
+        };
+        paths.push(path_str.to_string());
+    }
+    Ok(paths)
+}
+
+/// Merge `overlay` onto `base`. Lists concatenate base then overlay. Every
+/// other value is replaced by the overlay, so a settings object from an
+/// included file replaces the declaring file's block entirely.
+fn merge_included_config(base: Value, overlay: Value) -> Value {
+    let (Some(base_obj), Some(overlay_obj)) = (base.as_object(), overlay.as_object()) else {
+        return overlay;
+    };
+    let mut out = base_obj.clone();
+    for (key, overlay_value) in overlay_obj {
+        match (out.get(key).cloned(), overlay_value) {
+            (Some(Value::Array(mut base_list)), Value::Array(overlay_list)) => {
+                base_list.extend(overlay_list.iter().cloned());
+                out.insert(key.clone(), Value::Array(base_list));
+            }
+            (_, overlay_value) => {
+                out.insert(key.clone(), overlay_value.clone());
+            }
+        }
+    }
+    Value::Object(out)
+}
+
+fn deserialize_with_env_coercion<T: serde::de::DeserializeOwned>(
+    mut value: Value,
+    substitutions: &[EnvSubstitution],
+) -> Result<T> {
+    let mut coerced = Vec::new();
+    loop {
+        let err = match serde_json::from_value::<T>(value.clone()) {
+            Ok(config) => return Ok(config),
+            Err(err) => err,
+        };
+        let message = err.to_string();
+        // Probe only a rejected string. The unique replacement identifies the
+        // exact field even through serde flattening and repeated env values;
+        // numeric-looking secrets in string fields keep their original type.
+        let target = substitutions.iter().enumerate().find(|(index, sub)| {
+            if coerced.contains(index)
+                || value.pointer(&sub.pointer).and_then(Value::as_str) != Some(&sub.value)
+            {
+                return false;
+            }
+            let rejected = format!("invalid type: string {:?}, expected ", sub.value);
+            if !message.starts_with(&rejected) {
+                return false;
+            }
+            let marker = format!("__oxllm_env_scalar_probe_{index}__");
+            let mut probe = value.clone();
+            *probe
+                .pointer_mut(&sub.pointer)
+                .expect("substitution path exists") = Value::String(marker.clone());
+            serde_json::from_value::<T>(probe).is_err_and(|probe_err| {
+                probe_err
+                    .to_string()
+                    .starts_with(&format!("invalid type: string {marker:?}, expected "))
+            })
+        });
+        let Some((index, sub)) = target else {
+            let context = coerced
+                .last()
+                .map(|index| {
+                    let sub = &substitutions[*index];
+                    format!(
+                        "failed to deserialize config; check {} from os.environ/{}",
+                        sub.path, sub.var_name
+                    )
+                })
+                .unwrap_or_else(|| "failed to deserialize config into typed struct".into());
+            return Err(err).context(context);
+        };
+        let parsed = coerce_env_scalar(&sub.value).ok_or_else(|| {
+            anyhow::anyhow!(
+                "os.environ value could not be parsed as a number or bool: {} from os.environ/{}",
+                sub.path,
+                sub.var_name,
+            )
+        })?;
+        *value
+            .pointer_mut(&sub.pointer)
+            .expect("substitution path exists") = parsed;
+        coerced.push(index);
+    }
+}
+
+fn coerce_env_scalar(raw: &str) -> Option<Value> {
+    match raw.to_ascii_lowercase().as_str() {
+        "true" => return Some(Value::Bool(true)),
+        "false" => return Some(Value::Bool(false)),
+        _ => {}
+    }
+    if is_strict_int(raw) {
+        if let Ok(n) = raw.parse::<i64>() {
+            return Some(Value::Number(n.into()));
+        }
+        if let Ok(n) = raw.parse::<u64>() {
+            return Some(Value::Number(n.into()));
+        }
+    }
+    if is_strict_float(raw) {
+        let parsed = raw.parse::<f64>().ok()?;
+        return serde_json::Number::from_f64(parsed).map(Value::Number);
+    }
+    None
+}
+
+fn is_strict_int(raw: &str) -> bool {
+    let digits = raw.strip_prefix('-').unwrap_or(raw);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    digits == "0" || !digits.starts_with('0')
+}
+
+fn is_strict_float(raw: &str) -> bool {
+    let body = raw.strip_prefix('-').unwrap_or(raw);
+    if !(body.contains('.') || body.contains('e') || body.contains('E')) {
+        return false;
+    }
+    body.chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-'))
+        && body.parse::<f64>().is_ok()
+}
+
+/// Resolve the primary environment, then its legacy alias, then development.
+pub fn resolved_environment() -> String {
+    ["OXLLM_ENVIRONMENT", "LITELLM_ENVIRONMENT"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty())
+        .unwrap_or_else(|| "development".to_string())
+}
+
+pub fn environment_is_development() -> bool {
+    resolved_environment().eq_ignore_ascii_case("development")
+}
+
+/// Resolve the scope before reading credentials for an inactive deployment.
+pub(crate) fn raw_model_info_supports_environment(
+    info: Option<&Value>,
+    environment: &str,
+) -> Result<bool> {
+    let Some(allowed) = info
+        .and_then(|info| info.get("supported_environments"))
+        .filter(|value| !value.is_null())
+    else {
+        return Ok(true);
+    };
+    let mut allowed = allowed.clone();
+    resolve_env_vars(&mut allowed)
+        .context("invalid model_info.supported_environments env reference")?;
+    let allowed: Vec<String> = serde_json::from_value(allowed)
+        .context("model_info.supported_environments must be a list of strings")?;
+    Ok(allowed.iter().any(|name| name == environment))
+}
+
+fn filter_raw_supported_environments(value: &mut Value) -> Result<()> {
+    let Some(models) = value.get_mut("model_list").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    let environment = resolved_environment();
+    let mut retained = Vec::with_capacity(models.len());
+    for model in std::mem::take(models) {
+        if raw_model_info_supports_environment(model.get("model_info"), &environment)? {
+            retained.push(model);
+        } else {
+            tracing::info!(model_name = model.get("model_name").and_then(|value| value.as_str()).unwrap_or("unknown"),
+                environment = %environment, "dropping inactive deployment before env resolution");
+        }
+    }
+    *models = retained;
+    Ok(())
+}
+
+pub(crate) fn filter_supported_environments(config: &mut ProxyConfig) {
+    let environment = resolved_environment();
+    config.model_list.retain(|model| {
+        let Some(info) = model.model_info.as_ref() else {
+            return true;
+        };
+        let Some(allowed) = info.supported_environments.as_ref() else {
+            return true;
+        };
+        if allowed.iter().any(|name| name == &environment) {
+            return true;
+        }
+        tracing::info!(
+            model_name = %model.model_name,
+            environment = %environment,
+            "dropping deployment: supported_environments excludes the current environment"
+        );
+        false
+    });
+}
+
+#[cfg(feature = "db")]
+pub(crate) fn deployment_supports_environment(
+    deployment: &oxllm_core::Deployment,
+    environment: &str,
+) -> bool {
+    deployment
+        .model_info
+        .as_ref()
+        .and_then(|info| info.supported_environments.as_ref())
+        .is_none_or(|allowed| allowed.iter().any(|name| name == environment))
+}
+
+fn normalize_retry_aliases(config: &mut ProxyConfig) -> Result<()> {
+    let mut notes = Vec::new();
+    notes.extend(translate_retry_block(
+        "router_settings",
+        &mut config.router_settings.routing,
+    )?);
+    notes.extend(translate_retry_block(
+        "oxllm_settings",
+        &mut config.oxllm_settings.routing,
+    )?);
+    if let Some(groups) = config.router_settings.routing_groups.as_mut() {
+        for (name, group) in groups {
+            notes.extend(translate_retry_block(
+                &format!("router_settings.routing_groups.{name}"),
+                &mut group.routing,
+            )?);
+        }
+    }
+    if !notes.is_empty() {
+        tracing::info!(
+            mapping = %notes.join("; "),
+            "resolved named retry_policy entries"
+        );
+    }
+    Ok(())
+}
+
+fn translate_retry_block(
+    label: &str,
+    knobs: &mut crate::config::types::RoutingKnobs,
+) -> Result<Vec<String>> {
+    knobs
+        .translate_named_retry_policy()
+        .map_err(|err| anyhow::anyhow!("{label}: {err}"))
+        .map(|notes| {
+            notes
+                .into_iter()
+                .map(|note| format!("{label}: {note}"))
+                .collect()
+        })
+}
+
+/// Apply the legacy `environment_variables` block (a top-level YAML mapping
 /// of `NAME: value`) to the process environment via `std::env::set_var`.
 ///
 /// This runs at config-load time, before hooks/cache/DB initialization, so
@@ -595,13 +1116,13 @@ fn child_object_path(parent: &str, key: &str) -> String {
 /// `std::env::var` call site, which is a cross-cutting change outside this
 /// component.
 /// Environment-variable names that the `environment_variables` block must
-/// never override, mirroring LiteLLM's `_BLOCKED_ENV_KEYS`. These are
+/// never override, mirroring the reference `_BLOCKED_ENV_KEYS`. These are
 /// process-identity / runtime-discovery variables whose silent overwrite
 /// would break the process (e.g. clobbering `PATH` or `HOME`), skew
 /// operator observability (`RUST_LOG`), or — for the dynamic-linker and
 /// TLS-trust entries (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `SSL_CERT_*`)
 /// — open a code-injection / trust-bypass vector. Python-specific entries
-/// from LiteLLM's list (`PYTHONSTARTUP`, `PYTHONHOME`) are omitted since
+/// from the reference list (`PYTHONSTARTUP`, `PYTHONHOME`) are omitted since
 /// oxllm is a Rust binary.
 const BLOCKED_ENV_KEYS: &[&str] = &[
     "HOME",
@@ -714,6 +1235,38 @@ fn log_unknown_keys(config: &ProxyConfig) {
     }
     for key in config.router_settings.extra.keys() {
         tracing::warn!(key = %key, "unknown key in router_settings, ignored");
+    }
+    for model in &config.model_list {
+        for (key, value) in &model.oxllm_params.extra {
+            if oxllm_core::deployment::is_known_oxllm_param_extra(key) {
+                continue;
+            }
+            match oxllm_core::cost::classify_extra_tier_key(key) {
+                oxllm_core::cost::ExtraTierKeyClass::Parsed => {
+                    if oxllm_core::cost::extra_tier_rate_is_non_numeric(key, value) {
+                        tracing::warn!(
+                            model = %model.model_name,
+                            key = %key,
+                            "context-tier price key has a non-numeric rate and will not bill"
+                        );
+                    }
+                }
+                oxllm_core::cost::ExtraTierKeyClass::Malformed => {
+                    tracing::warn!(
+                        model = %model.model_name,
+                        key = %key,
+                        "malformed context-tier price key in oxllm_params, ignored"
+                    );
+                }
+                oxllm_core::cost::ExtraTierKeyClass::NotTier => {
+                    tracing::warn!(
+                        model = %model.model_name,
+                        key = %key,
+                        "unknown key in oxllm_params, ignored"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -980,7 +1533,7 @@ unknown_top_level:
     fn unknown_router_settings_keys_captured_for_warning() {
         // `log_unknown_keys` iterates `router_settings.extra`; a typo here
         // must land in `extra` so the forward-compat warning fires (matching
-        // the behavior for top-level / model / litellm / general keys).
+        // the behavior for top-level / model / gateway / general keys).
         let _guard = ENV_LOCK.lock().unwrap();
         let yaml = "\
 model_list: []
@@ -2347,5 +2900,590 @@ environment_variables:
             "non-blocked env var must still be applied"
         );
         remove_test_env("OXLLM_TEST_NOT_BLOCKED");
+    }
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "oxllm-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    fn write_file(dir: &std::path::Path, name: &str, body: &str) {
+        std::fs::write(dir.join(name), body).expect("write fixture");
+    }
+
+    #[test]
+    fn include_concatenates_models_and_replaces_settings_blocks() {
+        let _guard = CONFIG_PATH_TEST_LOCK.lock().unwrap();
+        let dir = temp_dir("include");
+        write_file(
+            &dir,
+            "c.yaml",
+            "\
+model_list:
+  - model_name: from-c
+    oxllm_params:
+      model: openai/gpt-4o
+router_settings:
+  num_retries: 9
+  routing_strategy: simple_shuffle
+",
+        );
+        write_file(
+            &dir,
+            "b.yaml",
+            "\
+include:
+  - c.yaml
+model_list:
+  - model_name: from-b
+    oxllm_params:
+      model: openai/gpt-4o
+router_settings:
+  num_retries: 1
+",
+        );
+        write_file(
+            &dir,
+            "a.yaml",
+            "\
+include:
+  - b.yaml
+model_list:
+  - model_name: from-a
+    oxllm_params:
+      model: openai/gpt-4o
+",
+        );
+        let cfg = load_config(dir.join("a.yaml").to_str().expect("utf8")).expect("include load");
+        let names: Vec<_> = cfg
+            .model_list
+            .iter()
+            .map(|m| m.model_name.as_str())
+            .collect();
+        assert_eq!(names, ["from-a", "from-b", "from-c"]);
+        assert_eq!(cfg.router_settings.routing.num_retries, Some(9));
+        assert_eq!(
+            cfg.router_settings.routing.routing_strategy.as_deref(),
+            Some("simple_shuffle")
+        );
+        assert_eq!(
+            current_config_path().as_ref(),
+            Some(&dir.join("a.yaml")),
+            "write-back path stays the root file"
+        );
+        assert!(config_contributor_paths().len() >= 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn include_cycle_names_the_chain() {
+        let _guard = CONFIG_PATH_TEST_LOCK.lock().unwrap();
+        let dir = temp_dir("cycle");
+        write_file(&dir, "a.yaml", "include:\n  - b.yaml\nmodel_list: []\n");
+        write_file(&dir, "b.yaml", "include:\n  - a.yaml\nmodel_list: []\n");
+        let err =
+            load_config(dir.join("a.yaml").to_str().expect("utf8")).expect_err("cycle must fail");
+        let rendered = format!("{err:#}");
+        assert!(rendered.contains("include cycle"), "{rendered}");
+        assert!(rendered.contains("->"), "{rendered}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn include_shallow_settings_replacement() {
+        let _guard = CONFIG_PATH_TEST_LOCK.lock().unwrap();
+        let dir = temp_dir("shallow");
+        write_file(
+            &dir,
+            "b.yaml",
+            "\
+model_list: []
+router_settings:
+  num_retries: 1
+",
+        );
+        write_file(
+            &dir,
+            "a.yaml",
+            "\
+include:
+  - b.yaml
+model_list: []
+router_settings:
+  num_retries: 3
+  routing_strategy: simple_shuffle
+",
+        );
+        let cfg = load_config(dir.join("a.yaml").to_str().expect("utf8")).expect("load");
+        assert_eq!(cfg.router_settings.routing.num_retries, Some(1));
+        assert!(cfg.router_settings.routing.routing_strategy.is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn env_refs_coerce_int_float_and_bool_after_typed_failure() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_env("OXLLM_TEST_RPM", "30");
+        set_env("OXLLM_TEST_TIMEOUT", "1.5");
+        set_env("OXLLM_TEST_DROP", "true");
+        set_env("OXLLM_TEST_KEY", "sk-test");
+        let yaml = "\
+model_list:
+  - model_name: m
+    oxllm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OXLLM_TEST_KEY
+      rpm: os.environ/OXLLM_TEST_RPM
+      timeout: os.environ/OXLLM_TEST_TIMEOUT
+oxllm_settings:
+  drop_params: os.environ/OXLLM_TEST_DROP
+";
+        let cfg = parse_config_str(yaml).expect("coerced env refs");
+        assert_eq!(
+            cfg.model_list[0].oxllm_params.api_key.as_deref(),
+            Some("sk-test")
+        );
+        assert_eq!(cfg.model_list[0].oxllm_params.rpm, Some(30));
+        assert_eq!(cfg.model_list[0].oxllm_params.timeout, Some(1.5));
+        assert_eq!(cfg.oxllm_settings.drop_params, Some(true));
+        unset_env("OXLLM_TEST_RPM");
+        unset_env("OXLLM_TEST_TIMEOUT");
+        unset_env("OXLLM_TEST_DROP");
+        unset_env("OXLLM_TEST_KEY");
+    }
+
+    #[test]
+    fn ordinary_yaml_string_is_not_coerced() {
+        let yaml = "\
+model_list:
+  - model_name: m
+    oxllm_params:
+      model: openai/gpt-4o
+      rpm: \"30\"
+";
+        let err = parse_config_str(yaml).expect_err("quoted rpm stays a string");
+        assert!(format!("{err:#}").contains("rpm") || format!("{err:#}").contains("invalid type"));
+    }
+
+    #[test]
+    fn unparseable_env_ref_names_the_field_and_variable() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_env("OXLLM_TEST_BANANA", "banana");
+        let yaml = "\
+model_list:
+  - model_name: m
+    oxllm_params:
+      model: openai/gpt-4o
+      rpm: os.environ/OXLLM_TEST_BANANA
+";
+        let err = parse_config_str(yaml).expect_err("banana is not an int");
+        let rendered = format!("{err:#}");
+        assert!(rendered.contains("rpm"), "{rendered}");
+        assert!(rendered.contains("OXLLM_TEST_BANANA"), "{rendered}");
+        unset_env("OXLLM_TEST_BANANA");
+    }
+
+    #[test]
+    fn supported_environments_filter_after_validate() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unset_env("OXLLM_ENVIRONMENT");
+        unset_env("LITELLM_ENVIRONMENT");
+        let yaml = "\
+model_list:
+  - model_name: always
+    oxllm_params:
+      model: openai/gpt-4o
+  - model_name: dev-only
+    oxllm_params:
+      model: openai/gpt-4o
+    model_info:
+      supported_environments: [development]
+  - model_name: empty-list
+    oxllm_params:
+      model: openai/gpt-4o
+    model_info:
+      supported_environments: []
+  - model_name: prod-only
+    oxllm_params:
+      model: openai/gpt-4o
+    model_info:
+      supported_environments: [production]
+";
+        let cfg = parse_config_str(yaml).expect("default environment");
+        let names: Vec<_> = cfg
+            .model_list
+            .iter()
+            .map(|m| m.model_name.as_str())
+            .collect();
+        assert_eq!(names, ["always", "dev-only"]);
+
+        set_env("LITELLM_ENVIRONMENT", "production");
+        set_env("OXLLM_ENVIRONMENT", "staging");
+        let cfg = parse_config_str(yaml).expect("oxllm env wins");
+        let names: Vec<_> = cfg
+            .model_list
+            .iter()
+            .map(|m| m.model_name.as_str())
+            .collect();
+        assert_eq!(names, ["always"]);
+        unset_env("OXLLM_ENVIRONMENT");
+        unset_env("LITELLM_ENVIRONMENT");
+    }
+
+    #[test]
+    fn cache_injection_rejected_only_when_prompt_caching_is_disabled() {
+        let disabled = "\
+model_list:
+  - model_name: m
+    oxllm_params:
+      model: anthropic/claude-3-5-sonnet
+      cache_control_injection_points:
+        - location: message
+          role: system
+oxllm_settings:
+  prompt_caching_enabled: false
+";
+        let err = parse_config_str(disabled).expect_err("disabled caching rejects points");
+        assert!(format!("{err:#}").contains("cache_control_injection_points"));
+
+        let unset = "\
+model_list:
+  - model_name: m
+    oxllm_params:
+      model: anthropic/claude-3-5-sonnet
+      cache_control_injection_points:
+        - location: message
+          index: -1
+";
+        let cfg = parse_config_str(unset).expect("unset caching allows points");
+        assert_eq!(
+            cfg.model_list[0]
+                .oxllm_params
+                .cache_control_injection_points
+                .as_ref()
+                .map(|p| p.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn named_retry_policy_maps_onto_status_and_exception_fields() {
+        let yaml = "\
+model_list: []
+oxllm_settings:
+  retry_policy:
+    TimeoutErrorRetries: 4
+router_settings:
+  retry_policy:
+    TimeoutErrorRetries: 1
+    RateLimitErrorRetries: 1
+    ContentPolicyViolationErrorRetries: 0
+    InternalServerErrorRetries: 2
+    BadRequestErrorRetries: 0
+    AuthenticationErrorRetries: 0
+    \"408\": 7
+  routing_groups:
+    gpt-4o:
+      retry_policy:
+        RateLimitErrorRetries: 3
+";
+        let cfg = parse_config_str(yaml).expect("named retries");
+        assert_eq!(
+            cfg.oxllm_settings
+                .routing
+                .exception_retry_policy
+                .as_ref()
+                .and_then(|p| p.timeout_retries),
+            Some(4)
+        );
+        let router = &cfg.router_settings.routing;
+        assert_eq!(router.retry_policy.as_ref().unwrap().get("408"), Some(&7));
+        assert_eq!(router.retry_policy.as_ref().unwrap().get("429"), Some(&1));
+        assert_eq!(router.retry_policy.as_ref().unwrap().get("400"), Some(&0));
+        assert_eq!(router.retry_policy.as_ref().unwrap().get("504"), Some(&2));
+        assert_eq!(router.retry_policy.as_ref().unwrap().get("422"), Some(&0));
+        assert_eq!(router.retry_policy.as_ref().unwrap().get("401"), Some(&0));
+        assert!(
+            !router
+                .retry_policy
+                .as_ref()
+                .unwrap()
+                .contains_key("TimeoutErrorRetries")
+        );
+        let policy = router.exception_retry_policy.as_ref().expect("exception");
+        assert_eq!(policy.timeout_retries, Some(7));
+        assert_eq!(policy.rate_limit_retries, Some(1));
+        assert_eq!(policy.content_policy_retries, Some(0));
+        assert_eq!(policy.internal_server_error_retries, Some(2));
+        let allowed = router.allowed_fails_policy.as_ref().expect("allowed");
+        assert_eq!(allowed.get("400"), Some(&0));
+        assert_eq!(allowed.get("422"), Some(&0));
+        assert_eq!(allowed.get("401"), Some(&0));
+        assert_eq!(allowed.get("403"), Some(&0));
+        let group = cfg
+            .router_settings
+            .routing_groups
+            .as_ref()
+            .unwrap()
+            .get("gpt-4o")
+            .unwrap();
+        assert_eq!(
+            group.routing.retry_policy.as_ref().unwrap().get("429"),
+            Some(&3)
+        );
+    }
+
+    #[test]
+    fn nonzero_bad_request_retry_alias_fails_validate() {
+        let yaml = "\
+model_list: []
+router_settings:
+  retry_policy:
+    BadRequestErrorRetries: 2
+";
+        let err = parse_config_str(yaml).expect_err("nonzero bad request");
+        let rendered = format!("{err:#}");
+        assert!(rendered.contains("no retry translation"), "{rendered}");
+        assert!(rendered.contains("BadRequestErrorRetries"), "{rendered}");
+    }
+
+    #[test]
+    fn short_master_key_hatch_is_development_only() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unset_env("OXLLM_ENVIRONMENT");
+        unset_env("LITELLM_ENVIRONMENT");
+        let yaml = "\
+model_list: []
+general_settings:
+  master_key: short-key
+  allow_short_master_key: true
+";
+        let cfg = parse_config_str(yaml).expect("development accepts a short key");
+        assert!(!crate::app::auth_is_configured(
+            &cfg.general_settings.master_key,
+            &cfg.general_settings.jwt_secret,
+            &cfg.general_settings.database_url,
+        ));
+        assert!(crate::app::settings_auth_is_configured(
+            &cfg.general_settings
+        ));
+
+        set_env("OXLLM_ENVIRONMENT", "production");
+        let err = parse_config_str(yaml).expect_err("production rejects the hatch");
+        assert!(format!("{err:#}").contains("allow_short_master_key"));
+        let long = "\
+model_list: []
+general_settings:
+  master_key: a-long-enough-master
+  allow_short_master_key: true
+";
+        assert!(parse_config_str(long).is_err());
+        unset_env("OXLLM_ENVIRONMENT");
+        unset_env("LITELLM_ENVIRONMENT");
+    }
+
+    #[test]
+    fn env_coercion_preserves_numeric_string_fields_and_coerces_each_numeric_target() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_env("OXLLM_TEST_SHARED_SCALAR", "30");
+        set_env("OXLLM_TEST_BOOLEAN_SCALAR", "true");
+        let config = parse_config_str(
+            "\
+model_list:
+  - model_name: os.environ/OXLLM_TEST_SHARED_SCALAR
+    oxllm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OXLLM_TEST_SHARED_SCALAR
+      rpm: os.environ/OXLLM_TEST_SHARED_SCALAR
+      tpm: os.environ/OXLLM_TEST_SHARED_SCALAR
+      extra_headers:
+        X-Boolean-String: os.environ/OXLLM_TEST_BOOLEAN_SCALAR
+oxllm_settings:
+  drop_params: os.environ/OXLLM_TEST_BOOLEAN_SCALAR
+",
+        )
+        .expect("only numeric/bool fields coerce");
+        unset_env("OXLLM_TEST_SHARED_SCALAR");
+        unset_env("OXLLM_TEST_BOOLEAN_SCALAR");
+        let params = &config.model_list[0].oxllm_params;
+        assert_eq!(config.model_list[0].model_name, "30");
+        assert_eq!(params.api_key.as_deref(), Some("30"));
+        assert_eq!(params.rpm, Some(30));
+        assert_eq!(params.tpm, Some(30));
+        assert_eq!(
+            params.extra_headers.as_ref().unwrap()["X-Boolean-String"],
+            "true"
+        );
+        assert_eq!(config.oxllm_settings.drop_params, Some(true));
+    }
+
+    #[test]
+    fn blank_primary_environment_cannot_bypass_the_legacy_production_environment() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_env("OXLLM_ENVIRONMENT", "  ");
+        set_env("LITELLM_ENVIRONMENT", "production");
+        let environment = resolved_environment();
+        let result = parse_config_str(
+            "model_list: []\ngeneral_settings:\n  master_key: short\n  allow_short_master_key: true\n",
+        );
+        unset_env("OXLLM_ENVIRONMENT");
+        unset_env("LITELLM_ENVIRONMENT");
+        assert_eq!(environment, "production");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("allow_short_master_key")
+        );
+    }
+
+    #[test]
+    fn include_cycle_is_detected_when_both_files_are_already_queued() {
+        let _guard = CONFIG_PATH_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "root.yaml",
+            "model_list: []\ninclude: [a.yaml, b.yaml]\n",
+        );
+        write_file(dir.path(), "a.yaml", "model_list: []\ninclude: [b.yaml]\n");
+        write_file(dir.path(), "b.yaml", "model_list: []\ninclude: [a.yaml]\n");
+        let error = load_config(dir.path().join("root.yaml").to_str().unwrap()).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("include cycle"), "{message}");
+        assert!(
+            message.contains("a.yaml") && message.contains("b.yaml"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn nested_includes_overlay_after_siblings_and_duplicate_files_merge_once() {
+        let _guard = CONFIG_PATH_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "root.yaml",
+            "model_list: []\ninclude: [a.yaml, b.yaml]\n",
+        );
+        write_file(
+            dir.path(),
+            "a.yaml",
+            "model_list: []\ninclude: [nested.yaml]\nrouter_settings:\n  num_retries: 1\n",
+        );
+        write_file(
+            dir.path(),
+            "b.yaml",
+            "model_list: []\ninclude: [nested.yaml]\nrouter_settings:\n  num_retries: 2\n",
+        );
+        write_file(
+            dir.path(),
+            "nested.yaml",
+            "model_list:\n  - model_name: nested\n    oxllm_params:\n      model: openai/gpt-4o\nrouter_settings:\n  num_retries: 3\n",
+        );
+        let config = load_config(dir.path().join("root.yaml").to_str().unwrap()).unwrap();
+        assert_eq!(config.router_settings.routing.num_retries, Some(3));
+        assert_eq!(config.model_list.len(), 1);
+        assert_eq!(config.model_list[0].model_name, "nested");
+    }
+
+    #[test]
+    fn includes_replace_the_same_settings_block_across_legacy_and_native_keys() {
+        let _guard = CONFIG_PATH_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "root.yaml",
+            "model_list: []\ninclude: [included.yaml]\noxllm_settings:\n  drop_params: true\n  request_timeout: 10\n",
+        );
+        write_file(
+            dir.path(),
+            "included.yaml",
+            "model_list: []\nlitellm_settings:\n  request_timeout: 20\n",
+        );
+        let config = load_config(dir.path().join("root.yaml").to_str().unwrap()).unwrap();
+        assert_eq!(config.oxllm_settings.request_timeout, Some(20));
+        assert_eq!(config.oxllm_settings.drop_params, None);
+    }
+
+    #[test]
+    fn proposed_include_config_is_validated_without_publishing_contributors() {
+        let _guard = CONFIG_PATH_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "root.yaml", "model_list: []\n");
+        let root = dir.path().join("root.yaml");
+        load_config(root.to_str().unwrap()).unwrap();
+        let contributors = config_contributor_paths();
+        write_file(
+            dir.path(),
+            "models.yaml",
+            "model_list:\n  - model_name: included\n    oxllm_params:\n      model: openai/gpt-4o\n",
+        );
+        let config =
+            validate_config_value(serde_json::json!({"include": ["models.yaml"]}), &root).unwrap();
+        assert_eq!(config.model_list[0].model_name, "included");
+        assert_eq!(config_contributor_paths(), contributors);
+        assert!(
+            validate_config_value(serde_json::json!({"include": ["missing.yaml"]}), &root).is_err()
+        );
+    }
+
+    #[test]
+    fn invalid_cache_selectors_are_rejected_at_load() {
+        for point in [
+            serde_json::json!({"location": "tool", "index": 0}),
+            serde_json::json!({"location": "message"}),
+            serde_json::json!({"location": "message", "index": 0, "role": "system"}),
+            serde_json::json!({"location": "message", "role": "bogus"}),
+        ] {
+            let config = serde_json::json!({"model_list": [{"model_name": "m", "oxllm_params": {
+                "model": "anthropic/claude-test", "cache_control_injection_points": [point]
+            }}]});
+            let error = parse_config_str(&serde_yml::to_string(&config).unwrap()).unwrap_err();
+            assert!(format!("{error:#}").contains("cache_control_injection_points"));
+        }
+    }
+
+    #[test]
+    fn inactive_deployments_do_not_require_their_credential_or_limit_env_variables() {
+        let config = parse_config_str(
+            "\
+model_list:
+  - model_name: active
+    oxllm_params:
+      model: openai/gpt-4o
+  - model_name: inactive
+    oxllm_params:
+      model: xai/grok-test
+      api_key: os.environ/OXLLM_INACTIVE_PROVIDER_SECRET
+      rpm: os.environ/OXLLM_INACTIVE_PROVIDER_RPM
+    model_info:
+      supported_environments: []
+",
+        )
+        .expect("inactive credentials are not resolved");
+        assert_eq!(config.model_list.len(), 1);
+        assert_eq!(config.model_list[0].model_name, "active");
+    }
+
+    #[test]
+    fn programmatic_state_construction_also_filters_inactive_deployments() {
+        let config: ProxyConfig = serde_json::from_value(serde_json::json!({"model_list": [
+            {"model_name": "active", "oxllm_params": {"model": "openai/gpt-4o"}},
+            {"model_name": "inactive", "oxllm_params": {"model": "openai/gpt-4o"},
+                "model_info": {"supported_environments": []}}
+        ]}))
+        .unwrap();
+        let state = crate::state::AppState::new(config).unwrap();
+        assert_eq!(state.deployments.len(), 1);
+        assert_eq!(state.deployments[0].model_name, "active");
     }
 }

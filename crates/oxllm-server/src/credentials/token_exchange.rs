@@ -1,7 +1,7 @@
 //! Bounded, expiry-aware token exchanges used by the Google and IBM resolvers.
 //! Endpoints are fixed by the resolver, never supplied by inference requests.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moka::future::Cache;
@@ -19,6 +19,37 @@ const FAILURE_BACKOFF: Duration = Duration::from_secs(2);
 const MAX_TOKEN_LIFETIME: Duration = Duration::from_secs(86_400);
 type Form = Vec<(&'static str, String)>;
 type TokenSlot = Arc<Mutex<Option<TokenEntry>>>;
+type FormBuilder = Arc<dyn Fn() -> Result<Form, Error> + Send + Sync>;
+
+struct RenewableSlot {
+    entry: Mutex<Option<RenewableEntry>>,
+    worker: std::sync::Mutex<Option<tokio::task::AbortHandle>>,
+}
+
+impl Drop for RenewableSlot {
+    fn drop(&mut self) {
+        if let Some(worker) = self.worker.get_mut().unwrap_or_else(|err| err.into_inner()) {
+            worker.abort();
+        }
+    }
+}
+
+enum RenewableEntry {
+    Ready {
+        grant: TokenGrant,
+        failure: Option<TokenFailure>,
+    },
+    Failed {
+        failure: TokenFailure,
+        retry_at: Instant,
+    },
+}
+
+struct TokenGrant {
+    token: Zeroizing<String>,
+    usable_until: Instant,
+    renew_at: Instant,
+}
 
 pub(super) struct TokenExchange {
     endpoint: String,
@@ -26,8 +57,12 @@ pub(super) struct TokenExchange {
     client: OnceCell<reqwest::Client>,
     // Hash the actual credential material, not the deployment/model name:
     // config reload and key rotation cannot reuse another identity's token.
-    // Only hashes and short-lived results persist; no raw API/refresh keys.
+    // The on-demand cache holds only hashes and short-lived token results.
     cache: Cache<[u8; 32], TokenSlot>,
+    // Retain an idle identity through a one-hour token lifetime and the
+    // subsequent renewal. Workers retain the renewable credential source and
+    // release its zeroizing secret fields on eviction or resolver shutdown.
+    renewable_cache: Cache<[u8; 32], Arc<RenewableSlot>>,
 }
 
 enum TokenEntry {
@@ -78,6 +113,10 @@ impl TokenExchange {
                 .max_capacity(128)
                 .time_to_idle(Duration::from_secs(3600))
                 .build(),
+            renewable_cache: Cache::builder()
+                .max_capacity(128)
+                .time_to_idle(Duration::from_secs(7200))
+                .build(),
         }
     }
 
@@ -120,9 +159,12 @@ impl TokenExchange {
             retry_at: Instant::now() + self.timeout + FAILURE_BACKOFF,
         });
         match self.fetch(form).await {
-            Ok((token, refresh_at)) => {
-                let result = token.to_string();
-                *entry = Some(TokenEntry::Ready { token, refresh_at });
+            Ok(grant) => {
+                let result = grant.token.to_string();
+                *entry = Some(TokenEntry::Ready {
+                    token: grant.token,
+                    refresh_at: grant.usable_until,
+                });
                 Ok(result)
             }
             Err(failure) => {
@@ -135,7 +177,155 @@ impl TokenExchange {
         }
     }
 
-    async fn fetch(&self, form: Form) -> Result<(Zeroizing<String>, Instant), TokenFailure> {
+    /// After initial acquisition, renew at half TTL without holding the token
+    /// lock during I/O. Readers keep using the unexpired token during renewal;
+    /// failures are retried in the background and expired tokens are never sent.
+    pub(super) async fn background_token<F>(
+        self: &Arc<Self>,
+        material: &[u8],
+        build_form: F,
+    ) -> Result<String, Error>
+    where
+        F: Fn() -> Result<Form, Error> + Send + Sync + 'static,
+    {
+        if material.len() > MAX_CREDENTIAL_BYTES {
+            return Err(Error::Config("credential material exceeds 64 KiB".into()));
+        }
+        let key: [u8; 32] = Sha256::digest(material).into();
+        let slot = self
+            .renewable_cache
+            .get_with(key, async {
+                Arc::new(RenewableSlot {
+                    entry: Mutex::new(None),
+                    worker: std::sync::Mutex::new(None),
+                })
+            })
+            .await;
+        let mut entry = slot.entry.lock().await;
+        match entry.as_ref() {
+            Some(RenewableEntry::Ready { grant, .. }) if grant.usable_until > Instant::now() => {
+                return Ok(grant.token.to_string());
+            }
+            Some(RenewableEntry::Ready {
+                failure: last_failure,
+                ..
+            }) => {
+                return Err(last_failure
+                    .unwrap_or_else(|| {
+                        failure(503, "credential background renewal has not completed")
+                    })
+                    .into());
+            }
+            Some(RenewableEntry::Failed { failure, retry_at }) if *retry_at > Instant::now() => {
+                return Err((*failure).into());
+            }
+            _ => {}
+        }
+        let form = build_form()?;
+        *entry = Some(RenewableEntry::Failed {
+            failure: failure(503, "credential token acquisition was interrupted"),
+            retry_at: Instant::now() + self.timeout + FAILURE_BACKOFF,
+        });
+        match self.fetch(form).await {
+            Ok(grant) => {
+                let token = grant.token.to_string();
+                *entry = Some(RenewableEntry::Ready {
+                    grant,
+                    failure: None,
+                });
+                drop(entry);
+                self.start_renewal_worker(&slot, Arc::new(build_form));
+                Ok(token)
+            }
+            Err(failure) => {
+                *entry = Some(RenewableEntry::Failed {
+                    failure,
+                    retry_at: Instant::now() + FAILURE_BACKOFF,
+                });
+                Err(failure.into())
+            }
+        }
+    }
+
+    fn start_renewal_worker(self: &Arc<Self>, slot: &Arc<RenewableSlot>, build_form: FormBuilder) {
+        let mut worker = slot.worker.lock().unwrap_or_else(|err| err.into_inner());
+        if worker.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return;
+        }
+        let handle = tokio::spawn(Self::renew_in_background(
+            Arc::downgrade(self),
+            Arc::downgrade(slot),
+            build_form,
+        ));
+        *worker = Some(handle.abort_handle());
+    }
+
+    async fn renew_in_background(
+        exchange: Weak<Self>,
+        slot: Weak<RenewableSlot>,
+        build_form: FormBuilder,
+    ) {
+        let mut failures = 0_u32;
+        loop {
+            let Some(current) = slot.upgrade() else {
+                return;
+            };
+            let next = {
+                let entry = current.entry.lock().await;
+                match entry.as_ref() {
+                    Some(RenewableEntry::Ready { grant, .. }) => grant.renew_at,
+                    _ => return,
+                }
+            };
+            drop(current);
+            tokio::time::sleep_until(next).await;
+            let Some(exchange) = exchange.upgrade() else {
+                return;
+            };
+            let Some(client) = exchange.client.get().cloned() else {
+                return;
+            };
+            let endpoint = exchange.endpoint.clone();
+            drop(exchange);
+            // Hold no slot reference or entry lock while fetching. Eviction
+            // can cancel this worker, and readers do not queue behind renewal.
+            let result = match build_form() {
+                Ok(form) => Self::fetch_with_client(&client, &endpoint, form).await,
+                Err(_) => Err(failure(502, "cannot construct credential renewal grant")),
+            };
+            let Some(current) = slot.upgrade() else {
+                return;
+            };
+            let mut entry = current.entry.lock().await;
+            let Some(RenewableEntry::Ready {
+                grant,
+                failure: last_failure,
+            }) = entry.as_mut()
+            else {
+                return;
+            };
+            match result {
+                Ok(renewed) => {
+                    *grant = renewed;
+                    *last_failure = None;
+                    failures = 0;
+                    tracing::debug!("credential token renewed in background");
+                }
+                Err(error) => {
+                    failures = failures.saturating_add(1);
+                    let backoff = FAILURE_BACKOFF * (1_u32 << failures.min(4).saturating_sub(1));
+                    grant.renew_at = Instant::now() + backoff;
+                    *last_failure = Some(error);
+                    tracing::warn!(
+                        status = error.status,
+                        "credential background renewal failed"
+                    );
+                }
+            }
+        }
+    }
+
+    async fn fetch(&self, form: Form) -> Result<TokenGrant, TokenFailure> {
         let client = self
             .client
             .get_or_try_init(|| async {
@@ -147,12 +337,20 @@ impl TokenExchange {
                     .map_err(|_| failure(502, "cannot initialize credential HTTP client"))
             })
             .await?;
+        Self::fetch_with_client(client, &self.endpoint, form).await
+    }
+
+    async fn fetch_with_client(
+        client: &reqwest::Client,
+        endpoint: &str,
+        form: Form,
+    ) -> Result<TokenGrant, TokenFailure> {
         let started = Instant::now();
         let unix_started = unix_now()
             .map_err(|_| failure(502, "system clock is invalid for credential exchange"))?;
         // reqwest's total timeout includes reading the body, not just headers.
         let mut response = client
-            .post(&self.endpoint)
+            .post(endpoint)
             .header("accept", "application/json")
             .form(&form)
             .send()
@@ -224,7 +422,11 @@ impl TokenExchange {
             ));
         }
         let skew = Duration::from_secs(60).min(lifetime / 10);
-        Ok((token, expires_at - skew))
+        Ok(TokenGrant {
+            token,
+            usable_until: expires_at - skew,
+            renew_at: started + lifetime / 2,
+        })
     }
 }
 

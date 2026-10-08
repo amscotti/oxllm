@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// A per-status failure count with a TTL window. Each counted failure
-/// re-arms the window (LiteLLM re-`set_cache`s the count with
+/// re-arms the window (the reference re-`set_cache`s the count with
 /// `ttl=cooldown_time` on every tolerated failure,
-/// `litellm/router_utils/cooldown_handlers.py:589`), so a sustained
+/// `router_utils/cooldown_handlers.py:589`), so a sustained
 /// slow-drip failure stream — one failure per sub-window interval — keeps
 /// the count alive and monotonically growing until it crosses
 /// `allowed_fails + 1`. A success clears the counts; a failure arriving
@@ -144,7 +144,7 @@ impl CooldownStore {
 
     /// Record a failed attempt for (`key`, `status`) and return the failure
     /// count within the current window. Each counted failure re-arms the
-    /// window (`expires_at = now + window`, LiteLLM TTL semantics — see
+    /// window (`expires_at = now + window`, sliding TTL semantics — see
     /// `FailureEntry`); once the window elapses with no intervening
     /// failure, the next failure starts a fresh window at count 1.
     ///
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn record_failure_rearms_window_on_each_failure() {
-        // LiteLLM parity (`cooldown_handlers.py:589`: every tolerated
+        // Sliding-TTL parity (`cooldown_handlers.py:589`: every tolerated
         // failure re-`set_cache`s the count with `ttl=cooldown_time`): a
         // sustained slow-drip failure stream — one failure per sub-window
         // interval — must keep the count alive and growing instead of

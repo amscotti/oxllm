@@ -45,19 +45,19 @@ pub(crate) struct AwsMaterial {
 /// 1. Per-deployment typed fields (`aws_access_key_id` /
 ///    `aws_secret_access_key` / `aws_session_token`) — via
 ///    [`resolve_access_secret_session`].
-/// 2. The serde-flatten `extra` bag (legacy / lite-LLM-compatible aliases).
+/// 2. The serde-flatten `extra` bag (legacy credential aliases).
 /// 3. The ambient environment via `env_lookup`.
 ///
-/// Region precedence (matches LiteLLM's `base_aws_llm.py`):
+/// Region precedence (matches the reference `base_aws_llm.py`):
 /// `extra.aws_region_name` → `extra.aws_region` → `AWS_REGION_NAME` →
 /// `AWS_REGION` → `AWS_DEFAULT_REGION` → `us-east-1`. `aws_region_name` is
-/// the LiteLLM-canonical key read from `optional_params`; `aws_region` is an
+/// the canonical key read from `optional_params`; `aws_region` is an
 /// oxllm-native shorthand. Both are accepted so a config migrated verbatim
-/// from LiteLLM resolves the region correctly. The region is validated
+/// from an existing proxy resolves the region correctly. The region is validated
 /// against `^[a-z0-9-]+$` so a typo like `"us-east-1 "` surfaces locally
 /// instead of producing an obscure `SignatureDoesNotMatch` from AWS.
 ///
-/// Default-region divergence: LiteLLM's `base_aws_llm.py` falls back to
+/// Default-region divergence: the reference `base_aws_llm.py` falls back to
 /// `us-west-2`, while oxllm (and AWS's own Bedrock documentation) uses
 /// `us-east-1`. This is an intentional divergence — operators are expected
 /// to set a region explicitly or via `AWS_REGION`, and a wrong-region error
@@ -369,9 +369,9 @@ mod tests {
         }
     }
 
-    /// LiteLLM checks `AWS_REGION_NAME` (a LiteLLM-specific alias) BEFORE the
+    /// Region lookup checks `AWS_REGION_NAME` (a legacy alias) BEFORE the
     /// standard `AWS_REGION` (`base_aws_llm.py:569`). Operators migrating from
-    /// LiteLLM who rely on `AWS_REGION_NAME` must not silently fall through to
+    /// an existing proxy who rely on `AWS_REGION_NAME` must not silently fall through to
     /// `us-east-1` and hit `SignatureDoesNotMatch` with no local hint.
     #[tokio::test]
     async fn aws_region_name_env_is_preferred_over_aws_region() {
@@ -394,9 +394,9 @@ mod tests {
         }
     }
 
-    /// LiteLLM reads the per-deployment region from `optional_params` under
+    /// The reference reads the per-deployment region from `optional_params` under
     /// the canonical key `aws_region_name` (`base_aws_llm.py:_get_aws_region_name`).
-    /// A config migrated verbatim from LiteLLM (`aws_region_name: eu-west-2`
+    /// A config migrated verbatim (`aws_region_name: eu-west-2`
     /// in `model_list`) lands in `extra["aws_region_name"]`. The resolver
     /// must honour it even when no `aws_region` shorthand and no env var are
     /// set, otherwise it silently falls through to the default region and

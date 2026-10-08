@@ -316,7 +316,7 @@ fn test_golden_file_parity() {
     }
 }
 
-// --- Additional request parameter tests (ported from LiteLLM test_replicate.py) ---
+// --- Additional request parameter tests (ported from the reference Replicate tests) ---
 
 #[test]
 fn request_preserves_response_format_json_object() {
@@ -447,17 +447,17 @@ fn request_deployment_with_custom_model_respects_strip() {
     assert_eq!(out["model"], "meta/custom-model-v1");
 }
 
-// --- LiteLLM output-format tests (ported from test_replicate.py) ---
+// --- Reference output-format tests (ported from test_replicate.py) ---
 //
-// LiteLLM's legacy Replicate integration uses the /predictions endpoint and
+// The reference legacy Replicate integration uses the /predictions endpoint and
 // returns `output` as either a list of token chunks or a single string. The
 // OpenAI-compatible surface normalizes both into a chat-completion `content`
 // string. These tests assert that our identity transform forwards whatever
-// content the upstream produced, mirroring LiteLLM's string-join behavior.
+// content the upstream produced, mirroring the reference string-join behavior.
 
 #[test]
 fn transform_response_preserves_list_joined_content() {
-    // LiteLLM joins `["Hello", " ", "world"]` into `"Hello world"`. On the
+    // The reference joins `["Hello", " ", "world"]` into `"Hello world"`. On the
     // OpenAI-compatible surface the upstream already joins it into
     // `message.content`, so the identity transform preserves it verbatim.
     let p = ReplicateProvider;
@@ -478,7 +478,7 @@ fn transform_response_preserves_list_joined_content() {
 
 #[test]
 fn transform_response_preserves_string_content() {
-    // DeepSeek-style string output, as exercised by LiteLLM's
+    // DeepSeek-style string output, as exercised by the reference
     // `test_transform_response_string_output`.
     let p = ReplicateProvider;
     let resp = json!({

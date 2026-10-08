@@ -41,7 +41,7 @@ const EMBEDDING_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_EMBEDDING_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 /// A hook that implements opt-in response caching. Requests opt in by setting
-/// `cache: {"insert": true}` (LiteLLM-style) on the top-level request body.
+/// `cache: {"insert": true}` on the top-level request body.
 /// The cache key is derived from a hash of the model + messages + relevant
 /// params.
 pub struct CacheHook {
@@ -326,7 +326,7 @@ impl CacheHook {
     }
 }
 
-/// Returns true if the request opts into caching. LiteLLM uses the convention
+/// Returns true if the request opts into caching. The reference uses the convention
 /// `cache: {"insert": true}` (or `cache: {"use_cache": true}`). Each key is
 /// evaluated independently and the results OR-ed, so a request carrying
 /// `cache: {"insert": false, "use_cache": true}` (a reasonable "don't force a
@@ -356,7 +356,7 @@ fn cache_flag(request: &Value, key: &str) -> bool {
 /// Returns true when the cache **read** path (exact-match / semantic lookup)
 /// may run for this request: the caller opted into caching AND did not send
 /// the per-request `cache: {"no-cache": true}` directive that skips the
-/// lookup (LiteLLM `caching_handler.py:184`).
+/// lookup (the reference `caching_handler.py:184`).
 pub fn request_allows_cache_lookup(request: &Value) -> bool {
     request_wants_cache(request) && !cache_flag(request, "no-cache")
 }
@@ -364,13 +364,13 @@ pub fn request_allows_cache_lookup(request: &Value) -> bool {
 /// Returns true when the cache **write** path (`post_success` store) may run
 /// for this request: the caller opted into caching AND did not send the
 /// per-request `cache: {"no-store": true}` directive that skips the store
-/// (LiteLLM `caching_handler.py:1045`).
+/// (the reference `caching_handler.py:1045`).
 pub fn request_allows_cache_store(request: &Value) -> bool {
     request_wants_cache(request) && !cache_flag(request, "no-store")
 }
 
 /// Enforce the per-key `allowed_cache_controls` allowlist against every key
-/// in the request's `cache:` object, mirroring LiteLLM's
+/// in the request's `cache:` object, mirroring the reference
 /// `_PROXY_CacheControlCheck`. A non-empty `Some` allowlist rejects any
 /// `cache:` key not on it; `None` means unrestricted, an empty list allows no
 /// explicit controls. Master
@@ -808,7 +808,7 @@ mod tests {
     /// LOW: only canonical JSON booleans opt into caching. Truthy non-boolean
     /// values (e.g. `"yes"`, `1`) are treated as not opting in — a
     /// conservative posture that prevents loosely-typed clients from
-    /// triggering unexpected cache behaviour, diverging from LiteLLM's proxy
+    /// triggering unexpected cache behaviour, diverging from the reference proxy
     /// layer (which coerces truthy values) only for non-canonical input.
     #[test]
     fn request_wants_cache_rejects_non_boolean_insert() {
@@ -1096,7 +1096,7 @@ mod tests {
 
     /// `cache: {"insert": true, "no-cache": true}` opts into caching (so the
     /// store path still runs) but must NOT short-circuit the lookup on
-    /// `pre_call` even when the key is seeded — LiteLLM `caching_handler.py:184`.
+    /// `pre_call` even when the key is seeded — the reference `caching_handler.py:184`.
     #[tokio::test]
     async fn no_cache_directive_skips_lookup_but_keeps_store() {
         let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::default());
@@ -1147,7 +1147,7 @@ mod tests {
     }
 
     /// `cache: {"insert": true, "no-store": true}` must consult the cache on
-    /// `pre_call` but must NOT write a new entry on `post_success` — LiteLLM
+    /// `pre_call` but must NOT write a new entry on `post_success` — the reference
     /// `caching_handler.py:1045`.
     #[tokio::test]
     async fn no_store_directive_skips_store_but_keeps_lookup() {

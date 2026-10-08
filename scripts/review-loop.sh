@@ -61,9 +61,9 @@ FINDINGS_DIR="$REPO/.review/findings"
 LOG_DIR="$REPO/.review/logs"
 METRICS_FILE="$REPO/.review/metrics.tsv"
 METRICS_PY="$SCRIPT_DIR/review-metrics.py"
-# LiteLLM upstream clone (sibling) — the authoritative reference for behavior.
+# Upstream clone (sibling) — the authoritative reference for behavior.
 # `|| true` keeps `set -e` from killing the script on machines with no sibling
-# litellm clone (the `[ -z … ] &&` fallback below then supplies a placeholder).
+# upstream clone (the `[ -z … ] &&` fallback below then supplies a placeholder).
 LITELLM_PATH="$(cd "$REPO/../litellm" 2>/dev/null && pwd || true)"
 [ -z "$LITELLM_PATH" ] && LITELLM_PATH="(no local LiteLLM clone — use the curated docs + web/context7 lookup)"
 mkdir -p "$FINDINGS_DIR" "$LOG_DIR"

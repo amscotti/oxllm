@@ -221,7 +221,7 @@ fn supported_params_excludes_perplexity_unsupported() {
     // Perplexity's Sonar/pplx models reject these OpenAI-platform fields with a
     // 400; the published supported_params list must exclude them so the host's
     // `drop_params` mechanism strips them before they reach the upstream
-    // (parity with LiteLLM's PerplexityChatConfig.get_supported_openai_params).
+    // (parity with the reference Perplexity supported-param list).
     // `tools`/`tool_choice` are NOT in this exclusion set: sonar-pro supports
     // function calling (verified live 2026-08).
     let p = PerplexityProvider;
@@ -305,7 +305,7 @@ fn drop_params_strips_perplexity_unsupported_before_transform() {
 fn transform_request_drops_perplexity_unsupported_newer_params() {
     // Perplexity's narrowed `supported_params` is honored by
     // `build_chat_request_with_params`, so these OpenAI-platform fields are
-    // dropped at transform time (parity with LiteLLM's
+    // dropped at transform time (parity with the reference
     // `PerplexityChatConfig.get_supported_openai_params`, which excludes them).
     let p = PerplexityProvider;
     let req = json!({
@@ -338,7 +338,7 @@ fn transform_request_drops_perplexity_unsupported_newer_params() {
     assert_eq!(out["model"], "sonar-reasoning");
 }
 
-// --- Additional request parameter tests (ported from LiteLLM test_optional_params.py) ---
+// --- Additional request parameter tests (ported from the reference optional-param tests) ---
 
 #[test]
 fn request_preserves_response_format_json_object() {
@@ -377,7 +377,7 @@ fn request_preserves_response_format_json_schema() {
 #[test]
 fn request_drops_seed() {
     // `seed` is not in Perplexity's supported_params, so the transform must
-    // drop it (parity with LiteLLM's PerplexityChatConfig).
+    // drop it (parity with the reference Perplexity config).
     let p = PerplexityProvider;
     let req = json!({
         "model": "perplexity/sonar-reasoning",
@@ -481,7 +481,7 @@ fn request_drops_parallel_tool_calls() {
 #[test]
 fn request_drops_stop_sequence_array() {
     // `stop` is not in Perplexity's supported_params, so the transform must
-    // drop it (parity with LiteLLM's PerplexityChatConfig).
+    // drop it (parity with the reference Perplexity config).
     let p = PerplexityProvider;
     let req = json!({
         "model": "perplexity/sonar-reasoning",

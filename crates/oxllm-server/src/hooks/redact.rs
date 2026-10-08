@@ -27,7 +27,7 @@ use serde_json::Value;
 
 /// HTTP-header-style keys whose values are stripped from logged request and
 /// response bodies before being sent to any external telemetry backend. The
-/// list covers the credential-bearing field names that LiteLLM-equivalent
+/// list covers the credential-bearing field names that gateway-compatible
 /// agent / tool-using workloads routinely embed in structured prompts (config
 /// objects, tool I/O, bearer-token challenge responses, ...). Matching is
 /// exact (case-insensitive) on the object KEY only — values are never

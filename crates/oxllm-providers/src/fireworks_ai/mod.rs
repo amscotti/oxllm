@@ -8,7 +8,7 @@
 //! stream parsing and the supported-params list are delegated to the shared
 //! [`OpenAiCompatProvider`] engine. Fireworks diverges on a few request-shape
 //! points that the wrapper applies on top of the shared body builder (parity
-//! with LiteLLM's `FireworksAIConfig`):
+//! with the reference `FireworksAIConfig`):
 //!
 //! - **Model name auto-prefixed**: the Fireworks API expects model names in
 //!   the form `accounts/fireworks/models/<model>` (or
@@ -72,7 +72,7 @@ pub fn strip_fireworks_ai_prefix(model: &str) -> &str {
 /// `accounts/fireworks/routers/` for `-fast` suffixed models); names already
 /// carrying the `accounts/` path, a `#` deployment separator, or a `/` (e.g.
 /// a cross-provider wildcard like `openai/gpt-4o`) are forwarded unchanged.
-/// Parity with LiteLLM's `FireworksAIConfig.transform_request`, with an added
+/// Parity with the reference Fireworks request transform, with an added
 /// `/` guard so cross-provider wildcard resolution is not mangled.
 fn resolve_fireworks_model(model: &str) -> String {
     if model.starts_with("accounts/") || model.contains('#') || model.contains('/') {
@@ -99,7 +99,7 @@ fn apply_fireworks_request_transforms(out: &mut Value) {
     strip_strict_from_tools(out);
 }
 
-/// Rewrite `tool_choice: "required"` → `"any"` (parity with LiteLLM's
+/// Rewrite `tool_choice: "required"` → `"any"` (parity with the reference
 /// `FireworksAIConfig.map_openai_params`). Fireworks uses `"any"` to force
 /// tool calling and rejects the OpenAI `"required"` value with a 400.
 fn map_tool_choice_required_to_any(out: &mut Value) {
@@ -113,7 +113,7 @@ fn map_tool_choice_required_to_any(out: &mut Value) {
 }
 
 /// Inject `stream_options.include_usage = true` when `stream` is set and the
-/// caller has not explicitly disabled usage reporting (parity with LiteLLM's
+/// caller has not explicitly disabled usage reporting (parity with the reference
 /// `FireworksAIConfig.transform_request`). Without this, Fireworks streaming
 /// responses carry no usage data, producing zero-cost streams.
 fn ensure_stream_usage(out: &mut Value) {
@@ -141,7 +141,7 @@ fn ensure_stream_usage(out: &mut Value) {
 }
 
 /// Remove the `strict` flag from each tool's `function` object (parity with
-/// LiteLLM's `FireworksAIConfig._transform_tools`). Fireworks rejects the
+/// the reference Fireworks tool transform). Fireworks rejects the
 /// OpenAI structured-outputs `strict` field on tool function definitions.
 fn strip_strict_from_tools(out: &mut Value) {
     let Some(tools) = out.get_mut("tools").and_then(|v| v.as_array_mut()) else {

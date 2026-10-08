@@ -232,7 +232,7 @@ fn transform_request_claude_injects_anthropic_version() {
     });
     let out = ChatProvider::transform_request(&PROVIDER, &req, &dep).expect("ok");
     assert_eq!(out["anthropic_version"], VERTEX_ANTHROPIC_VERSION);
-    // Vertex `:rawPredict` rejects a top-level `model` field — LiteLLM pops
+    // Vertex `:rawPredict` rejects a top-level `model` field — the reference pops
     // it (`transformation.py:102`) and encodes the model in the URL path.
     assert!(
         out.get("model").is_none(),
@@ -242,7 +242,7 @@ fn transform_request_claude_injects_anthropic_version() {
     assert!(out.get("system").is_none());
 }
 
-/// Directly pins LiteLLM's `data.pop("model", None)` contract
+/// Directly pins the reference `data.pop("model", None)` contract
 /// (`test_vertex_ai_partner_models_anthropic_transformation.py:307,665`):
 /// the transformed Vertex Anthropic body must not carry a top-level `model`
 /// key, regardless of how the model id was supplied.
@@ -956,10 +956,10 @@ fn transform_request_wildcard_accepts_valid_model_ids() {
 }
 
 // ---------------------------------------------------------------------------
-// anthropic_beta body field — Vertex Claude LiteLLM parity (LOW)
+// anthropic_beta body field — Vertex Claude reference parity (LOW)
 // ---------------------------------------------------------------------------
 
-/// LiteLLM's `VertexAIAnthropicConfig.transform_request` mirrors the computed
+/// The reference Vertex Anthropic transform mirrors the computed
 /// beta set into the request body as `anthropic_beta` (Vertex's `:rawPredict`
 /// reads the body, not the `anthropic-beta` header, for feature-gated knobs).
 /// The host only computes beta headers for the direct `anthropic` provider, so
@@ -991,7 +991,7 @@ fn transform_request_claude_injects_anthropic_beta_body_field() {
 }
 
 /// When no beta-tagged feature is requested, `anthropic_beta` must be absent
-/// (LiteLLM only adds the field when the set is non-empty).
+/// (the reference only adds the field when the set is non-empty).
 #[test]
 fn transform_request_claude_omits_anthropic_beta_when_no_beta_feature() {
     let dep = make_deployment_with_extra(

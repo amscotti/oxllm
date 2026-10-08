@@ -262,11 +262,9 @@ async fn malformed_oversized_and_nonregular_files_fail_with_redacted_errors() {
     );
 }
 
-/// Renewable Google credentials are cached until the skew-adjusted refresh
-/// deadline, re-exchanged once past it, and a failed re-exchange surfaces the
-/// upstream error. Returning the previous bearer after a failed refresh would
-/// silently 401 downstream; refreshing early or never both fail the
-/// hit-count/bearer assertions.
+/// Google renewal starts at half TTL without a new inference request. Failed
+/// renewal preserves the still-valid bearer, then surfaces the failure once
+/// that bearer is no longer usable.
 #[tokio::test]
 async fn renewable_token_is_cached_then_refreshed_and_a_failed_refresh_surfaces() {
     let server = MockServer::start_async().await;
@@ -289,10 +287,6 @@ async fn renewable_token_is_cached_then_refreshed_and_a_failed_refresh_surfaces(
     }
     first.assert_hits_async(1).await;
     first.delete_async().await;
-    // Lifetime 10 s → 1 s skew; advance past the deadline to force a refresh.
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(10)).await;
-    tokio::time::resume();
     let second = server
         .mock_async(|when, then| {
             when.method(POST)
@@ -302,23 +296,95 @@ async fn renewable_token_is_cached_then_refreshed_and_a_failed_refresh_surfaces(
                 .json_body(json!({"access_token": "second-access", "expires_in": 10}));
         })
         .await;
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(5)).await;
+    tokio::time::resume();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while second.hits_async().await == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        while resolver.resolve(&dep).await.unwrap().best_effort_bearer() != Some("second-access") {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(
         resolver.resolve(&dep).await.unwrap().best_effort_bearer(),
         Some("second-access")
     );
     second.assert_hits_async(1).await;
     second.delete_async().await;
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(10)).await;
-    tokio::time::resume();
     let failing = server
         .mock_async(|when, then| {
             when.method(POST).path("/token");
             then.status(401);
         })
         .await;
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(5)).await;
+    tokio::time::resume();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while failing.hits_async().await == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        resolver.resolve(&dep).await.unwrap().best_effort_bearer(),
+        Some("second-access")
+    );
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(5)).await;
+    tokio::time::resume();
     let error = resolver.resolve(&dep).await.unwrap_err();
     assert!(matches!(error, Error::Upstream { status: 401, .. }));
     assert!(!error.to_string().contains("second-access"));
-    failing.assert_hits_async(1).await;
+    assert!(failing.hits_async().await >= 1);
+}
+
+#[tokio::test]
+async fn inline_credential_env_is_exchanged_and_explicit_tokens_still_win() {
+    let server = MockServer::start_async().await;
+    let token = server
+        .mock_async(|when, then| {
+            when.method(POST).path("/token");
+            then.status(200)
+                .json_body(json!({"access_token": "inline-access", "expires_in": 3600}));
+        })
+        .await;
+    for variable in [
+        "VERTEX_AI_CREDENTIALS_JSON",
+        "LITELLM_VERTEX_AI_CREDENTIALS",
+    ] {
+        let credentials = authorized_user("inline-refresh").to_string();
+        let mut resolver = resolver(&server);
+        resolver.env_lookup = Arc::new(move |name| (name == variable).then(|| credentials.clone()));
+        assert_eq!(
+            resolver
+                .resolve(&deployment(None))
+                .await
+                .unwrap()
+                .best_effort_bearer(),
+            Some("inline-access")
+        );
+    }
+    token.assert_hits_async(2).await;
+    let mut resolver = resolver(&server);
+    resolver.env_lookup = Arc::new(|name| match name {
+        "GCP_ACCESS_TOKEN" => Some("explicit-access".into()),
+        "GOOGLE_APPLICATION_CREDENTIALS" => Some("missing-file".into()),
+        "VERTEX_AI_CREDENTIALS_JSON" => Some("invalid-json".into()),
+        _ => None,
+    });
+    assert_eq!(
+        resolver
+            .resolve(&deployment(None))
+            .await
+            .unwrap()
+            .best_effort_bearer(),
+        Some("explicit-access")
+    );
+    token.assert_hits_async(2).await;
 }

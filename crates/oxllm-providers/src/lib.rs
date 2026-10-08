@@ -62,6 +62,9 @@ pub mod cohere;
 #[cfg(feature = "azure")]
 pub mod azure;
 
+#[cfg(feature = "azure_ai")]
+pub mod azure_ai;
+
 #[cfg(feature = "bedrock")]
 pub mod bedrock;
 
@@ -163,6 +166,8 @@ pub fn default_registry() -> ProviderRegistry {
     registry.register("cohere", Arc::new(cohere::CohereProvider));
     #[cfg(feature = "azure")]
     registry.register("azure", Arc::new(azure::AzureProvider));
+    #[cfg(feature = "azure_ai")]
+    registry.register("azure_ai", Arc::new(azure_ai::AzureAiProvider));
     #[cfg(feature = "bedrock")]
     registry.register("bedrock", Arc::new(bedrock::BedrockProvider));
     #[cfg(feature = "vertex_ai")]
@@ -294,6 +299,7 @@ mod tests {
         check!("mistral", "mistral");
         check!("cohere", "cohere");
         check!("azure", "azure");
+        check!("azure_ai", "azure_ai");
         check!("bedrock", "bedrock");
         check!("vertex_ai", "vertex_ai");
         check!("databricks", "databricks");
@@ -349,6 +355,7 @@ mod tests {
         count!("mistral");
         count!("cohere");
         count!("azure");
+        count!("azure_ai");
         count!("bedrock");
         count!("vertex_ai");
         count!("databricks");

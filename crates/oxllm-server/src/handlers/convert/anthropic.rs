@@ -597,7 +597,7 @@ fn map_openai_finish_to_anthropic(reason: &str) -> String {
         "stop" => "end_turn".to_string(),
         "tool_calls" => "tool_use".to_string(),
         "length" => "max_tokens".to_string(),
-        // LiteLLM's `_FINISH_REASON_MAP` maps Anthropic `"refusal"` ↔ OpenAI
+        // The reference finish-reason map maps Anthropic `"refusal"` ↔ OpenAI
         // `"content_filter"` bidirectionally; the reverse mapping restores
         // `content_filter`/`refusal` → `refusal` so an Anthropic SDK client
         // can distinguish a safety intervention from a natural stop.
@@ -614,7 +614,7 @@ fn map_openai_finish_to_anthropic(reason: &str) -> String {
 /// (`message_start` or `message_delta`), including the cache-token fields
 /// when they are non-zero. Anthropic SDK clients rely on
 /// `cache_read_input_tokens` / `cache_creation_input_tokens` for cache
-/// accounting; LiteLLM preserves them end-to-end.
+/// accounting; the reference preserves them end-to-end.
 fn build_anthropic_streaming_usage(
     input_tokens: u64,
     output_tokens: u64,
@@ -1482,7 +1482,7 @@ mod tests {
         assert_eq!(map_openai_finish_to_anthropic("unknown"), "end_turn");
         // C24 LOW: content_filter / refusal must map to Anthropic "refusal",
         // not the catch-all "end_turn", so a safety intervention is
-        // distinguishable from a natural stop (LiteLLM `_FINISH_REASON_MAP`).
+        // distinguishable from a natural stop (reference finish-reason mapping).
         assert_eq!(map_openai_finish_to_anthropic("content_filter"), "refusal");
         assert_eq!(map_openai_finish_to_anthropic("refusal"), "refusal");
     }

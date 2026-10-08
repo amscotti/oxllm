@@ -58,7 +58,7 @@ pub struct TeamRecord {
     /// JSON-encoded array of allowed model patterns. `None`/empty = all allowed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models: Option<String>,
-    /// Whether the team is administratively blocked. Mirrors LiteLLM's
+    /// Whether the team is administratively blocked. Mirrors the reference
     /// `team.blocked`: when `true`, every key in the team is rejected at auth
     /// time regardless of the key's own `is_active` flag, so `/team/unblock`
     /// never clobbers individually-blocked keys.
@@ -379,9 +379,9 @@ pub struct SpendByOrg {
     pub total_requests: i64,
 }
 
-/// An end-user / customer row (`LiteLLM_EndUserTable` equivalent).
+/// An end-user / customer row.
 ///
-/// Tracked by the OpenAI request body `"user"` field (LiteLLM `end_user_id`).
+/// Tracked by the OpenAI request body `"user"` field (legacy `end_user_id`).
 /// Hot-path enforcement (when a DB is configured):
 /// - `blocked` → 403 at pipeline entry
 /// - `model_blocklist` → 403 when the requested model matches a pattern

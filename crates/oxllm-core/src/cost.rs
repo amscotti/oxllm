@@ -75,13 +75,14 @@ const PRICE_SHARDS: &[(&str, &str)] = &[
 /// to `input_cost_per_token` when `None` (after table inheritance — see
 /// [`OxllmParams::pricing_override`](crate::deployment::OxllmParams::pricing_override)).
 ///
-/// Overrides are **flat-rate**: they bypass context-length tiering, matching
-/// LiteLLM's `_cost_per_token_custom_pricing_helper`, which applies custom
-/// pricing uniformly without consulting `*_above_<N>k_tokens` tiers. A
-/// deployment override on a tiered model (e.g. `gpt-5.6`,
-/// `claude-sonnet-4-20250514`) therefore bills long-context requests at the
-/// flat override rate even above the tier threshold — an intentional parity
-/// choice, not a bug.
+/// An override with an empty [`DeploymentPricing::tiers`] list is flat: it
+/// bypasses the price table's context-length tiers. Tier keys parsed from
+/// the deployment (`input_cost_per_token_above_272k_tokens` and the other
+/// `*_above_*_tokens` spellings) fill `tiers`. Those rates apply to every
+/// token type once the prompt is past the threshold. The boundary is
+/// exclusive unless [`DeploymentPricing::tier_threshold_is_inclusive`] is
+/// set: 272_000 stays on the base rate and 272_001 uses the tier. A `None`
+/// tier rate falls back to the override's base rate.
 ///
 /// Duration overrides (`cost_per_second`, `input_cost_per_second`, or
 /// `output_cost_per_second`)
@@ -111,7 +112,7 @@ pub struct DeploymentPricing {
     /// of `completion_tokens`.
     pub output_cost_per_reasoning_token: Option<f64>,
     /// Cost per cache-creation input token in the 1h ephemeral bucket.
-    /// Populated by table inheritance (LiteLLM's
+    /// Populated by table inheritance (the
     /// `_inherit_builtin_cache_pricing` back-fills the 1h rate alongside
     /// the 5m rates); falls back to `cache_creation_input_token_cost` (then
     /// the input rate) when `None`.
@@ -126,6 +127,13 @@ pub struct DeploymentPricing {
     /// Legacy duration rate used only when both the canonical and input
     /// duration rates are unset. The same elapsed time is billed once.
     pub output_cost_per_second: Option<f64>,
+    /// Context-length tiers parsed from the deployment's `*_above_*_tokens`
+    /// keys, highest threshold first. Empty means the override is flat and
+    /// ignores table tiers.
+    pub tiers: Vec<CostTier>,
+    /// When true, a prompt whose size equals `threshold_tokens` uses the
+    /// tier. Deployment overrides default to exclusive (`false`).
+    pub tier_threshold_is_inclusive: bool,
 }
 
 impl DeploymentPricing {
@@ -138,6 +146,7 @@ impl DeploymentPricing {
             || self.input_cost_per_second.is_some()
             || self.output_cost_per_second.is_some();
         duration_rate
+            && self.tiers.is_empty()
             && self.input_cost_per_token == 0.0
             && self.output_cost_per_token == 0.0
             && self.cache_read_input_token_cost.is_none()
@@ -207,12 +216,12 @@ struct ModelPricingRow {
     prompt_cache_min_tokens: Option<u32>,
 }
 
-/// One context-length pricing tier for a model, mirroring LiteLLM's
+/// One context-length pricing tier for a model, using the
 /// `input_cost_per_token_above_<N>k_tokens` convention: when a request's
 /// prompt exceeds `threshold_tokens`, the tier's rates apply for ALL token
 /// types (input, output, and cache). Rates that are `None` in the tier fall
 /// back to the model's base rates.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct CostTier {
     /// Prompt-token count above which this tier's rates apply (e.g. 200000).
     pub threshold_tokens: u32,
@@ -229,7 +238,7 @@ pub struct CostTier {
     /// back to the base rate.
     pub cache_creation_input_token_cost: Option<f64>,
     /// 1h-ephemeral cache-creation rate that applies above the threshold
-    /// (LiteLLM `cache_creation_input_token_cost_above_1hr_above_<N>k_tokens`).
+    /// (`cache_creation_input_token_cost_above_1hr_above_<N>k_tokens`).
     /// `None` falls back to the base 1h rate.
     pub cache_creation_input_token_cost_above_1hr: Option<f64>,
 }
@@ -249,7 +258,7 @@ pub struct ModelPricing {
     pub cache_creation_input_token_cost: Option<f64>,
     /// Cost per cache-creation input token with 1h ephemeral TTL (Anthropic
     /// `usage.cache_creation.ephemeral_1h_input_tokens`). `None` means the
-    /// 1h bucket bills at 0.0 (free), matching LiteLLM's
+    /// 1h bucket bills at 0.0 (free), matching the catalog's
     /// `_get_cost_per_unit` default; only models that explicitly declare
     /// this rate bill 1h tokens.
     pub cache_creation_input_token_cost_above_1hr: Option<f64>,
@@ -287,7 +296,7 @@ pub struct ModelPricing {
     /// Whether tier thresholds are INCLUSIVE (`>=`): xAI bills the tier rate
     /// once the context REACHES the threshold, while every other provider
     /// prices tiers as "more than N tokens" (exclusive `>`). Mirrors
-    /// LiteLLM's `_INCLUSIVE_THRESHOLD_PROVIDERS = {"xai"}` /
+    /// the reference `_INCLUSIVE_THRESHOLD_PROVIDERS = {"xai"}` /
     /// `_uses_inclusive_token_thresholds(custom_llm_provider)`.
     pub tier_threshold_is_inclusive: bool,
     /// Resolved service-specific prices. Missing fields inherit the standard
@@ -327,7 +336,7 @@ impl ModelPricing {
     /// Resolve the effective per-token rates for a request, applying
     /// context-length tier selection.
     ///
-    /// Tier selection mirrors LiteLLM's `_get_token_base_cost`: when the
+    /// Tier selection follows `_get_token_base_cost` semantics: when the
     /// prompt exceeds a tier's threshold, that tier's rates replace the base
     /// rates for all token types, and the highest threshold exceeded wins
     /// (tiers are pre-sorted descending). Rates absent from the tier fall
@@ -335,7 +344,7 @@ impl ModelPricing {
     ///
     /// The boundary is EXCLUSIVE (`>`) for every provider except xAI, whose
     /// rows set [`ModelPricing::tier_threshold_is_inclusive`] so the tier
-    /// rate applies at `>=` the threshold — mirroring LiteLLM's
+    /// rate applies at `>=` the threshold — mirroring the reference
     /// `_uses_inclusive_token_thresholds` gating on
     /// `_INCLUSIVE_THRESHOLD_PROVIDERS = {"xai"}`. Providers price the
     /// boundary as "more than 200K tokens" (Gemini/OpenAI docs), so a
@@ -347,7 +356,7 @@ impl ModelPricing {
     /// normalises cache-creation to be ADDITIVE (the extraction layer
     /// subtracts the OpenAI subset form out of `prompt_tokens` and leaves
     /// Anthropic's additive form outside it), so this sum is the billable
-    /// context size — the same value LiteLLM compares, whose Anthropic
+    /// context size — the same value the reference compares, whose Anthropic
     /// transformation folds BOTH `cache_creation_input_tokens` and
     /// `cache_read_input_tokens` onto `prompt_tokens` before cost lookup.
     /// Cache-read tokens are already inside `prompt_tokens` (subset
@@ -361,7 +370,7 @@ impl ModelPricing {
     /// `input_cost_per_audio_token` bills those buckets at **0.0**. Fireworks
     /// is the exception: a missing cache-read rate bills at half the base
     /// input rate. This deliberately differs from the [`DeploymentPricing`]
-    /// override path (which falls back to the input rate, matching LiteLLM's
+    /// override path (which falls back to the input rate, matching the reference
     /// `_cost_per_token_custom_pricing_helper`). Reasoning tokens fall back
     /// to the output rate on both paths.
     ///
@@ -486,7 +495,7 @@ pub struct TokenRates {
 
 impl TokenRates {
     /// Resolve the rates for a deployment pricing override. Mirrors
-    /// LiteLLM's `_cost_per_token_custom_pricing_helper`: cache rates fall
+    /// the custom-pricing helper: cache rates fall
     /// back to the input rate, and reasoning to the output rate (the 1h
     /// cache-creation rate first falls back to the 5m rate). Overrides
     /// carry no per-bucket audio rate, so audio bills at the input rate.
@@ -507,6 +516,48 @@ impl TokenRates {
             citation: 0.0,
             search_query: 0.0,
         }
+    }
+
+    /// Like [`Self::from_override`], after applying the first deployment
+    /// tier whose threshold the prompt has passed. Thresholds are exclusive
+    /// unless `tier_threshold_is_inclusive` is set. A `None` tier rate keeps
+    /// the override base, then the same cache-to-input fallback applies.
+    fn from_override_for_usage(dp: &DeploymentPricing, usage: &UsageSummary) -> Self {
+        if dp.tiers.is_empty() {
+            return Self::from_override(dp);
+        }
+        let context = usage.prompt_tokens.saturating_add(
+            usage
+                .cache_creation_input_tokens
+                .unwrap_or_else(|| usage.cache_creation_1h_input_tokens.unwrap_or(0)),
+        );
+        let mut priced = dp.clone();
+        for tier in &dp.tiers {
+            let threshold = tier.threshold_tokens as u64;
+            let exceeded =
+                context > threshold || (dp.tier_threshold_is_inclusive && context == threshold);
+            if !exceeded {
+                continue;
+            }
+            if let Some(rate) = tier.input_cost_per_token {
+                priced.input_cost_per_token = rate;
+            }
+            if let Some(rate) = tier.output_cost_per_token {
+                priced.output_cost_per_token = rate;
+            }
+            if tier.cache_read_input_token_cost.is_some() {
+                priced.cache_read_input_token_cost = tier.cache_read_input_token_cost;
+            }
+            if tier.cache_creation_input_token_cost.is_some() {
+                priced.cache_creation_input_token_cost = tier.cache_creation_input_token_cost;
+            }
+            if tier.cache_creation_input_token_cost_above_1hr.is_some() {
+                priced.cache_creation_input_token_cost_above_1hr =
+                    tier.cache_creation_input_token_cost_above_1hr;
+            }
+            break;
+        }
+        Self::from_override(&priced)
     }
 }
 
@@ -555,8 +606,8 @@ fn parse_provider_prices(provider: &str, raw: &str) -> HashMap<String, ModelPric
 }
 
 /// Base rate fields that can carry a context-length tier, mirroring
-/// LiteLLM's `input_cost_per_token_above_<N>k_tokens` key convention. The
-/// `cache_creation_input_token_cost_above_1hr` entry covers LiteLLM's
+/// the `input_cost_per_token_above_<N>k_tokens` key convention. The
+/// `cache_creation_input_token_cost_above_1hr` entry covers the catalog's
 /// combined `cache_creation_input_token_cost_above_1hr_above_<N>k_tokens`
 /// shape (see [`parse_threshold_key`]).
 const TIER_BASE_FIELDS: &[&str] = &[
@@ -571,7 +622,7 @@ const TIER_BASE_FIELDS: &[&str] = &[
 /// (`2000000`), or a numeric string (`"1e-5"`). Serde coerces integers to
 /// `f64` for the base row fields, so the tier path must accept both too —
 /// otherwise a rate written without a decimal point silently drops the entire
-/// tier. Accepting numeric strings mirrors LiteLLM's `_get_cost_per_unit`,
+/// tier. Accepting numeric strings mirrors the reference `_get_cost_per_unit`,
 /// which coerces strings via `float(...)` (its config loader sometimes emits
 /// rates as strings). A non-numeric string still returns `None` so that such
 /// a key is skipped instead of poisoning the sibling tier rates.
@@ -598,9 +649,9 @@ fn looks_like_tier_key(key: &str) -> bool {
 /// Parse `_above_<N>k_tokens` (or `_above_<N>_tokens`) suffix keys out of a
 /// model's raw TOML table into [`CostTier`]s. Tiers are returned sorted by
 /// threshold descending (highest threshold first) so the selection loop can
-/// take the first match, exactly like LiteLLM's `_get_token_base_cost`.
+/// take the first match, exactly like the reference `_get_token_base_cost`.
 ///
-/// Deliberate divergence from LiteLLM: LiteLLM decides whether a model has
+/// Deliberate divergence from the reference: it decides whether a model has
 /// tiered pricing by scanning *only* `input_cost_per_token_above_*` keys
 /// (its `threshold_keys` early-return in `_get_token_base_cost`); a model
 /// declaring only `output_cost_per_token_above_*` never tiers there. oxllm
@@ -709,6 +760,82 @@ fn parse_threshold_key(key: &str) -> Option<(&str, u32)> {
     };
     let n: u32 = num.parse().ok()?;
     Some((base, n.saturating_mul(scale)))
+}
+
+/// How an `oxllm_params.extra` key relates to context-tier pricing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtraTierKeyClass {
+    /// Not a context-tier key.
+    NotTier,
+    /// Parses as a known tier rate field.
+    Parsed,
+    /// Looks like a tier key but does not parse, or parses to an unknown field.
+    Malformed,
+}
+
+/// Classify one flattened deployment key. Malformed keys are warned at load
+/// and are not billed.
+pub fn classify_extra_tier_key(key: &str) -> ExtraTierKeyClass {
+    match parse_threshold_key(key) {
+        Some((base, threshold))
+            if TIER_BASE_FIELDS.contains(&base)
+                && !(threshold == u32::MAX && key.ends_with("k_tokens")) =>
+        {
+            ExtraTierKeyClass::Parsed
+        }
+        Some(_) if looks_like_tier_key(key) => ExtraTierKeyClass::Malformed,
+        None if looks_like_tier_key(key) => ExtraTierKeyClass::Malformed,
+        _ => ExtraTierKeyClass::NotTier,
+    }
+}
+
+fn json_tier_rate(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
+        .filter(|rate| rate.is_finite())
+}
+
+/// Build deployment context tiers from flattened `*_above_*_tokens` keys.
+/// Highest threshold first. Non-numeric rates are skipped; load-time
+/// validation warns about those separately.
+pub fn cost_tiers_from_extra(extra: &serde_json::Map<String, serde_json::Value>) -> Vec<CostTier> {
+    let mut tiers: Vec<CostTier> = Vec::new();
+    for (key, value) in extra {
+        if classify_extra_tier_key(key) != ExtraTierKeyClass::Parsed {
+            continue;
+        }
+        let Some((base, threshold)) = parse_threshold_key(key) else {
+            continue;
+        };
+        if !TIER_BASE_FIELDS.contains(&base) {
+            continue;
+        }
+        let Some(rate) = json_tier_rate(value) else {
+            continue;
+        };
+        if let Some(tier) = tiers.iter_mut().find(|t| t.threshold_tokens == threshold) {
+            set_tier_rate(tier, base, rate);
+        } else {
+            let mut tier = CostTier {
+                threshold_tokens: threshold,
+                input_cost_per_token: None,
+                output_cost_per_token: None,
+                cache_read_input_token_cost: None,
+                cache_creation_input_token_cost: None,
+                cache_creation_input_token_cost_above_1hr: None,
+            };
+            set_tier_rate(&mut tier, base, rate);
+            tiers.push(tier);
+        }
+    }
+    tiers.sort_by_key(|t| std::cmp::Reverse(t.threshold_tokens));
+    tiers
+}
+
+/// True when a parsed tier key's JSON value is not a finite number.
+pub fn extra_tier_rate_is_non_numeric(key: &str, value: &serde_json::Value) -> bool {
+    classify_extra_tier_key(key) == ExtraTierKeyClass::Parsed && json_tier_rate(value).is_none()
 }
 
 /// Load and merge every embedded provider shard.
@@ -1036,7 +1163,7 @@ fn cost_from_pricing(pricing: &ModelPricing, usage: &UsageSummary) -> Option<f64
 ///   them as a subset of `prompt_tokens`).
 ///
 /// On the price-table path, a model entry that declares no cache-read,
-/// cache-creation, or audio rate bills those buckets at 0.0 (LiteLLM's
+/// cache-creation, or audio rate bills those buckets at 0.0 (the reference
 /// `_get_cost_per_unit` default), so cached/audio tokens are free for such a
 /// model.
 pub fn calculate_cost(model: &str, usage: &UsageSummary) -> Option<f64> {
@@ -1082,9 +1209,11 @@ pub fn calculate_cost_with_override(
 /// (e.g. `"gemini"`) from the billing path; an empty string reproduces the
 /// legacy provider-agnostic behaviour exactly.
 ///
-/// When an override IS set, it is applied **flat-rate** — context-length
-/// tiers on the matched model are ignored, matching LiteLLM's custom-pricing
-/// helper. See [`DeploymentPricing`] for the rationale.
+/// When an override is set and its `tiers` list is empty, it is applied
+/// flat and the matched model's context-length tiers are ignored. Tiers
+/// parsed onto the override are selected the same way as table tiers, with
+/// an exclusive threshold unless the override says otherwise. See
+/// [`DeploymentPricing`].
 pub fn calculate_cost_with_override_for_provider(
     model: &str,
     usage: &UsageSummary,
@@ -1095,8 +1224,9 @@ pub fn calculate_cost_with_override_for_provider(
 }
 
 /// Provider-aware cost calculation with service-specific and context-length
-/// pricing. Deployment overrides remain flat and take precedence over table
-/// prices. An absent or unpriced service tier uses standard rates. The
+/// pricing. A deployment override takes precedence over table prices. An
+/// override with no tier keys stays flat. An absent or unpriced service
+/// tier uses standard rates. The
 /// `"batches"` selector uses published batch rates, or existing flex rates for
 /// Gemini/Vertex when no separate batch entry exists; no extra discount is
 /// applied. Use [`resolve_service_tier`] to distinguish served batch metadata
@@ -1118,7 +1248,10 @@ pub fn calculate_cost_for_service_tier(
             );
             return None;
         }
-        Some(cost_from_rates(usage, TokenRates::from_override(dp)))
+        Some(cost_from_rates(
+            usage,
+            TokenRates::from_override_for_usage(dp, usage),
+        ))
     } else {
         let pricing = lookup_pricing_with_provider(model, provider)?;
         cost_from_pricing(
@@ -1171,7 +1304,7 @@ fn cost_from_rates(usage: &UsageSummary, rates: TokenRates) -> f64 {
     let cache_creation_1h_raw = usage.cache_creation_1h_input_tokens.unwrap_or(0);
     // When the aggregate cache-creation count is present, clamp the 1h detail
     // to it so inconsistent provider data can never over-bill. When the
-    // aggregate is ABSENT, bill the 1h detail directly — matching LiteLLM's
+    // aggregate is ABSENT, bill the 1h detail directly — matching the reference
     // `calculate_cache_writing_cost`, which uses the detail fields directly
     // when `cache_creation_token_details` is present and ignores the
     // aggregate. Treating the 1h detail as the effective total in that case
@@ -1401,7 +1534,7 @@ mod tests {
         assert_eq!(strip_provider_prefix("foo/"), "foo/");
     }
 
-    /// LiteLLM: `openai/openai/<model>` deployment ids should still resolve pricing.
+    /// Nested `openai/openai/<model>` deployment ids should still resolve pricing.
     #[test]
     fn lookup_pricing_strips_leading_openai_prefix() {
         let bare = lookup_pricing("gpt-4o-mini").expect("bare model");
@@ -1584,7 +1717,7 @@ output_cost_per_token = 0.00001
 
     /// The six rows that previously failed schema validation (missing the
     /// then-required `output_cost_per_token`) must resolve and accrue spend:
-    /// the mistral embeddings bill input-only (LiteLLM carries no output rate
+    /// the mistral embeddings bill input-only (the catalog carries no output rate
     /// for them) and the gpt-image models bill their input/cache-read rates.
     #[test]
     fn previously_dropped_embedding_and_image_rows_price_again() {
@@ -1936,7 +2069,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
     #[test]
     fn tiered_cost_at_exact_threshold_stays_on_base_rates() {
         // Exclusive boundary (>) for every provider except xAI, mirroring
-        // LiteLLM's `_uses_inclusive_token_thresholds`: at exactly 100k
+        // Inclusive-threshold semantics: at exactly 100k
         // prompt tokens (test shard is not xai), the tier does NOT fire and
         // the base rates apply. One token more activates the tier.
         let u = usage(100_000, 1_000);
@@ -1969,9 +2102,9 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
         assert_eq!(cost, 272_000.0 * 4e-6);
     }
 
-    /// MEDIUM (C64 round 2): xAI is LiteLLM's only inclusive-threshold
+    /// MEDIUM (C64 round 2): xAI is the catalog's only inclusive-threshold
     /// provider (`_INCLUSIVE_THRESHOLD_PROVIDERS = {"xai"}`) — the tier rate
-    /// kicks in AT the threshold (LiteLLM commit 726abc68a6). A request on
+    /// kicks in AT the threshold. A request on
     /// `xai/grok-4.3` landing exactly on 200k context tokens must bill at
     /// the tier rate (2.5e-6), not the base rate (1.25e-6).
     #[test]
@@ -1993,7 +2126,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
     #[test]
     fn tiered_cost_above_threshold_applies_partial_tier_rates() {
         // 150k prompt exceeds only the 100k tier: input takes the tier
-        // rate, output falls back to the base rate (LiteLLM behavior).
+        // rate, output falls back to the base rate.
         let u = usage(150_000, 1_000);
         let cost = calculate_cost("tiered-test-model", &u).expect("cost");
         assert_eq!(cost, 150_000.0 * 2e-6 + 1_000.0 * 5e-6);
@@ -2142,7 +2275,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
         );
     }
 
-    /// Table-path rate fallback (LiteLLM `_get_cost_per_unit(..., default=0.0)`):
+    /// Table-path rate fallback (`_get_cost_per_unit(..., default=0.0)` semantics):
     /// a model entry lacking cache-read, cache-creation, and audio rates bills
     /// those buckets at 0 — cached/audio tokens are FREE, and are only removed
     /// from the regular input bucket. This deliberately differs from the
@@ -2268,7 +2401,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
 
     /// Tier thresholds are evaluated against the NORMALIZED prompt
     /// (`UsageSummary.prompt_tokens`), which for Anthropic includes the folded
-    /// additive cache-read tokens — matching LiteLLM, whose Anthropic
+    /// additive cache-read tokens — matching the reference, whose Anthropic
     /// transformation also adds `cache_read_input_tokens` onto `prompt_tokens`
     /// before cost lookup. A prompt that exceeds a tier threshold only once
     /// the cache-read fold is applied must trigger the tier.
@@ -2308,7 +2441,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
     }
 
     /// Data gap: claude-opus-5 was missing `cache_creation_input_token_cost`
-    /// (LiteLLM 6.25e-6), so its cache writes fell back to the input rate.
+    /// (catalog rate 6.25e-6), so its cache writes fell back to the input rate.
     /// Both TTL rates must now be present.
     #[test]
     fn claude_opus_5_cache_creation_rates_present() {
@@ -2610,7 +2743,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
     }
 
     /// LOW: the tier threshold must count Anthropic's additive cache-creation
-    /// tokens, matching LiteLLM, whose Anthropic transformation folds BOTH
+    /// tokens, matching the reference, whose Anthropic transformation folds BOTH
     /// cache-creation and cache-read onto `prompt_tokens` before the cost
     /// lookup. A request whose context crosses 200k only once cache writes are
     /// counted must fire claude-sonnet-4's >200k tier.
@@ -2692,7 +2825,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
     /// to it — so the tier threshold measure must also be 300, not
     /// `max(aggregate, 1h)`. The old `.max()` measure let the 1h detail push
     /// a request whose billed context stays below the threshold into the
-    /// tier (over-bill on inconsistent payloads); LiteLLM folds the raw
+    /// tier (over-bill on inconsistent payloads); the reference folds the raw
     /// aggregate only.
     #[test]
     fn tier_threshold_measure_matches_billed_cache_creation_total() {
@@ -2798,7 +2931,7 @@ input_cost_per_token_above_100k_tokens = 2000000
 
     /// MEDIUM: a non-numeric (string) tier value must drop only that key —
     /// never crash and never poison the sibling tier rates. Numeric strings
-    /// (e.g. `"1e-5"`) are now parsed via `tier_rate_value` for LiteLLM
+    /// (e.g. `"1e-5"`) are now parsed via `tier_rate_value` for reference
     /// parity (`_get_cost_per_unit` coerces strings via `float(...)`); this
     /// test therefore uses a GENUINELY non-numeric string to pin the skip
     /// path. See `tier_parsing_accepts_string_rate` for the numeric-string
@@ -2827,10 +2960,10 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
 
     /// LOW parity: a tier rate written as a TOML numeric string (`"1e-5"`,
     /// `"2.5e-7"`, `"2000000"`) must parse into the tier instead of being
-    /// silently dropped — matching LiteLLM's `_get_cost_per_unit`, which
+    /// silently dropped — matching the reference `_get_cost_per_unit`, which
     /// coerces strings via `float(...)`. Mirrors the integer-rate test
     /// (`tier_parsing_accepts_integer_rates`): without this, a rate vendored
-    /// from LiteLLM's JSON (which sometimes carries string rates) would drop
+    /// from the reference JSON (which sometimes carries string rates) would drop
     /// the whole tier and silently bill long-context requests at the base
     /// rate.
     #[test]
@@ -2929,7 +3062,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
     }
 
     /// Data gap: meta/muse-spark-1.1 (both bare and prefixed keys) was missing
-    /// `cache_read_input_token_cost` (LiteLLM 1.5e-7).
+    /// `cache_read_input_token_cost` (catalog rate 1.5e-7).
     #[test]
     fn muse_spark_11_cache_read_rate_present() {
         for key in ["muse-spark-1.1", "meta/muse-spark-1.1"] {
@@ -2938,7 +3071,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
         }
     }
 
-    /// LiteLLM publishes `max_output_tokens: 131072` for meta/muse-spark-1.1;
+    /// The catalog publishes `max_output_tokens: 131072` for meta/muse-spark-1.1;
     /// both the bare and prefixed price rows must carry it so the pre-call
     /// context-window checker can reject an over-budget `max_tokens`.
     #[test]
@@ -3154,7 +3287,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
     /// no inner dashes; the stripper must reduce them to the base model.
     #[test]
     fn dated_snapshot_suffix_8_digit_stripped() {
-        // gpt-4o-2024-08-06 is a real LiteLLM key; the stripper reduces it
+        // gpt-4o-2024-08-06 is a real catalog key; the stripper reduces it
         // to the base name when the dated variant is not in the table.
         let bare = lookup_pricing("gpt-4o").expect("base model priced");
         let dated = lookup_pricing("gpt-4o-2024-08-06").expect("dated snapshot priced");
@@ -3189,7 +3322,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
         let cost = calculate_cost("gpt-4o", &u).expect("priced");
 
         // gpt-4o declares no `input_cost_per_audio_token`, so on the
-        // price-table path the audio bucket bills at 0.0 (LiteLLM's
+        // price-table path the audio bucket bills at 0.0 (the reference
         // `_get_cost_per_unit(..., default=0.0)`) — audio tokens are FREE,
         // they are only removed from the regular input bucket so the total
         // input-charged tokens equal `prompt - audio`.
@@ -3558,7 +3691,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
     /// from "model not in the price table" today), and the only signal is a
     /// `tracing::warn!`. The decision must be OBSERVABLE: callers can detect
     /// per-second pricing via [`ModelPricing::is_per_second_priced`] and bill
-    /// through [`ModelPricing::cost_per_second`], which mirrors LiteLLM's
+    /// through [`ModelPricing::cost_per_second`], which mirrors the reference
     /// `input_cost_per_second * response_time_ms / 1000`.
     #[test]
     fn per_second_model_is_unmetered_on_token_path_but_billable_via_helper() {
@@ -3591,7 +3724,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             "per-second model must return None on the token-based cost path"
         );
 
-        // ...but the duration-based helper accrues spend, matching LiteLLM.
+        // ...but the duration-based helper accrues spend.
         // 2500 ms * 0.0001 $/s / 1000 = 0.00025
         let cost = pricing
             .cost_per_second(2500.0)
@@ -3648,7 +3781,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
     }
 
     /// LOW/INFO #4: a deployment override on a tiered model bills FLAT —
-    /// context-length tiers are ignored, matching LiteLLM's
+    /// context-length tiers are ignored, matching the reference
     /// `_cost_per_token_custom_pricing_helper`. Pins the intentional
     /// divergence: a >272k prompt on gpt-5.6 bills at the override rate, not
     /// the model's >272k tier rate.
@@ -3733,7 +3866,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
     /// MEDIUM (C10): a per-second deployment pricing override must NOT bill
     /// token math (its per-token rates are unset/zero) — the token path
     /// returns `None` and spend accrues via
-    /// [`DeploymentPricing::cost_per_second`], mirroring LiteLLM's
+    /// [`DeploymentPricing::cost_per_second`], mirroring the reference
     /// per-second custom-pricing branch (`rate * response_time_ms / 1000`).
     #[test]
     fn override_per_second_skips_token_path_and_bills_via_helper() {
@@ -4020,7 +4153,7 @@ input_cost_per_token_above_200ktokens = 2e-6
 
     /// LOW (C64): two key spellings that parse to the same (base, threshold)
     /// (e.g. `_above_100k_tokens` + `_above_100000_tokens`) silently overwrite
-    /// via `=`. LiteLLM's vendored JSON never mixes spellings, but a hand-edited
+    /// via `=`. The vendored JSON never mixes spellings, but a hand-edited
     /// TOML could. This pins the observable behaviour — the last key in
     /// BTreeMap-sorted order wins — and documents that `extract_cost_tiers`
     /// now emits a `tracing::warn!` on the overwrite so it cannot pass
@@ -4086,7 +4219,7 @@ input_cost_per_token_above_100k_tokens = 5e-6
 
     /// Coverage: when `cache_read + audio > prompt` (inconsistent provider
     /// data), `cache_read` is billed fully and the excess audio is dropped.
-    /// This is a conservative divergence from LiteLLM (which does not clamp
+    /// This is a conservative divergence from the reference (which does not clamp
     /// and can over-bill on inconsistent data). Pin the clamp ordering so
     /// cache_read is always prioritised over audio in the subset budget.
     #[test]
@@ -4142,7 +4275,7 @@ input_cost_per_token_above_100k_tokens = 5e-6
     /// rate must bill the 1h bucket at 0.0, NOT at the 5m rate. The
     /// `cache_creation_input_token_cost_above_1hr` doc-comment previously
     /// promised a 5m fallback that the code never implemented; the code is
-    /// LiteLLM-parity-correct (`_get_cost_per_unit(..., default=0.0)`), so
+    /// reference-compatible (`_get_cost_per_unit(..., default=0.0)`), so
     /// the doc was wrong. This test pins the actual behaviour so the doc
     /// drift cannot re-occur and a future maintainer cannot "fix" the code
     /// toward the old (wrong) doc.
@@ -4237,7 +4370,7 @@ input_cost_per_token_above_100k_tokens = 5e-6
     /// LOW #3: when a provider reports the 1h-ephemeral detail but OMITS the
     /// aggregate `cache_creation_input_tokens`, the old clamp
     /// (`1h.min(total = 0)`) zeroed the 1h bucket — billing those tokens
-    /// free. LiteLLM's `calculate_cache_writing_cost` uses the detail fields
+    /// free. The reference `calculate_cache_writing_cost` uses the detail fields
     /// directly when present, so it bills the 1h tokens at the 1h rate. The
     /// resolver now treats the 1h detail as the effective total when the
     /// aggregate is absent, so the 1h tokens accrue spend and the 5m
@@ -4276,6 +4409,162 @@ input_cost_per_token_above_100k_tokens = 5e-6
         assert!(
             cost > pre_fix,
             "1h tokens must accrue spend, not bill free: got {cost}, pre-fix {pre_fix}"
+        );
+    }
+
+    #[test]
+    fn deployment_override_without_tier_keys_stays_flat() {
+        let dp = DeploymentPricing {
+            input_cost_per_token: 0.001,
+            output_cost_per_token: 0.002,
+            ..Default::default()
+        };
+        let below = UsageSummary {
+            prompt_tokens: 272_000,
+            completion_tokens: 10,
+            ..Default::default()
+        };
+        let above = UsageSummary {
+            prompt_tokens: 272_001,
+            completion_tokens: 10,
+            ..Default::default()
+        };
+        let low = calculate_cost_with_override("gpt-6-luna", &below, Some(&dp)).unwrap();
+        let high = calculate_cost_with_override("gpt-6-luna", &above, Some(&dp)).unwrap();
+        let expected_low = 272_000.0 * 0.001 + 10.0 * 0.002;
+        let expected_high = 272_001.0 * 0.001 + 10.0 * 0.002;
+        assert!((low - expected_low).abs() < 1e-9);
+        assert!((high - expected_high).abs() < 1e-9);
+    }
+
+    #[test]
+    fn deployment_tier_boundary_is_exclusive_at_272k() {
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "input_cost_per_token_above_272k_tokens".into(),
+            serde_json::json!(0.002),
+        );
+        extra.insert(
+            "output_cost_per_token_above_272k_tokens".into(),
+            serde_json::json!(0.004),
+        );
+        let tiers = cost_tiers_from_extra(&extra);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].threshold_tokens, 272_000);
+        let dp = DeploymentPricing {
+            input_cost_per_token: 0.001,
+            output_cost_per_token: 0.002,
+            tiers,
+            ..Default::default()
+        };
+        let at = UsageSummary {
+            prompt_tokens: 272_000,
+            completion_tokens: 1,
+            ..Default::default()
+        };
+        let past = UsageSummary {
+            prompt_tokens: 272_001,
+            completion_tokens: 1,
+            ..Default::default()
+        };
+        let at_cost = calculate_cost_with_override("custom", &at, Some(&dp)).unwrap();
+        let past_cost = calculate_cost_with_override("custom", &past, Some(&dp)).unwrap();
+        assert!((at_cost - (272_000.0 * 0.001 + 0.002)).abs() < 1e-9);
+        assert!((past_cost - (272_001.0 * 0.002 + 0.004)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn deployment_tier_none_rate_falls_back_to_override_base() {
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "input_cost_per_token_above_272k_tokens".into(),
+            serde_json::json!(0.009),
+        );
+        let dp = DeploymentPricing {
+            input_cost_per_token: 0.001,
+            output_cost_per_token: 0.003,
+            cache_read_input_token_cost: Some(0.0004),
+            tiers: cost_tiers_from_extra(&extra),
+            ..Default::default()
+        };
+        let usage = UsageSummary {
+            prompt_tokens: 300_000,
+            completion_tokens: 2,
+            cache_read_input_tokens: Some(10),
+            ..Default::default()
+        };
+        let cost = calculate_cost_with_override("custom", &usage, Some(&dp)).unwrap();
+        // 10 cache-read tokens stay on the override cache rate. The rest of
+        // the prompt uses the tier input rate. Output has no tier rate, so
+        // it stays on the override base.
+        let expected = (300_000.0 - 10.0) * 0.009 + 10.0 * 0.0004 + 2.0 * 0.003;
+        assert!(
+            (cost - expected).abs() < 1e-6,
+            "got {cost}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn malformed_tier_key_is_classified_and_not_billed() {
+        assert_eq!(
+            classify_extra_tier_key("input_cost_per_token_above_272k_tokens"),
+            ExtraTierKeyClass::Parsed
+        );
+        assert_eq!(
+            classify_extra_tier_key("input_cost_per_token_above_200ktokens"),
+            ExtraTierKeyClass::Malformed
+        );
+        assert_eq!(
+            classify_extra_tier_key("cache_creation_input_token_cost_above_1hr"),
+            ExtraTierKeyClass::NotTier
+        );
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "input_cost_per_token_above_200ktokens".into(),
+            serde_json::json!(0.5),
+        );
+        assert!(cost_tiers_from_extra(&extra).is_empty());
+        assert!(extra_tier_rate_is_non_numeric(
+            "input_cost_per_token_above_272k_tokens",
+            &serde_json::json!("nope"),
+        ));
+    }
+
+    #[test]
+    fn deployment_tier_threshold_counts_standalone_one_hour_cache_creation() {
+        let params: crate::deployment::OxllmParams = serde_json::from_value(serde_json::json!({
+            "model": "custom", "input_cost_per_token": 0.001,
+            "output_cost_per_token": 0.002, "input_cost_per_token_above_272k_tokens": 0.003,
+        }))
+        .unwrap();
+        let usage = UsageSummary {
+            prompt_tokens: 272_000,
+            cache_creation_1h_input_tokens: Some(1),
+            ..Default::default()
+        };
+        let pricing = params.pricing_override().unwrap();
+        let cost = calculate_cost_with_override("custom", &usage, Some(&pricing)).unwrap();
+        assert!((cost - 272_001.0 * 0.003).abs() < 1e-9);
+    }
+
+    #[test]
+    fn deployment_tier_inclusive_boundary_can_be_configured() {
+        let params: crate::deployment::OxllmParams = serde_json::from_value(serde_json::json!({
+            "model": "custom", "input_cost_per_token": 0.001,
+            "input_cost_per_token_above_272k_tokens": 0.003, "tier_threshold_is_inclusive": true,
+        }))
+        .unwrap();
+        let usage = UsageSummary {
+            prompt_tokens: 272_000,
+            ..Default::default()
+        };
+        let pricing = params.pricing_override().unwrap();
+        assert!(pricing.tier_threshold_is_inclusive);
+        let cost = calculate_cost_with_override("custom", &usage, Some(&pricing)).unwrap();
+        assert!((cost - 272_000.0 * 0.003).abs() < 1e-9);
+        assert_eq!(
+            classify_extra_tier_key("input_cost_per_token_above_4294968k_tokens"),
+            ExtraTierKeyClass::Malformed
         );
     }
 }

@@ -1,4 +1,4 @@
-//! Parse LiteLLM-shaped YAML fixtures and example configs (unknown keys tolerated).
+//! Parse legacy YAML fixtures and example configs (unknown keys tolerated).
 
 use std::path::PathBuf;
 
@@ -71,9 +71,9 @@ fn aliases_config_parses() {
     assert_eq!(cfg.model_list[1].oxllm_params.model, "ollama/llama2");
 }
 
-/// The legacy `litellm_settings` top-level key must keep parsing after the
+/// The legacy settings key must keep parsing after the
 /// rename to `oxllm_settings` (configs written before the rename, and
-/// LiteLLM-shaped configs generally, use the old spelling).
+/// legacy configs generally, use the old spelling).
 #[test]
 fn legacy_litellm_settings_key_still_parses() {
     let legacy = r#"

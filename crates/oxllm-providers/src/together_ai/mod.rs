@@ -7,11 +7,11 @@
 //! Together AI exposes an OpenAI-compatible surface, so URL building, auth,
 //! stream parsing and the supported-params list are delegated to the shared
 //! [`OpenAiCompatProvider`] engine. Together diverges on one request-shape
-//! point (parity with LiteLLM's `TogetherAIConfig.map_openai_params`):
+//! point (parity with the reference Together parameter mapping):
 //!
 //! - **`response_format: {"type": "text"}` dropped**: Together treats a
 //!   no-op `{"type": "text"}` `response_format` as an error on some models;
-//!   LiteLLM strips it before forwarding.
+//!   The reference strips it before forwarding.
 //!
 //! See `docs/adding-a-provider.md`.
 
@@ -64,7 +64,7 @@ fn apply_together_request_transforms(out: &mut Value) {
 }
 
 /// Remove `response_format` when it equals `{"type": "text"}` (parity with
-/// LiteLLM's `TogetherAIConfig.map_openai_params`). Together rejects the
+/// the reference Together parameter mapping). Together rejects the
 /// no-op `{"type": "text"}` value on some models with a 400.
 fn drop_text_response_format(out: &mut Value) {
     let is_text = out

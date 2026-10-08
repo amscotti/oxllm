@@ -54,7 +54,7 @@ pub fn strip_watsonx_prefix(model: &str) -> &str {
 }
 
 /// Resolve the API version to send on the URL. Honors an `api_version` set on
-/// the deployment's litellm params (extra), falling back to the default.
+/// the deployment's extra params, falling back to the default.
 fn api_version(deployment: &Deployment) -> String {
     deployment
         .oxllm_params
@@ -71,8 +71,8 @@ fn api_version(deployment: &Deployment) -> String {
         .unwrap_or_else(|| DEFAULT_API_VERSION.to_string())
 }
 
-/// Read `project_id` from the deployment's litellm params (named field or
-/// `extra`), mirroring LiteLLM's `_get_api_params`.
+/// Read `project_id` from the deployment's params (named field or
+/// `extra`), mirroring the reference API-params lookup.
 fn project_id(deployment: &Deployment) -> Option<String> {
     deployment
         .oxllm_params
@@ -82,7 +82,7 @@ fn project_id(deployment: &Deployment) -> Option<String> {
         .and_then(value_to_string)
 }
 
-/// Read `space_id` from the deployment's litellm params.
+/// Read `space_id` from the deployment's params.
 fn space_id(deployment: &Deployment) -> Option<String> {
     deployment
         .oxllm_params

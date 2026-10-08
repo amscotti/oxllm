@@ -148,8 +148,8 @@ fn append_estimated_text(accumulated: &mut String, text: &str) {
 /// estimate on the call context (or a fresh request estimate), completion
 /// tokens tokenized from the accumulated delta text.
 ///
-/// Mirrors LiteLLM's `stream_chunk_builder` fallback
-/// (`litellm/main.py:8511`, `ChunkProcessor.calculate_usage`), which
+/// Mirrors the reference `stream_chunk_builder` fallback
+/// (`main.py:8511`, `ChunkProcessor.calculate_usage`), which
 /// always bills something for a completed stream instead of letting a
 /// zero-usage stream be free to the caller.
 fn estimate_stream_usage(
@@ -234,7 +234,7 @@ pub(crate) async fn handle_stream_success(
     budget_reservation: super::budget::RouterBudgetReservation,
     model: String,
 ) -> Result<Response, ApiError> {
-    // LiteLLM `_get_stream_timeout` precedence (`litellm/router.py`): the
+    // The reference `_get_stream_timeout` precedence (`router.py`): the
     // deployment's `stream_timeout`, then `request_timeout`, then the 60s
     // default — the same budget that bounded the upstream header wait (see
     // `attempt_upstream`), applied here per-chunk (idle) with no total
@@ -334,7 +334,7 @@ pub(crate) async fn handle_stream_success(
             } else {
                 buffer.push_str(&framer.push(&bytes));
             }
-            // U22 (LiteLLM commit 8a4942340e): OpenRouter emits the usage
+            // U22: OpenRouter emits the usage
             // chunk (carrying provider-reported cost) AFTER the
             // `finish_reason` chunk. oxllm is safe here: the stream pump
             // keeps calling `process_buffer` for every chunk until
@@ -343,7 +343,7 @@ pub(crate) async fn handle_stream_success(
             // post-finish usage chunks flow through `process_buffer` →
             // `extract_usage` → `merge_streaming_usage` and the
             // `accumulated_usage` (used by the post-success hook for cost
-            // accounting) captures them. (The LiteLLM bug was a
+            // accounting) captures them. (The reference bug was a
             // `raise StopIteration` inside the chunk handler the moment
             // `finish_reason` appeared; oxllm has no such generator-style
             // early termination.)
@@ -595,7 +595,7 @@ async fn finalize_stream_exit(
             // Zero-usage streams (providers that ignore the injected
             // `stream_options.include_usage`) must still be billed:
             // estimate from the pre-call prompt estimate and the
-            // accumulated delta text, matching LiteLLM's
+            // accumulated delta text, matching the reference
             // `stream_chunk_builder` fallback. Without this the
             // post-success budget settle treats the streamed tokens as
             // free to the caller.
@@ -661,7 +661,7 @@ async fn finalize_stream_exit(
             if !bytes_sent_to_client && accumulated_usage.is_none() {
                 // The client vanished BEFORE the first SSE event reached it
                 // and no usage was on record: the provider almost certainly
-                // generated nothing. LiteLLM cancels the task on disconnect
+                // generated nothing. The reference cancels the task on disconnect
                 // and never completes spend tracking — nothing is charged —
                 // so release the router reservation and run the failure
                 // hooks (which release the key RPM/TPM/budget reservations)
@@ -783,7 +783,7 @@ async fn finalize_stream_exit(
             // below, which releases the key reservation.
             //
             // Intentional asymmetry with `StreamExit::ClientDisconnected`
-            // (Bug #33 / LiteLLM commit ae92e511f1): the two exit paths
+            // (Bug #33): the two exit paths
             // treat the KEY-level budget reservation in opposite
             // directions, and the divergence is deliberate:
             //
@@ -2411,7 +2411,7 @@ mod tests {
         );
     }
 
-    /// U22 regression (LiteLLM commit 8a4942340e): OpenRouter emits the
+    /// U22 regression: OpenRouter emits the
     /// provider-reported usage chunk AFTER the `finish_reason` chunk. The
     /// stream pump must keep processing chunks past `finish_reason` so the
     /// late usage is captured by `accumulated_usage` (which feeds cost

@@ -339,7 +339,7 @@ fn test_golden_file_parity() {
     assert_semantically_equal(&out, &response);
 }
 
-// --- Additional request parameter tests (ported from LiteLLM test_optional_params.py) ---
+// --- Additional request parameter tests (ported from the reference optional-param tests) ---
 
 #[test]
 fn request_preserves_response_format_json_object() {

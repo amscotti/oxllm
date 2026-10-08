@@ -34,7 +34,7 @@ pub const DEFAULT_DASHSCOPE_BASE: &str = "https://dashscope.aliyuncs.com/compati
 
 /// Default China base URL for rerank. DashScope serves rerank under the
 /// distinct `compatible-api` route (not `compatible-mode` like chat/embed),
-/// matching LiteLLM's `DashScopeRerankConfig.DEFAULT_RERANK_URL`.
+/// matching the reference DashScope rerank URL.
 pub const DEFAULT_DASHSCOPE_RERANK_BASE: &str = "https://dashscope.aliyuncs.com/compatible-api/v1";
 
 const STRIP: &str = "dashscope";
@@ -118,7 +118,7 @@ impl RerankProvider for DashScopeProvider {
         // bases. Explicit rerank endpoints and unrelated custom bases stay
         // operator-controlled.
         //
-        // Parity gap: LiteLLM additionally honors a rerank-specific
+        // Parity gap: the reference additionally honors a rerank-specific
         // `DASHSCOPE_API_BASE_RERANK` env override (distinct from the chat
         // base). oxllm resolves a single `api_base` per deployment at config
         // load and has no rerank-specific override key — operators needing a
@@ -189,7 +189,7 @@ impl RerankProvider for DashScopeProvider {
         // DashScope error envelope (e.g. a 200-status body carrying
         // `{"code":"InvalidApiKey","message":"...","request_id":"..."}`) or any
         // other missing-results shape: surface as an upstream error so the
-        // host's normal error/retry path runs. Mirrors LiteLLM's
+        // host's normal error/retry path runs. Mirrors the reference
         // `DashScopeRerankConfig.transform_rerank_response`.
         if let Some(code) = body.get("code") {
             let message = body

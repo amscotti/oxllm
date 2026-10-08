@@ -160,7 +160,7 @@ fn supported_params_published() {
     assert!(params.contains(&"tools"));
 }
 
-// --- Tests ported from LiteLLM test_nvidia_nim.py ---
+// --- Tests ported from the reference test_nvidia_nim.py ---
 
 #[test]
 fn request_preserves_presence_and_frequency_penalty() {

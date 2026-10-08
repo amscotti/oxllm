@@ -62,12 +62,24 @@ pub(crate) fn parse_cache_controls_column(raw: Option<&str>) -> Option<Vec<Strin
 pub(crate) fn validate_auth_config(
     settings: &crate::config::types::GeneralSettings,
 ) -> anyhow::Result<()> {
+    let development = crate::config::loader::environment_is_development();
+    if settings.allow_short_master_key == Some(true) && !development {
+        anyhow::bail!(
+            "general_settings.allow_short_master_key is set but the environment is not \
+             development; unset the flag or set OXLLM_ENVIRONMENT or LITELLM_ENVIRONMENT \
+             to development"
+        );
+    }
+    let short_master_ok = settings.allow_short_master_key == Some(true) && development;
     for (name, secret) in [
         ("master_key", settings.master_key.as_deref()),
         ("jwt_secret", settings.jwt_secret.as_deref()),
     ] {
         if let Some(secret) = secret {
-            if secret.trim().is_empty() || secret.len() < MIN_AUTH_SECRET_LEN {
+            let blank = secret.trim().is_empty();
+            let too_short = secret.len() < MIN_AUTH_SECRET_LEN;
+            let allowed = name == "master_key" && short_master_ok && !blank;
+            if (blank || too_short) && !allowed {
                 anyhow::bail!(
                     "general_settings.{name} is blank or too short; require at least {MIN_AUTH_SECRET_LEN} bytes"
                 );

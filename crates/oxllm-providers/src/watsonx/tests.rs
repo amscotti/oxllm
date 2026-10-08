@@ -59,9 +59,9 @@ fn wildcard_model_survives_supported_parameter_filtering() {
 }
 
 // =============================================================================
-// Ported from LiteLLM `tests/llm_translation/test_watsonx.py`.
+// Ported from the reference `tests/llm_translation/test_watsonx.py`.
 //
-// LiteLLM's WatsonX suite patches the HTTP layer and IAM token exchange and
+// The reference WatsonX suite patches the HTTP layer and IAM token exchange and
 // asserts on the outgoing request (URL, headers, body). Those behaviors map
 // directly onto the oxllm transform surface: `endpoint_url`, `apply_auth`, and
 // `transform_request`. The ports below cover the cases that exercise the

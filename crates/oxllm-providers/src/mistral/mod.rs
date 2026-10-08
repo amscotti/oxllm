@@ -22,7 +22,7 @@
 //!   validator rejects JSON-schema reference fields with a 422).
 //! - `reasoning_effort` and `thinking` are consumed internally and never
 //!   forwarded; for `magistral` models either triggers injection of Mistral's
-//!   recommended reasoning system prompt (parity with LiteLLM). Non-magistral
+//!   recommended reasoning system prompt (reference parity). Non-magistral
 //!   models simply drop both fields.
 //! - `reasoning_content` / `thinking_blocks` stripped from `assistant`
 //!   messages (Mistral 422s on prior-turn reasoning fields).
@@ -39,7 +39,7 @@
 //! [`ChatProvider::transform_stream_chunk`] normalize that list into the
 //! OpenAI-standard string `content` + `reasoning_content` + `thinking_blocks`.
 //! The non-streaming path additionally rewrites an empty-string `content`
-//! field to `null` (a Mistral quirk; parity with LiteLLM's
+//! field to `null` (a Mistral quirk; parity with the reference
 //! `_handle_empty_content_response`).
 
 use std::collections::HashMap;
@@ -138,7 +138,7 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
 
     // Mistral has no `"required"` tool_choice and rejects unknown string
     // values; map any non-`auto`/`none` string to `"any"` (parity with
-    // LiteLLM's `_map_tool_choice` catch-all). Object forms pass through.
+    // the reference tool-choice catch-all). Object forms pass through.
     let needs_tool_choice_remap = obj
         .get("tool_choice")
         .and_then(|v| v.as_str())
@@ -180,7 +180,7 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
 
     // Mistral's grammar validator rejects JSON-schema reference fields (`$id`,
     // `$schema`) on tool definitions with a 422. Walk the whole `tools` array
-    // and strip them recursively, with a depth bound (parity with LiteLLM's
+    // and strip them recursively, with a depth bound (parity with the reference
     // `_clean_tool_schema_for_mistral` / `_remove_json_schema_refs`).
     if let Some(tools) = obj.get_mut("tools") {
         remove_json_schema_refs(tools, MAX_SCHEMA_RECURSE_DEPTH);
@@ -189,7 +189,7 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
     // Mistral does not accept `reasoning_effort` or `thinking` on the wire.
     // For magistral models either is consumed internally as a signal to
     // inject Mistral's recommended reasoning system prompt (parity with
-    // LiteLLM, which treats both `reasoning_effort` and `thinking` as
+    // the reference, which treats both `reasoning_effort` and `thinking` as
     // alternative triggers); for all other models they are simply dropped.
     let is_magistral = obj
         .get("model")
@@ -207,7 +207,7 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
     // Message-level normalization: drop empty assistant messages, strip
     // prior-turn reasoning fields from assistant messages, enforce Mistral's
     // `name` placement rules, and rewrite `tool_calls` to Mistral's
-    // `{id,type,function}` shape (parity with LiteLLM's
+    // `{id,type,function}` shape (parity with the reference
     // `_handle_tool_call_message`).
     let Some(messages) = obj.get_mut("messages").and_then(|v| v.as_array_mut()) else {
         return;
@@ -247,7 +247,7 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
 /// Rewrite a message's `tool_calls` array into Mistral's strict
 /// `{id, type:"function", function}` shape, dropping any extra keys (e.g.
 /// OpenAI's `index`, `logprobs`) that would trip Mistral's
-/// `extra_forbidden` validator with a 422. Mirrors LiteLLM's
+/// `extra_forbidden` validator with a 422. Mirrors the reference
 /// `MistralToolCallMessage` / `_handle_tool_call_message`. A null or non-array
 /// `tool_calls` is left untouched.
 fn normalize_tool_calls(map: &mut serde_json::Map<String, Value>) {
@@ -267,7 +267,7 @@ fn normalize_tool_calls(map: &mut serde_json::Map<String, Value>) {
     }
 }
 
-/// Maximum recursion depth for [`remove_json_schema_refs`]. Mirrors LiteLLM's
+/// Maximum recursion depth for [`remove_json_schema_refs`]. Mirrors the reference
 /// `DEFAULT_MAX_RECURSE_DEPTH` to bound deeply-nested schemas (DoS defense).
 const MAX_SCHEMA_RECURSE_DEPTH: i32 = 100;
 
@@ -299,7 +299,7 @@ fn remove_json_schema_refs(value: &mut Value, depth: i32) {
 /// Mistral rejects an assistant message whose `content` is the empty string
 /// when it carries no other payload (no `tool_calls`, no `function_call`,
 /// etc.). Such messages are dropped entirely before the request is sent
-/// (parity with LiteLLM's `_is_empty_assistant_message`, which walks every
+/// (parity with the reference empty-assistant-message check, which walks every
 /// typed field of `ChatCompletionAssistantMessage`).
 fn is_empty_assistant_message(message: &Value) -> bool {
     let is_assistant = message
@@ -333,7 +333,7 @@ fn is_empty_assistant_message(message: &Value) -> bool {
 }
 
 /// Mistral's recommended reasoning system prompt for magistral models, per
-/// <https://huggingface.co/mistralai/Magistral-Small-2506> (mirrors LiteLLM's
+/// <https://huggingface.co/mistralai/Magistral-Small-2506> (mirrors the reference
 /// `_get_mistral_reasoning_system_prompt`).
 const MISTRAL_REASONING_SYSTEM_PROMPT: &str = r#"<s>[SYSTEM_PROMPT]system_prompt
 A user will ask you to solve a task. You should first draft your thinking process (inner monologue) until you have derived the final answer. Afterwards, write a self-contained summary of your thoughts (i.e. your summary should be succinct but contain all the critical steps you needed to reach the conclusion). You should use Markdown to format your response. Write both your thoughts and summary in the same language as the task posed by the user. NEVER use \boxed{} in your response.
@@ -354,14 +354,14 @@ assistant_response</s>[INST]user_message[/INST]"#;
 
 /// Prepend the reasoning system prompt to the conversation. If a `system`
 /// message already exists, the prompt is prepended to its content; otherwise a
-/// new `system` message is inserted at the front (parity with LiteLLM's
+/// new `system` message is inserted at the front (parity with the reference
 /// `_add_reasoning_system_prompt_if_needed`).
 ///
 /// The original system message content shape is preserved: a string content is
 /// prepended in-place (`"{prompt}\n\n{content}"`); an array (multimodal) content
 /// has a `{"type":"text","text":"{prompt}\n\n"}` block prepended to the list.
 /// Missing/null content is replaced with the bare prompt string. This matches
-/// LiteLLM's three-way branch and avoids silently overwriting array-form
+/// the reference three-way branch and avoids silently overwriting array-form
 /// system content with a bare string.
 fn inject_reasoning_into_messages(messages: &mut Vec<Value>) {
     for message in messages.iter_mut() {
@@ -403,8 +403,8 @@ fn inject_reasoning_into_messages(messages: &mut Vec<Value>) {
 /// each choice, if `message.content` is an array of content blocks it is split
 /// into OpenAI-standard string `content` + `reasoning_content` +
 /// `thinking_blocks`; string/null content is left untouched (parity with
-/// LiteLLM's `_handle_content_list_to_str_conversion`). Empty-string `content`
-/// is first rewritten to `null` (parity with LiteLLM's
+/// the reference content-list-to-string conversion). Empty-string `content`
+/// is first rewritten to `null` (parity with the reference
 /// `_handle_empty_content_response`).
 fn normalize_magistral_response(body: &mut Value) {
     let Some(choices) = body.get_mut("choices").and_then(|v| v.as_array_mut()) else {
@@ -420,7 +420,7 @@ fn normalize_magistral_response(body: &mut Value) {
 }
 
 /// Normalize magistral content-list deltas on the streaming path (parity with
-/// LiteLLM's `MistralChatResponseIterator.chunk_parser`).
+/// the reference `MistralChatResponseIterator.chunk_parser`).
 fn normalize_magistral_stream_chunk(chunk: &mut Value) {
     let Some(choices) = chunk.get_mut("choices").and_then(|v| v.as_array_mut()) else {
         return;
@@ -436,7 +436,7 @@ fn normalize_magistral_stream_chunk(chunk: &mut Value) {
 /// Rewrite an empty-string `content` field to `null` on a message/delta.
 /// Mistral sometimes returns `content: ""` instead of `null`; downstream
 /// consumers that test `content == null` to mean "no text" need the canonical
-/// null form. Mirrors LiteLLM's `_handle_empty_content_response`.
+/// null form. Mirrors the reference empty-content response handling.
 fn normalize_empty_content_to_null(target: &mut Value) {
     let Some(map) = target.as_object_mut() else {
         return;
@@ -484,7 +484,7 @@ fn normalize_content_field(target: &mut Value) {
 }
 
 /// Split a magistral content-block list into `(text, thinking_blocks,
-/// reasoning_content)`, mirroring LiteLLM's `_normalize_content_blocks`.
+/// reasoning_content)`, mirroring the reference content-block normalization.
 /// `thinking` blocks contribute to `reasoning_content` (joined with `\n`) and
 /// `thinking_blocks`; `text` blocks contribute to the concatenated `content`.
 fn normalize_content_blocks(content: &Value) -> (Option<String>, Vec<Value>, Option<String>) {

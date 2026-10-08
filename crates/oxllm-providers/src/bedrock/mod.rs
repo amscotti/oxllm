@@ -21,7 +21,9 @@ use std::collections::HashMap;
 
 use oxllm_core::Result;
 use oxllm_core::deployment::Deployment;
-use oxllm_core::provider::{ChatProvider, Provider, ProviderId, ResolvedCredentials};
+use oxllm_core::provider::{
+    ChatProvider, EmbeddingProvider, Provider, ProviderId, ResolvedCredentials,
+};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 
@@ -31,7 +33,7 @@ use crate::util::data_url_to_anthropic_image;
 /// Characters that must be percent-encoded inside a single URL path segment.
 /// Includes `/` so application-inference-profile ARNs (which contain `/`)
 /// stay one segment instead of being split into multiple path parts.
-const MODEL_PATH_SEGMENT: &AsciiSet = &CONTROLS
+pub(super) const MODEL_PATH_SEGMENT: &AsciiSet = &CONTROLS
     .add(b' ')
     .add(b'"')
     .add(b'<')
@@ -59,6 +61,7 @@ const QUERY_VALUE: &AsciiSet = &CONTROLS
     .add(b'%');
 
 pub mod converse;
+mod embed;
 pub mod realtime;
 
 pub use realtime::BedrockRealtimeTransform;
@@ -104,7 +107,7 @@ pub enum BedrockVendor {
 }
 
 /// Model id prefixes that MUST use the Converse API because InvokeModel
-/// does not support them (or supports them poorly). Mirrors LiteLLM's
+/// does not support them (or supports them poorly). Mirrors the reference
 /// `bedrock_converse_models` list. Matched with `starts_with` against the
 /// base model id (after stripping routing prefixes and version/throughput
 /// suffixes) so versioned variants like `deepseek.r1-v1:0` also match.
@@ -150,7 +153,7 @@ impl BedrockProvider {
     /// Resolve the configured model id, honouring wildcards. `bedrock/*` and
     /// `*` mean "route whatever the client sent" — the actual model is read
     /// from the request body (with any leading `bedrock/` stripped).
-    fn resolve_model<'a>(request: &'a Value, deployment: &'a Deployment) -> &'a str {
+    pub(super) fn resolve_model<'a>(request: &'a Value, deployment: &'a Deployment) -> &'a str {
         let configured = deployment
             .oxllm_params
             .model
@@ -168,7 +171,7 @@ impl BedrockProvider {
     }
 
     /// Resolve inline guardrail configuration from the deployment's `extra`
-    /// params. Accepts either LiteLLM-style snake_case (`guardrail_id`,
+    /// params. Accepts either snake_case (`guardrail_id`,
     /// `guardrail_version`) or AWS-native camelCase (`guardrailIdentifier`,
     /// `guardrailVersion`). Returns `(id, version, trace)` when both id and
     /// version are present — Bedrock requires both as URL query parameters.
@@ -198,7 +201,7 @@ impl BedrockProvider {
     }
 
     /// Read the Converse-API opt-in flag from the deployment's `extra`
-    /// params. LiteLLM accepts either `use_converse_api` (canonical) or
+    /// params. Accepts either `use_converse_api` (canonical) or
     /// `use_converse` (alias). Defaults to `false` — InvokeModel stays the
     /// primary path until Batch 4 flips the default.
     fn use_converse(deployment: &Deployment) -> bool {
@@ -233,7 +236,7 @@ impl ChatProvider for BedrockProvider {
             .trim_end_matches('/');
         let model = &deployment.oxllm_params.model;
         let model_stripped = model.strip_prefix("bedrock/").unwrap_or(model);
-        // Strip LiteLLM throughput/context-window suffixes (`:51k`, `[1m]`)
+        // Strip legacy throughput/context-window suffixes (`:51k`, `[1m]`)
         // so the upstream model id is clean — Bedrock would reject the
         // suffix as part of the path.
         let model_stripped = strip_model_suffixes(model_stripped);
@@ -322,10 +325,14 @@ impl ChatProvider for BedrockProvider {
         // the Anthropic / passthrough split entirely — Converse standardises
         // across all vendors.
         if should_use_converse(model, Self::use_converse(deployment)) {
+            let mut extra = std::borrow::Cow::Borrowed(&deployment.oxllm_params.extra);
+            if let Some(modify) = deployment.oxllm_params.modify_params {
+                extra.to_mut().insert("modify_params".into(), json!(modify));
+            }
             return converse::transform_request_converse_with_base_model(
                 request,
                 model,
-                &deployment.oxllm_params.extra,
+                &extra,
                 deployment
                     .model_info
                     .as_ref()
@@ -798,11 +805,18 @@ impl Provider for BedrockProvider {
     }
 
     fn supports(&self, endpoint: oxllm_core::Endpoint) -> bool {
-        matches!(endpoint, oxllm_core::Endpoint::ChatCompletions)
+        matches!(
+            endpoint,
+            oxllm_core::Endpoint::ChatCompletions | oxllm_core::Endpoint::Embeddings
+        )
     }
 
     fn chat(&self) -> Option<&dyn ChatProvider> {
         Some(self)
+    }
+
+    fn embeddings(&self) -> Option<&dyn EmbeddingProvider> {
+        Some(&embed::EMBEDDINGS)
     }
 }
 
@@ -829,7 +843,7 @@ pub(super) fn strip_cross_region_prefix(model: &str) -> &str {
     model
 }
 
-/// Strip LiteLLM-style throughput and context-window suffixes from a
+/// Strip legacy throughput and context-window suffixes from a
 /// Bedrock model id. Removes trailing `:Nk` throughput tiers (e.g.
 /// `:51k`, `:18k`) and a single trailing `[...]` context-window tag (e.g.
 /// `[1m]`, `[200k]`). The base model id — including its `:version` tag —
@@ -1502,7 +1516,7 @@ fn messages_to_prompt(messages: &[Value]) -> String {
 /// latch onto.
 ///
 /// Mirrors the official `meta-llama/Meta-Llama-3-8B-Instruct` Jinja
-/// template LiteLLM applies via `hf_chat_template` (see LiteLLM's
+/// template the reference applies via `hf_chat_template` (see its
 /// `prompt_factory` bedrock arm). Tokens are concatenated with no
 /// inter-message separators — only the `\n\n` between a header and its
 /// content — and the prompt is terminated with an empty

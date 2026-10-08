@@ -2,7 +2,7 @@
 //!
 //! Most providers have deprecated or merged this into chat completions. The
 //! handler is a thin forwarder: it wraps the request into a chat-shaped body
-//! (a user message per `prompt` element, matching LiteLLM's
+//! (a user message per `prompt` element, matching the reference
 //! `text_completion` translation), routes through the normal chat pipeline,
 //! then unwraps the response. Streaming responses are translated
 //! chunk-by-chunk from `chat.completion.chunk` to `text_completion` so legacy
@@ -367,9 +367,9 @@ fn wrap_prompt_as_chat(request: &Value) -> Value {
     // API types `logprobs` as a boolean and uses a separate integer
     // `top_logprobs` (0-20). Forwarding the int verbatim (previously the
     // behaviour) is a type mismatch the chat upstream rejects with a 400, so
-    // the legacy logprobs feature was broken through this endpoint. LiteLLM
+    // the legacy logprobs feature was broken through this endpoint. The reference
     // keeps the int because it routes text-completion models to the native
-    // `/v1/completions` endpoint (`litellm/main.py`); oxllm always wraps as
+    // `/v1/completions` endpoint (`main.py`); oxllm always wraps as
     // chat, so the translation is required for parity. `0` (or a non-int
     // value) maps to the chat default of "no logprobs" — omit both fields
     // rather than emitting a contradictory `logprobs: false` +
@@ -481,7 +481,7 @@ fn convert_chat_chunk_to_completion(chunk: &Value) -> Value {
                 if let Some(content) = delta.get("content") {
                     choice_obj.insert("text".to_string(), content.clone());
                 }
-                // LiteLLM's `convert_to_text_completion_object` carries
+                // The reference `convert_to_text_completion_object` carries
                 // `delta.reasoning_content` onto `text_choices.reasoning_content`
                 // so DeepSeek-R1 / o1-style traces survive the legacy endpoint.
                 if let Some(rc) = delta.get("reasoning_content") {
@@ -579,7 +579,7 @@ mod tests {
     }
 
     /// A string-array `prompt` maps to one user message per element, matching
-    /// LiteLLM's `text_completion` translation (`litellm/main.py`: "for p in
+    /// The reference `text_completion` translation (`main.py`: "for p in
     /// prompt: messages.append({'role':'user','content':p})"). Previously the
     /// wrapper joined every element with `\n` into a single user message,
     /// diverging from the reference and yielding different model context.
@@ -800,9 +800,9 @@ mod tests {
         assert_eq!(extract_sse_data("not data"), None);
     }
 
-    // ---- Ported from LiteLLM `test_text_completion_unit_tests.py` ----------
+    // ---- Reference text-completion regression cases -----------------------
     //
-    // LiteLLM's `test_convert_dict_to_text_completion_response` validates the
+    // The reference text-completion response conversion test validates the
     // full text-completion response shape (id, choices[].text/finish_reason/
     // logprobs, created, model, object, usage incl. token details). oxllm's
     // analogue is `chat_to_legacy_completion`, which rewrites a chat response
@@ -942,7 +942,7 @@ mod tests {
     /// A legacy `logprobs: N` (int) request param is translated into the chat
     /// pair `logprobs: true` + `top_logprobs: N` so the upstream chat API
     /// accepts it (forwarding the int verbatim is a type mismatch the chat
-    /// API rejects with a 400). Mirrors LiteLLM's text-completion code path,
+    /// API rejects with a 400). Mirrors the reference text-completion code path,
     /// which keeps the int only because it routes those models to the native
     /// `/v1/completions` endpoint.
     #[test]
@@ -1362,7 +1362,7 @@ mod tests {
 
     /// A streaming chunk carrying `delta.reasoning_content` (DeepSeek-R1 /
     /// o1-style reasoning models) must hoist the reasoning trace onto the
-    /// choice level so legacy clients receive it. Mirrors LiteLLM's
+    /// choice level so legacy clients receive it. Mirrors the reference
     /// `convert_to_text_completion_object`.
     #[test]
     fn convert_chunk_preserves_reasoning_content() {

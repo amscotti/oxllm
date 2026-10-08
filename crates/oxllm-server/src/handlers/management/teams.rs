@@ -266,7 +266,7 @@ pub struct TeamBlockRequest {
 }
 
 /// `POST /team/block` — block a team so every key in it stops
-/// authenticating. Mirrors LiteLLM's `team.blocked` flag: the block lives on
+/// authenticating. Mirrors the reference `team.blocked` flag: the block lives on
 /// the team row, not on the individual keys, so `/key/block` applied to a
 /// specific key for a different reason (compromise, rotation, abuse) is
 /// preserved across a subsequent `/team/unblock`.
@@ -339,8 +339,8 @@ pub struct MemberRequest {
 ///
 /// **Destructive across teams:** this operation moves the user's keys from
 /// any current team (including `None`) into the new team. A user can only
-/// belong to one team at a time in this model (unlike LiteLLM, which has a
-/// separate `LiteLLM_TeamMembership` table allowing multi-team membership).
+/// belong to one team at a time in this model (unlike the reference, which has a
+/// separate team-membership table allowing multi-team membership).
 /// If the user has keys in team A and you call `/team/member/add(user, B)`,
 /// all of the user's keys — including those in team A — are reassigned to
 /// team B, dropping team A's budget/rate enforcement on those keys. Use

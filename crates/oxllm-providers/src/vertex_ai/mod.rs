@@ -93,7 +93,7 @@ fn is_anthropic_model(model: &str) -> bool {
 impl VertexProvider {
     /// Resolve the GCP project id for a deployment. Fails fast with
     /// [`Error::Config`] when `vertex_project` is missing or a non-string
-    /// JSON type, matching LiteLLM's behaviour of refusing to build a URL
+    /// JSON type, matching the reference behaviour of refusing to build a URL
     /// against an unresolved project.
     fn project(deployment: &Deployment) -> Result<String> {
         match deployment.oxllm_params.extra.get("vertex_project") {
@@ -270,7 +270,7 @@ impl ChatProvider for VertexProvider {
             // stripped to the bare Claude id. Vertex's `:rawPredict` endpoint
             // encodes the model in the URL path and rejects a top-level
             // `model` field in the body with a 400 ("Extra inputs are not
-            // permitted") — LiteLLM explicitly pops it
+            // permitted") — the reference explicitly pops it
             // (`transformation.py:102`, "vertex anthropic doesn't accept
             // 'model' parameter") — so we strip it after delegating.
             // Request-aware endpoint selection resolves wildcard models before
@@ -284,7 +284,7 @@ impl ChatProvider for VertexProvider {
                     "anthropic_version".to_string(),
                     json!(VERTEX_ANTHROPIC_VERSION),
                 );
-                // LiteLLM's `VertexAIAnthropicConfig.transform_request`
+                // the reference Vertex Anthropic request transform
                 // (`transformation.py:108-141`) mirrors the computed beta set
                 // into the body as `anthropic_beta` (Vertex's `:rawPredict`
                 // reads the body, not the `anthropic-beta` header, for

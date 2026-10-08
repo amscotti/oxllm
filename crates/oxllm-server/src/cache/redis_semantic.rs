@@ -9,7 +9,7 @@
 //!
 //! **Scale ceiling:** search and `enforce_capacity` perform an O(n) full scan
 //! (`SMEMBERS` + pipelined `HGETALL` for every entry). This deliberately avoids
-//! the RediSearch module dependency that LiteLLM's `RedisSemanticCache` relies
+//! the RediSearch module dependency that the reference `RedisSemanticCache` relies
 //! on (`redisvl` vector index for O(log n) server-side similarity). The
 //! practical limit is single-digit thousands of entries; beyond that, each
 //! lookup transfers every stored embedding + response JSON within the

@@ -167,9 +167,9 @@ pub async fn update_customer(
 /// Request body for `POST /customer/delete`.
 ///
 /// Mirrors [`CustomerBlockRequest`]: the legacy single `end_user_id` is
-/// still accepted for back-compat, and the LiteLLM bulk shape
+/// still accepted for back-compat, and the reference bulk shape
 /// (`user_ids: List[str]`) is accepted alongside it. When `user_ids` is
-/// present the request is treated as bulk and LiteLLM's all-or-404
+/// present the request is treated as bulk and the reference all-or-404
 /// existence semantics apply (every id must exist or the request fails
 /// with a 404 naming the missing ids, before any row is deleted).
 #[derive(Debug, Deserialize)]
@@ -186,7 +186,7 @@ pub struct DeleteCustomerRequest {
 ///   the legacy single-id response shape (`status`, `end_user_id`). A
 ///   missing id is a 404.
 /// - If `user_ids` is provided (with or without `end_user_id`), the ids are
-///   deduped/trimmed/capped at [`SCOPE_LIST_LIMIT`] and LiteLLM's
+///   deduped/trimmed/capped at [`SCOPE_LIST_LIMIT`] and the reference
 ///   all-or-404 semantics apply: every requested id must already exist or
 ///   the request fails with a 404 listing the missing ids, and nothing is
 ///   deleted. On success returns the bulk response shape
@@ -199,7 +199,7 @@ pub async fn delete_customer(
     require_master(&auth)?;
     let (_state, db) = load_db(&shared, &auth).await?;
 
-    // Bulk path: LiteLLM-shaped `user_ids` (optionally combined with the
+    // Bulk path: reference-shaped `user_ids` (optionally combined with the
     // legacy `end_user_id`). All-or-404 existence check, then a single
     // bulk delete.
     let has_user_ids = req
@@ -327,7 +327,7 @@ pub async fn list_customers(
 /// Request body for `POST /customer/block` and `POST /customer/unblock`.
 #[derive(Debug, Deserialize)]
 pub struct CustomerBlockRequest {
-    /// Single id (LiteLLM shape).
+    /// Single id (reference shape).
     #[serde(default)]
     pub end_user_id: Option<String>,
     /// Bulk ids.
@@ -424,7 +424,7 @@ mod tests {
         );
     }
 
-    /// C28 MEDIUM: `/customer/delete` accepts the LiteLLM bulk shape
+    /// C28 MEDIUM: `/customer/delete` accepts the reference bulk shape
     /// (`user_ids: List[str]`) in addition to the legacy single
     /// `end_user_id`. Both fields are optional at the serde level so the
     /// dispatcher can branch on whichever was supplied.

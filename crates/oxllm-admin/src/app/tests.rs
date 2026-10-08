@@ -195,7 +195,7 @@ async fn keys_page_full_renders_table() {
     assert!(html.contains("key-1"));
     assert!(html.contains("alpha"));
     assert!(html.contains("/keys/key-1/delete"));
-    // Team/user selects (LiteLLM-style)
+    // Team/user selects
     assert!(html.contains("<select"));
     assert!(html.contains("team-eng"));
     assert!(html.contains("Engineering"));
@@ -1990,9 +1990,9 @@ async fn enrich_with_budget_spend_window_follows_budget_duration() {
     m_monthly.assert();
 }
 
-/// LOW: the `daily` word alias must map to `24h` (LiteLLM's
+/// LOW: the `daily` word alias must map to `24h` (the reference
 /// `_BUDGET_DURATION_WORD_ALIASES`) so the budget window matches the proxy's
-/// scheduler and LiteLLM's duration parser. Both `daily` and `24h` collapse
+/// scheduler and the reference duration parser. Both `daily` and `24h` collapse
 /// to a sub-day window (today only); `hourly` and `weekly` round out the
 /// alias set.
 #[tokio::test]

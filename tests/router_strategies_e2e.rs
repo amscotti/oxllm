@@ -1,6 +1,6 @@
 //! Integration tests: router strategy failover semantics — bounded pick
 //! loops under `cooldown_time: 0`, deployment-fault 4xx sibling failover
-//! (LiteLLM AuthenticationError retry parity), round-robin alternation
+//! (authentication-error retry parity), round-robin alternation
 //! through the proxy, and the non-secret shape of health metric labels.
 
 use httpmock::{Mock, MockServer};
@@ -149,12 +149,9 @@ async fn send(handle: &OxllmHandle, model: &str) -> reqwest::Response {
 // cooldown_time: 0 — the chat retry loop must terminate (bounded picks)
 // ---------------------------------------------------------------------------
 
-/// A `cooldown_time` of 0 never excludes a failed deployment from rotation
-/// (the mark expires instantly), so the outer pick loop — not the cooldown
-/// store — is the only termination guarantee. The loop must bound itself at
-/// `deployments × (num_retries + 1)` picks: with one deployment and
-/// `num_retries: 1` the upstream sees exactly 4 attempts (2 picks × 2
-/// attempts) and the request resolves with an error instead of hanging.
+/// A zero persistent cooldown leaves failed members available to future
+/// requests. This request must still exclude an exhausted member: one
+/// deployment with `num_retries: 1` receives two attempts, then terminates.
 #[tokio::test]
 async fn zero_cooldown_chat_loop_terminates_with_bounded_attempts() {
     let mock = MockServer::start();
@@ -187,22 +184,21 @@ async fn zero_cooldown_chat_loop_terminates_with_bounded_attempts() {
     );
     assert_eq!(
         upstream.hits(),
-        4,
-        "1 deployment × (num_retries 1 + 1) picks × 2 attempts per pick = 4 \
-         upstream hits — the loop must not retry the zero-cooldown \
-         deployment forever"
+        2,
+        "one attempt plus one retry; an exhausted member must not be repicked \
+         in the same request even with zero persistent cooldown"
     );
 
     let _ = handle.shutdown_tx.send(());
 }
 
 // ---------------------------------------------------------------------------
-// 4xx sibling failover (LiteLLM AuthenticationError retry parity)
+// 4xx sibling failover (authentication-error retry parity)
 // ---------------------------------------------------------------------------
 
 /// With a per-status allowed-fails policy (`401: 0`) and a healthy sibling,
 /// a 401-ing deployment is cooled and the request fails over instead of
-/// failing the caller — LiteLLM retries AuthenticationError "if other
+/// failing the caller — the reference retries AuthenticationError "if other
 /// deployments available". Every request must return 200, and the broken
 /// deployment must be hit at most once before its cooldown keeps traffic
 /// away.

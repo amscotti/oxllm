@@ -86,7 +86,7 @@ pub(super) const WS_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 /// Wall-clock cap on a single realtime session. A client that opens the WS
 /// and goes silent (or a malicious client holding the session open) would
 /// otherwise pin one upstream socket, one client socket, the budget
-/// reservation, and a worker task indefinitely. LiteLLM does not enforce
+/// reservation, and a worker task indefinitely. The reference does not enforce
 /// this either (deployments typically sit behind a load balancer with an
 /// idle timeout), but oxllm-as-edge provides one.
 const REALTIME_MAX_SESSION_DURATION: Duration = Duration::from_secs(600);
@@ -198,7 +198,7 @@ pub(super) fn scheme_rewrite_for_ws(base: &str) -> String {
 /// The base is parsed with `url::Url` **first** so that an existing query
 /// string on `api_base` (e.g. Azure's `?api-version=…`) is preserved and the
 /// path suffix lands in the URL path rather than being swallowed into the
-/// query. This mirrors LiteLLM's `OpenAIRealtime._construct_url`, which uses
+/// query. This mirrors the reference `OpenAIRealtime._construct_url`, which uses
 /// `url.copy_with(path=…)` to set the path explicitly **before** applying
 /// query params — naive `format!("{base}/realtime")` produces a malformed URL
 /// when `base` already carries a `?` (the suffix ends up inside the query

@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 /// Build a one-deployment OpenAI config pointing at `mock_base_url`.
 ///
-/// `model_key` is the full litellm model id (`openai/gpt-4o`,
+/// `model_key` is the full provider/model id (`openai/gpt-4o`,
 /// `openai/o1-mini`, …). The client-facing `model_name` mirrors the key so
 /// requests can address the deployment as-is. Wildcard keys (`openai/*`)
 /// map to `model_name: "*"` so the router matches any `openai/...` model.

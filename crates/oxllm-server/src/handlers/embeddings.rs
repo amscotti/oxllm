@@ -205,16 +205,73 @@ async fn call_upstream(
         .resolve(deployment)
         .await
         .map_err(ApiError::from)?;
-    let url = embeddings.embedding_url(deployment);
+    let endpoint_deployment =
+        crate::orchestration::upstream::deployment_with_resolved_region(deployment, &creds);
+    let url = embeddings.embedding_url_for_request(&endpoint_deployment, request_body);
     // Transform errors are request-level (every sibling would fail the same
     // way), so map them to a 4xx status so the executor classifies them as
     // client errors and does not retry.
-    let transformed = embeddings
-        .transform_request(request_body, deployment)
+    let mut request = request_body.clone();
+    crate::orchestration::upstream::remove_additional_params(
+        &mut request,
+        deployment.oxllm_params.additional_drop_params.as_deref(),
+    );
+    let mut transformed = embeddings
+        .transform_request(&request, deployment)
         .map_err(transform_error_to_bad_request)?;
+    crate::orchestration::upstream::restore_allowed_params(
+        &mut transformed,
+        &request,
+        deployment.oxllm_params.allowed_openai_params.as_deref(),
+        Some(&["model", "input", "encoding_format", "dimensions"]),
+    );
+    // Deployment overrides are applied before the final drop pass.
+    crate::orchestration::upstream::shape_outbound_body(
+        &mut transformed,
+        deployment.oxllm_params.additional_drop_params.as_deref(),
+        deployment.oxllm_params.extra_body.as_ref(),
+    );
 
     let mut headers = HashMap::new();
     embeddings.apply_auth(deployment, &creds, &mut headers);
+    oxllm_core::provider::apply_auth_overrides(deployment, &creds, &mut headers);
+    crate::orchestration::upstream::merge_extra_headers(&mut headers, deployment);
+
+    let body_bytes = serde_json::to_vec(&transformed)
+        .map_err(|e| ApiError::internal(format!("failed to serialize request body: {e}")))?;
+    // Bedrock signs the exact body bytes. Serialize once, then send those
+    // bytes, so the signature matches the payload on the wire.
+    if let oxllm_core::provider::ResolvedCredentials::AwsSigV4 {
+        access_key,
+        secret_key,
+        session_token,
+        region,
+    } = &creds
+    {
+        let mut header_pairs: Vec<(String, String)> = headers
+            .iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v.clone()))
+            .collect();
+        if let Err(e) = crate::bedrock_sigv4::sign_request(
+            "POST",
+            &url,
+            &mut header_pairs,
+            &body_bytes,
+            access_key,
+            secret_key,
+            region,
+            "bedrock",
+            session_token.as_deref(),
+        ) {
+            tracing::error!(
+                error.kind = "config",
+                detail = %e,
+                "SigV4 request signing failed"
+            );
+            return Err(ApiError::internal("upstream request signing failed"));
+        }
+        headers = header_pairs.into_iter().collect();
+    }
 
     let timeout_secs = deployment.oxllm_params.timeout.unwrap_or_else(|| {
         state
@@ -230,7 +287,7 @@ async fn call_upstream(
         .post(&url)
         .header("content-type", "application/json")
         .timeout(sanitize_timeout_secs(timeout_secs))
-        .json(&transformed);
+        .body(body_bytes);
 
     for (key, value) in &headers {
         req_builder = req_builder.header(key, value);
@@ -283,6 +340,17 @@ async fn call_upstream(
     // malicious/compromised upstream returning a 200 with a multi-GB JSON
     // document is rejected after the cap rather than OOMing the proxy — this
     // matches the chat path's `sanitize_upstream_response` defence.
+    let reported_input_tokens = response
+        .headers()
+        .get("x-amzn-bedrock-input-token-count")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    let foundry_input_tokens = response
+        .headers()
+        .get("llm_provider-num_tokens")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|tokens| *tokens > 0);
     let bytes =
         crate::security::read_bounded_bytes(response, crate::security::MAX_RESPONSE_BODY_BYTES)
             .await?;
@@ -295,9 +363,48 @@ async fn call_upstream(
         ApiError::internal("failed to parse embeddings response as JSON")
     })?;
 
-    let transformed = embeddings
-        .transform_response(&response_body, &deployment.oxllm_params.model)
+    let configured_model = &deployment.oxllm_params.model;
+    let response_model = if configured_model.contains('*') {
+        let prefix = format!("{}/", deployment.provider_slug());
+        let requested = request_body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or(configured_model);
+        format!(
+            "{prefix}{}",
+            requested.strip_prefix(&prefix).unwrap_or(requested)
+        )
+    } else {
+        configured_model.clone()
+    };
+    let mut transformed = embeddings
+        .transform_response(&response_body, &response_model)
         .map_err(transform_error_to_bad_request)?;
+
+    // Foundry's Cohere text responses may meter through Azure ML headers.
+    // The reported count is authoritative even when the body has usage.
+    if let Some(tokens) = foundry_input_tokens {
+        transformed["usage"] = serde_json::json!({"prompt_tokens": tokens, "total_tokens": tokens});
+    }
+
+    if deployment.provider_slug() == "bedrock" && extract_embedding_usage(&transformed).is_none() {
+        let tokens = reported_input_tokens.unwrap_or_else(|| {
+            let model = &deployment.oxllm_params.model;
+            match request_body.get("input") {
+                Some(Value::String(text)) => oxllm_core::tokens::estimate_tokens(text, model),
+                Some(Value::Array(texts)) => {
+                    texts
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .fold(0u64, |total, text| {
+                            total.saturating_add(oxllm_core::tokens::estimate_tokens(text, model))
+                        })
+                }
+                _ => 0,
+            }
+        });
+        transformed["usage"] = serde_json::json!({"prompt_tokens": tokens, "total_tokens": tokens});
+    }
 
     let usage = extract_embedding_usage(&transformed);
     Ok((transformed, usage))
@@ -373,7 +480,7 @@ fn extract_embedding_usage(value: &Value) -> Option<UsageSummary> {
 /// shape (`"input": "hi"`) and the array-of-strings shape
 /// (`"input": ["a", "b"]`). Non-string / non-array inputs are left untouched.
 ///
-/// LiteLLM additionally recognises a token-array shape
+/// The reference additionally recognises a token-array shape
 /// (`"input": [[101, 102], ...]`) and, for providers that do not support
 /// token-array input, decodes the tokens back to text before forwarding so
 /// PII can be re-masked. oxllm forwards `input` verbatim to the provider

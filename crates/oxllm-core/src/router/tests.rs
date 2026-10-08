@@ -51,7 +51,7 @@ fn allowed_fails_no_policy_is_not_counted() {
 
 #[test]
 fn allowed_fails_global_threshold() {
-    // LiteLLM parity: `allowed_fails: 2` tolerates 2 failures, cools on the
+    // Failure-policy parity: `allowed_fails: 2` tolerates 2 failures, cools on the
     // 3rd (`updated_fails > allowed_fails`).
     let router = router_with_allowed_fails(Some(2), None);
     let d1 = router.record_failure_and_check("gpt-4o:0", 500, "gpt-4o");
@@ -65,7 +65,7 @@ fn allowed_fails_global_threshold() {
 #[test]
 fn allowed_fails_policy_per_status_thresholds() {
     // 429 tolerated three times and cools on the 4th; 401 tolerated once
-    // and cools on the 2nd (LiteLLM `>` semantics).
+    // and cools on the 2nd (exclusive `>` semantics).
     let policy = HashMap::from([("429".to_string(), 3u32), ("401".to_string(), 1u32)]);
     let router = router_with_allowed_fails(None, Some(policy));
 
@@ -170,7 +170,7 @@ fn allowed_fails_limit_for_resolution() {
     assert_eq!(router.allowed_fails_limit_for(500), None);
 }
 
-/// LiteLLM parity: pin the exact (count, limit) transition points for a
+/// Failure-policy parity: pin the exact (count, limit) transition points for a
 /// range of `allowed_fails` values against the upstream `updated_fails >
 /// allowed_fails` semantics. A future "simplification" of the comparison
 /// back to `>=` would flip one of these and trip this test.
@@ -203,7 +203,7 @@ fn allowed_fails_litellm_parity_transition_points() {
     }
 }
 
-/// LiteLLM `test_cooldown_badrequest_error`: client errors must not mark cooldown.
+/// Client errors must not mark cooldown.
 /// oxllm only calls `mark_cooldown` after retryable exhaustion — never on 4xx paths.
 #[test]
 fn cooldown_not_marked_until_explicit_mark() {
@@ -1750,20 +1750,20 @@ fn model_group_alias_expands_with_duplicates_removes_them() {
 }
 
 // ===========================================================================
-// Tests ported from LiteLLM's `tests/router_unit_tests/`.
+// Reference router behavior tests.
 //
-// LiteLLM's router decides cooldowns per-deployment via traffic-threshold
+// The reference router decides cooldowns per-deployment via traffic-threshold
 // heuristics (`_should_cooldown_deployment`) and ships prompt-caching routing.
 // oxllm's router is intentionally simpler: cooldowns are explicit
 // (`mark_cooldown`) and decided by the caller, retry policy is per-status,
 // and prompt-caching's "stick to one deployment" property is served by the
-// `SessionAffinity` strategy. These tests port the LiteLLM *behaviors* that
+// `SessionAffinity` strategy. These tests port the reference *behaviors* that
 // map onto oxllm's actual surface, cross-referencing the source test.
 // ===========================================================================
 
 // --- Cooldown edge cases: ports of test_router_cooldown_utils.py ----------
 
-/// Port of LiteLLM `test_should_cooldown_deployment_rate_limit_error`:
+/// Rate-limit cooldown behavior:
 /// a 429 rate-limit error triggers cooldown, and the cooled deployment is
 /// excluded from routing until the cooldown expires.
 #[test]
@@ -1789,7 +1789,7 @@ fn cooldown_429_rate_limit_excludes_deployment() {
     }
 }
 
-/// Port of LiteLLM `test_should_cooldown_deployment_auth_limit_error`:
+/// Authentication-failure cooldown behavior:
 /// a 401 auth error can trigger cooldown just like a rate-limit error, and
 /// the cooled deployment stays out of rotation.
 #[test]
@@ -1814,7 +1814,7 @@ fn cooldown_401_auth_error_excludes_deployment() {
     }
 }
 
-/// Port of LiteLLM `test_cooldown_rate_limit` / `test_no_cooldown_low_traffic`:
+/// Rate-limit and low-traffic cooldown behavior:
 /// cooldown is an explicit decision in oxllm — a transient 500 on a healthy
 /// deployment must NOT auto-cool it. Only an explicit `mark_cooldown` does.
 /// This pins the contract that oxllm never silently cools on upstream errors.
@@ -1832,11 +1832,11 @@ fn server_error_500_does_not_auto_cooldown() {
     assert!(router.pick_deployment(&deps, &ctx).is_some());
 }
 
-/// Port of LiteLLM `test_cast_exception_status_to_int`: status codes are
+/// Status-code conversion behavior: status codes are
 /// normalized so the retry policy can be keyed by status. oxllm keys
 /// `retry_policy` by the decimal status string; configured statuses resolve,
 /// and unconfigured/invalid ones fall back to `num_retries` (the analog of
-/// LiteLLM casting `"invalid"` → `500` → default behavior).
+/// the reference casting `"invalid"` → `500` → default behavior).
 #[test]
 fn retry_policy_status_lookup_429_500_401() {
     let mut policy = std::collections::HashMap::new();
@@ -1855,11 +1855,11 @@ fn retry_policy_status_lookup_429_500_401() {
     // 401 (auth) is configured as non-retryable.
     assert_eq!(router.retries_for_status(401), 0);
     // An unconfigured status (e.g. 404) falls back to num_retries — the
-    // analog of LiteLLM defaulting an unrecognized status.
+    // analog of the reference defaulting an unrecognized status.
     assert_eq!(router.retries_for_status(404), 2);
 }
 
-/// Port of LiteLLM `test_should_run_cooldown_logic`: when cooldowns are
+/// Cooldown-policy activation behavior: when cooldowns are
 /// "disabled" (zero cooldown window), a marked deployment is immediately
 /// available again. oxllm expresses this via `cooldown_time_secs == 0`.
 #[test]
@@ -1895,7 +1895,7 @@ fn cooldown_disabled_zero_window_no_exclusion() {
     );
 }
 
-/// Port of LiteLLM `test_should_cooldown_high_traffic_all_fails`: when a
+/// High-traffic failure cooldown behavior: when a
 /// deployment is cooled after sustained failures, the router reports it as
 /// cooling and routes around it.
 #[test]
@@ -1921,7 +1921,7 @@ fn cooldown_marked_then_routed_around() {
 
 // --- Router error handling: ports of test_router_handle_error.py ----------
 
-/// Port of LiteLLM `test_async_raise_no_deployment_exception`: when every
+/// No-deployment error behavior: when every
 /// deployment for a model is cooling (e.g. all hit a 429 rate limit), the
 /// router must yield `None` — the "no deployment available" outcome.
 #[test]
@@ -1943,7 +1943,7 @@ fn all_rate_limited_deployments_yield_none() {
     );
 }
 
-/// Port of LiteLLM `test_async_raise_no_deployment_exception_empty_cooldown_list`:
+/// No-deployment error behavior with an empty cooldown list:
 /// when NO deployments are cooling but the model simply has no deployments,
 /// the router also yields `None` (the empty-cooldown-list scenario).
 #[test]
@@ -1953,7 +1953,7 @@ fn no_deployments_yields_none_empty_cooldown() {
     assert!(router.pick_deployment(&[], &ctx).is_none());
 }
 
-/// Port of LiteLLM `test_get_fallback_model_group_from_fallbacks` +
+/// Fallback model-group lookup behavior +
 /// mock-testing fallback error types: a failing primary resolves to its
 /// configured fallback model group, with the right chain selected per error
 /// kind (regular vs context-window vs content-policy).
@@ -1977,7 +1977,7 @@ fn fallback_resolution_for_rate_limited_primary() {
     assert!(router.fallbacks_for("unknown").is_empty());
 }
 
-/// Port of LiteLLM `test_handle_mock_testing_fallbacks`: the three distinct
+/// Fallback dispatch behavior: the three distinct
 /// fallback kinds (regular, context-window, content-policy) each resolve
 /// independently. oxllm surfaces them as separate accessor methods.
 #[test]
@@ -2009,7 +2009,7 @@ fn three_fallback_kinds_resolve_independently() {
     );
 }
 
-/// Port of LiteLLM `test_async_raise_no_deployment_exception` cooldown_list
+/// No-deployment exception cooldown-list
 /// shape: cooling deployments are identified by their cooldown key, and the
 /// router can report each one's cooling state (analog of the cooldown_list).
 #[test]
@@ -2037,7 +2037,7 @@ fn cooldown_list_per_deployment_key() {
     }
 }
 
-/// Port of LiteLLM cooldown expiry semantics: once the cooldown window
+/// Cooldown expiry semantics: once the cooldown window
 /// elapses, the deployment rejoins rotation. oxllm uses a zero window to
 /// express "immediately available again" without flaky real-time waits.
 #[test]
@@ -2061,10 +2061,10 @@ fn cooldown_expires_and_rejoins_rotation() {
 // oxllm has no prompt-caching router; the equivalent "keep a conversation on
 // one deployment to warm the provider's prompt cache" property is provided by
 // the `SessionAffinity` strategy (consistent hash of the session id). These
-// tests port LiteLLM's "same cacheable prefix → same deployment" invariant
+// tests port the "same cacheable prefix → same deployment" invariant
 // onto session affinity.
 
-/// Port of LiteLLM `test_router_prompt_caching_same_cacheable_prefix_routes_to_same_deployment`:
+/// Matching cacheable prefixes route to the same deployment:
 /// requests that share a stable affinity key (session id — the analog of the
 /// cacheable prefix) MUST route to the same deployment across many calls, so
 /// the upstream provider's prompt cache stays warm.
@@ -2103,7 +2103,7 @@ fn prompt_caching_same_session_same_deployment() {
     }
 }
 
-/// Port of LiteLLM's distinct-cache-key cases: DIFFERENT affinity keys (analog
+/// Distinct-cache-key cases: DIFFERENT affinity keys (analog
 /// of different cacheable prefixes) are allowed to route to different
 /// deployments — i.e. session affinity does not collapse all traffic onto one
 /// node. With multiple sessions across many trials, more than one deployment
@@ -2138,7 +2138,7 @@ fn prompt_caching_distinct_sessions_can_split() {
     );
 }
 
-/// Port of LiteLLM `test_serialize_dict` (cache-key stability): the affinity
+/// Cache-key serialization stability: the affinity
 /// decision must be deterministic for a given session id — repeated identical
 /// inputs never flip between deployments (stable hashing, not random).
 #[test]
@@ -2173,7 +2173,7 @@ fn prompt_caching_affinity_is_deterministic() {
     );
 }
 
-/// Port of LiteLLM `test_extract_cacheable_prefix_with_string_content_no_cache_control`:
+/// Cacheable-prefix extraction from string content without cache controls:
 /// when there is no affinity key (no session id — the analog of "no
 /// cache_control"), session affinity falls back to the shuffle strategy and
 /// still picks *some* deployment rather than failing.
@@ -2902,7 +2902,7 @@ fn complexity_router_uses_default_model_when_tier_pool_missing() {
 fn complexity_router_cooled_tier_pool_does_not_pick_unrelated_model() {
     // The tier pool is fully cooled and the requested model's group resolves
     // nothing; a healthy unrelated deployment must NOT be served. The chain
-    // stops at the requested model's group (LiteLLM parity), yielding None →
+    // stops at the requested model's group, yielding None →
     // 404 instead of silently billing a completely different model.
     let router = Router::new(complexity_test_config());
     let deps = [make_dep("gpt-4o-mini"), make_dep("gpt-4o")];
@@ -3146,7 +3146,7 @@ fn order_tier_escalates_when_top_tier_cools() {
 
 #[test]
 fn order_unset_is_last_resort() {
-    // LiteLLM parity: a deployment WITHOUT `order` only becomes eligible
+    // Priority-order parity: a deployment WITHOUT `order` only becomes eligible
     // once every ordered deployment is cooling down.
     let router = default_router();
     let deps = [
@@ -4127,6 +4127,26 @@ fn exception_retry_policy_rate_limit_covers_429() {
 }
 
 #[test]
+fn structured_retry_aliases_control_retry_counts_and_explicit_statuses_win() {
+    let policy: RetryPolicy = serde_json::from_value(serde_json::json!({
+        "RateLimitErrorRetries": 3, "TimeoutErrorRetries": 4,
+        "InternalServerErrorRetries": 5, "ContentPolicyViolationErrorRetries": 0,
+    }))
+    .unwrap();
+    let router = Router::new(RouterConfig {
+        num_retries: 1,
+        retry_policy: HashMap::from([("429".into(), 7)]),
+        exception_retry_policy: Some(policy),
+        ..RouterConfig::default()
+    });
+    assert_eq!(router.retries_for_status(429), 7);
+    assert_eq!(router.retries_for_status(408), 4);
+    assert_eq!(router.retries_for_status(503), 5);
+    assert_eq!(router.retries_for_status(401), 1);
+    assert_eq!(router.retries_for_status(400), 0);
+}
+
+#[test]
 fn exception_retry_policy_all_categories() {
     let config = RouterConfig {
         exception_retry_policy: Some(RetryPolicy {
@@ -4202,7 +4222,7 @@ fn exception_retry_policy_absent_preserves_no_policy_behavior() {
 
 #[test]
 fn exception_retry_policy_rate_limit_retries_in_record_failure() {
-    // LiteLLM `>` semantics: `rate_limit_retries: 2` tolerates 2 failures,
+    // Exclusive `>` semantics: `rate_limit_retries: 2` tolerates 2 failures,
     // cools on the 3rd.
     let config = RouterConfig {
         exception_retry_policy: Some(RetryPolicy {
@@ -4222,7 +4242,7 @@ fn exception_retry_policy_rate_limit_retries_in_record_failure() {
 
 #[test]
 fn exception_retry_policy_internal_server_covers_502_503_504() {
-    // LiteLLM's allowed-fails vocabulary covers 500/502/503 via separate
+    // The reference allowed-fails vocabulary covers 500/502/503 via separate
     // `*AllowedFails` fields; oxllm's single 5xx category must cover
     // 502/503/504 so an operator who set `internal_server_error_retries: 5`
     // to tolerate 5xx flapping gets it for the most common flapping codes,
@@ -4249,7 +4269,7 @@ fn exception_retry_policy_internal_server_covers_502_503_504() {
 
 #[test]
 fn exception_policy_num_retries_fallback_excludes_client_errors() {
-    // LiteLLM `_is_cooldown_required` (cooldown_handlers.py:233-247) skips
+    // The reference `_is_cooldown_required` (cooldown_handlers.py:233-247) skips
     // cooldown evaluation for 4xx other than 429/401/408/404: a generic
     // client error is the client's fault and must not cool a healthy
     // deployment (which would then cascade the abusive client across every
@@ -4280,7 +4300,7 @@ fn exception_policy_num_retries_fallback_excludes_client_errors() {
     }
     // Cooldown-worthy statuses (server errors incl. 503, plus 429/408/401/
     // 404) still count under the num_retries fallback: tolerated
-    // `num_retries` times, LimitReached on the next (LiteLLM `>`).
+    // `num_retries` times, LimitReached on the next (exclusive `>`).
     for status in [429u16, 408, 401, 404, 500, 503] {
         let key = format!("gpt-4o:0:{status}");
         assert_eq!(
@@ -4302,7 +4322,7 @@ fn exception_policy_num_retries_fallback_excludes_client_errors() {
 fn exception_policy_explicit_opt_in_still_counts_400() {
     // An explicit category naming the status (content_policy_retries → 400)
     // is an operator opt-in that overrides the client-error exclusion,
-    // mirroring LiteLLM's `_has_explicit_allowed_fails_policy_for_exception`.
+    // mirroring the reference explicit allowed-fails policy check.
     let config = RouterConfig {
         exception_retry_policy: Some(RetryPolicy {
             content_policy_retries: Some(1),

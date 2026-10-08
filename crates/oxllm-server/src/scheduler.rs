@@ -171,10 +171,10 @@ impl BudgetResetScheduler {
     }
 }
 
-/// Parse a LiteLLM-style budget duration string into a [`Duration`].
+/// Parse a budget duration string into a [`Duration`].
 ///
-/// Supported suffixes (matches LiteLLM's `duration_in_seconds` grammar,
-/// `litellm/litellm_core_utils/duration_parser.py`):
+/// Supported suffixes (matches the reference `duration_in_seconds` grammar,
+/// `core_utils/duration_parser.py`):
 /// - `s` — seconds (e.g. `"30s"`)
 /// - `m` — minutes (e.g. `"5m"`)
 /// - `h` — hours (e.g. `"1h"`)
@@ -182,12 +182,12 @@ impl BudgetResetScheduler {
 /// - `w` — weeks (e.g. `"1w"`)
 /// - `mo` — months, approximated as 30 days (e.g. `"1mo"`)
 ///
-/// Word aliases (LiteLLM's `_BUDGET_DURATION_WORD_ALIASES`, applied before
-/// suffix parsing so a config migrated verbatim from LiteLLM behaves
+/// Word aliases (the reference `_BUDGET_DURATION_WORD_ALIASES`, applied before
+/// suffix parsing so a config migrated verbatim behaves
 /// identically):
 /// - `hourly` → `1h`, `daily` → `24h`, `weekly` → `7d`, `monthly` → `30d`.
 ///
-/// Oxllm extension (NOT in LiteLLM, do not rely on it for portable configs):
+/// Oxllm extension (outside the reference grammar, for native configs):
 /// - `ms` — milliseconds (e.g. `"500ms"`); sub-second budget windows are
 ///   operationally meaningless (the scheduler tick is 60s), but the suffix is
 ///   accepted so tests can drive sub-second windows without long sleeps.
@@ -211,7 +211,7 @@ pub fn parse_budget_duration(s: &str) -> Duration {
 }
 
 /// Check whether `s` is a valid `budget_duration` string (e.g. `"30d"`,
-/// `"1mo"`, `"5m"`, or a LiteLLM word alias like `"daily"`). Used by the
+/// `"1mo"`, `"5m"`, or a word alias like `"daily"`). Used by the
 /// management API to reject malformed values at the boundary rather than
 /// silently defaulting to 30d at enforcement time. Empty strings are valid
 /// (= use the default window).
@@ -221,11 +221,11 @@ pub fn budget_duration_is_valid(s: &str) -> bool {
 }
 
 fn parse_duration_suffix(trimmed: &str) -> Option<Duration> {
-    // LiteLLM normalizes word aliases BEFORE suffix parsing
+    // Normalize word aliases BEFORE suffix parsing
     // (`_BUDGET_DURATION_WORD_ALIASES`: hourly/daily/weekly/monthly). Without
     // this, `"daily"` would reach the suffix parser, its last char (`'y'`)
     // matches no unit, and `parse_budget_duration` would silently fall back to
-    // the 30-day default — a 30x divergence from LiteLLM for a config migrated
+    // the 30-day default — a 30x divergence from the reference for a config migrated
     // verbatim. `monthly` coincidentally matches (30d), but the other three do
     // not, so they must be mapped explicitly.
     let trimmed = match trimmed {
@@ -352,8 +352,8 @@ mod tests {
         );
     }
 
-    /// LiteLLM word aliases (`_BUDGET_DURATION_WORD_ALIASES`) are normalized
-    /// before suffix parsing so a config migrated verbatim from LiteLLM is
+    /// Word aliases (`_BUDGET_DURATION_WORD_ALIASES`) are normalized
+    /// before suffix parsing so a config migrated verbatim is
     /// interpreted identically. Without this, `daily`/`hourly`/`weekly`
     /// silently fall back to the 30-day default (30x / 720x / 4x divergences).
     #[test]
@@ -393,8 +393,8 @@ mod tests {
         );
     }
 
-    /// The management-API boundary check must accept LiteLLM word aliases so
-    /// a config ported from LiteLLM is not rejected while enforcement accepts
+    /// The management-API boundary check must accept word aliases so
+    /// a ported config is not rejected while enforcement accepts
     /// it (or silently defaults).
     #[test]
     fn budget_duration_is_valid_accepts_word_aliases() {
@@ -406,7 +406,7 @@ mod tests {
         }
     }
 
-    /// `ms` is an oxllm-only extension (LiteLLM has no millisecond branch);
+    /// `ms` is an oxllm-only extension (the reference has no millisecond branch);
     /// kept so tests can drive sub-second windows without long sleeps.
     #[test]
     fn parses_milliseconds() {
@@ -473,7 +473,7 @@ mod tests {
         // Non-numeric prefix.
         assert_eq!(parse_budget_duration("xxd"), default);
         // Regression: a previously-accepted-but-wrong `"1w"` must NOT equal
-        // the 30-day default now that LiteLLM's `w` (week) suffix is honored.
+        // the 30-day default now that the `w` (week) suffix is honored.
         assert_ne!(parse_budget_duration("1w"), default);
     }
 

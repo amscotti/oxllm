@@ -13,8 +13,8 @@ use crate::state::SharedState;
 /// These routes never go through auth.
 ///
 /// `/health/liveness` and `/health/liveliness` are aliases for `/health`,
-/// matching LiteLLM's k8s-friendly liveness route variants
-/// (`_health_endpoints.py:1651-1705`). A deployment migrating from LiteLLM
+/// matching the reference k8s-friendly liveness route variants
+/// (`_health_endpoints.py:1651-1705`). A deployment migrating from an existing proxy
 /// with k8s probes pointed at either path must not 404.
 pub(crate) fn health_routes() -> Router<SharedState> {
     Router::new()

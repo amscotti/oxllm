@@ -1,9 +1,11 @@
 //! Datadog logging hook.
 //!
 //! Built on [`HttpTelemetryHook`]: each successful (non-cache, non-master)
-//! request is POSTed as a Datadog log entry to the logs intake API
-//! (`POST {endpoint}/api/v2/logs`) under a `DD-API-KEY` header. The POST is
-//! fire-and-forget. Wired in from `oxllm_settings.datadog_config`.
+//! request, and each upstream failure, is POSTed as a Datadog log entry to
+//! the logs intake API (`POST {endpoint}/api/v2/logs`) under a `DD-API-KEY`
+//! header. The POST is fire-and-forget. Wired in from
+//! `oxllm_settings.datadog_config`. Other HTTP telemetry backends stay
+//! success-only.
 
 use std::sync::Arc;
 
@@ -38,7 +40,8 @@ pub fn build(
         .map(|s| s.to_string())
         .unwrap_or_else(|| DEFAULT_SERVICE.to_string());
     let url = format!("{endpoint}/api/v2/logs");
-    HttpTelemetryHook::new_full(
+    let service_for_failure = service.clone();
+    let hook = HttpTelemetryHook::new_full(
         url,
         Some(("DD-API-KEY".to_string(), config.api_key.clone())),
         move |ctx, resp| json!([datadog_log(&service, ctx, resp)]),
@@ -46,7 +49,10 @@ pub fn build(
         crate::hooks::http_telemetry::DEFAULT_CHANNEL_CAPACITY,
         allow_private,
         redact_secret_values,
-    )
+    )?;
+    Ok(hook.with_failure_payload(move |ctx, err| {
+        json!([datadog_failure_log(&service_for_failure, ctx, err)])
+    }))
 }
 
 /// Build a Datadog hook from `oxllm_settings.datadog_config` when present.
@@ -105,6 +111,39 @@ fn datadog_log(service: &str, ctx: &CallContext, resp: &ResponseSummary) -> Valu
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "cost": cost,
+            "key_id": ctx.key_id,
+            "team_id": ctx.team_id,
+            "user_id": ctx.user_id,
+            "request_id": ctx.request_id,
+        },
+    })
+}
+
+/// Failure log. The message is capped at 500 characters so a provider body
+/// cannot inflate the intake payload.
+fn datadog_failure_log(service: &str, ctx: &CallContext, err: &oxllm_core::Error) -> Value {
+    let mut message_value = Value::String(err.to_string());
+    crate::hooks::redact::redact_secret_values_in_place(&mut message_value);
+    let mut message = message_value
+        .as_str()
+        .unwrap_or("upstream failure")
+        .to_string();
+    if message.chars().count() > 500 {
+        message = message.chars().take(500).collect();
+    }
+    let http_status = match err {
+        oxllm_core::Error::Upstream { status, .. } => Some(*status),
+        _ => None,
+    };
+    json!({
+        "ddsource": "oxllm",
+        "service": service,
+        "status": "error",
+        "message": message,
+        "hostname": service,
+        "attributes": {
+            "model": ctx.model,
+            "http_status": http_status,
             "key_id": ctx.key_id,
             "team_id": ctx.team_id,
             "user_id": ctx.user_id,
@@ -240,10 +279,72 @@ endpoint: https://datadog.example.com
         assert_eq!(log["service"], "oxllm");
     }
 
-    /// LOW #9: `hostname` must be a stable host-level value (the service
-    /// name), not the per-request `ctx.request_id`. Stuffing a unique UUID
-    /// into `hostname` defeats Datadog's host-based correlation and risks
-    /// hitting custom-metric/host cardinality caps.
+    #[test]
+    fn failure_log_is_an_error_and_truncates_the_message() {
+        let err = oxllm_core::Error::Upstream {
+            status: 503,
+            message: "x".repeat(800),
+        };
+        let log = datadog_failure_log("my-svc", &make_ctx(), &err);
+        assert_eq!(log["status"], "error");
+        assert_eq!(log["attributes"]["http_status"], 503);
+        assert_eq!(log["attributes"]["model"], "gpt-4o");
+        assert_eq!(log["message"].as_str().unwrap().chars().count(), 500);
+    }
+
+    #[test]
+    fn failure_logs_redact_credentials_echoed_by_an_upstream() {
+        let secret = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
+        let error = oxllm_core::Error::Upstream {
+            status: 401,
+            message: format!("Incorrect API key provided: {secret}"),
+        };
+        let log = datadog_failure_log("service", &make_ctx(), &error);
+        assert!(!log["message"].as_str().unwrap().contains(secret));
+        assert!(log["message"].as_str().unwrap().contains("[redacted]"));
+    }
+
+    #[tokio::test]
+    async fn failure_events_are_enabled_and_posted() {
+        use httpmock::MockServer;
+        use oxllm_core::Hook;
+
+        let server = MockServer::start();
+        let cfg = DatadogConfig {
+            endpoint: Some(server.base_url()),
+            ..raw_config()
+        };
+        let hook = build(&cfg, false, false).expect("build");
+        assert!(hook.supports_failure_events());
+
+        let post_mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/api/v2/logs")
+                .header("DD-API-KEY", "dd-key")
+                .body_contains("\"status\":\"error\"")
+                .body_contains("upstream error (429)");
+            then.status(202);
+        });
+
+        hook.post_failure(
+            &make_ctx(),
+            &oxllm_core::Error::Upstream {
+                status: 429,
+                message: "slow down".into(),
+            },
+        )
+        .await;
+
+        for _ in 0..40 {
+            if post_mock.hits() >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(post_mock.hits() >= 1, "datadog should POST a failure log");
+    }
+
+    /// Host correlation uses the stable service name rather than request ids.
     #[test]
     fn build_log_uses_stable_hostname_not_request_id() {
         let log = datadog_log("my-svc", &make_ctx(), &make_response());

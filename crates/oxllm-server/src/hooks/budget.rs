@@ -291,12 +291,12 @@ impl BudgetHook {
 
     /// Atomically reserve `estimate` against `limit` on `key`.
     ///
-    /// U2 (LiteLLM `07f7fc224e`): oxllm is already fail-closed. When the
+    /// U2: oxllm is already fail-closed. When the
     /// backing store (e.g. Redis) returns an `Err` from `incr_if_below`
     /// (Redis outage), the `?` operator propagates it as `Err(Error)`.
     /// In `pre_call`, every `reserve` call site catches `Err` and returns
     /// `reject_over_budget(...)` — so a cache outage REJECTS the request
-    /// rather than letting it through. LiteLLM's bug was swallowing the
+    /// rather than letting it through. The reference bug was swallowing the
     /// error and continuing (fail-open); oxllm propagates it (fail-closed).
     async fn reserve(
         &self,
@@ -476,11 +476,11 @@ impl Hook for BudgetHook {
         let mut reserved_keys: Vec<String> = Vec::new();
 
         if let Some(limit) = key_limit {
-            // DELIBERATE DIVERGENCE FROM LITELLM (C31): oxllm treats a
+            // DELIBERATE DIVERGENCE FROM THE REFERENCE (C31): oxllm treats a
             // `max_budget` of `0` (or negative) as "reject everything", while
-            // LiteLLM (`budget_reservation.py`) treats `0` as "no limit" and
+            // The reference (`budget_reservation.py`) treats `0` as "no limit" and
             // only enforces when `max_budget > 0`. A config ported verbatim
-            // from LiteLLM with `max_budget: 0` (intended as unlimited there)
+            // from an existing proxy with `max_budget: 0` (intended as unlimited there)
             // would 403 every request under oxllm. The block-all semantics
             // are pinned by `zero_max_budget_rejects`; do not flip them
             // without intent and without surfacing the change to operators.
@@ -1322,9 +1322,9 @@ mod tests {
         assert!(matches!(action, HookAction::Continue));
     }
 
-    /// LOW (C31): pins the DELIBERATE divergence from LiteLLM. oxllm treats
-    /// `max_budget: 0` as block-all; LiteLLM treats `0` as "no limit" (only
-    /// `max_budget > 0` is enforced). A config ported verbatim from LiteLLM
+    /// LOW (C31): pins the DELIBERATE divergence from the reference. oxllm treats
+    /// `max_budget: 0` as block-all; the reference treats `0` as "no limit" (only
+    /// `max_budget > 0` is enforced). A config ported verbatim from an existing proxy
     /// with `max_budget: 0` would 403 every request under oxllm — see the
     /// divergence note at the `<= 0.0` check in `pre_call`. Do not flip this
     /// without intent.

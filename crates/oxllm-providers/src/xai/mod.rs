@@ -6,10 +6,10 @@
 //! parsing and the supported-params list are delegated to the shared
 //! [`OpenAiCompatProvider`] engine. xAI diverges from the OpenAI contract on a
 //! handful of points that the wrapper applies on top of the shared body
-//! builder (parity with LiteLLM's `XAIChatConfig`):
+//! builder (parity with the reference `XAIChatConfig`):
 //!
 //! - **`name` stripped from non-user messages**: the xAI API rejects any
-//!   non-user message carrying a `name` field with a 400 (LiteLLM issue
+//!   non-user message carrying a `name` field with a 400 (reference issue
 //!   #9720). Only the `user` role is permitted to keep `name`.
 //! - **`strict` stripped from tool definitions**: xAI rejects the OpenAI
 //!   structured-outputs `strict` flag on tool function definitions.
@@ -70,7 +70,7 @@ fn apply_xai_request_transforms(out: &mut Value) {
 }
 
 /// Remove the `name` field from every message whose role is not `user`
-/// (parity with LiteLLM's `strip_name_from_messages(messages, ["user"])`).
+/// (parity with the reference message-name filtering).
 /// xAI rejects non-user messages carrying `name` with a 400. The `user` role
 /// is permitted to keep `name` (matching OpenAI's multi-user convention).
 fn strip_name_from_non_user_messages(out: &mut Value) {
@@ -92,7 +92,7 @@ fn strip_name_from_non_user_messages(out: &mut Value) {
 }
 
 /// Remove the `strict` flag from each tool's `function` object (parity with
-/// LiteLLM's `filter_value_from_dict(tool, "strict")`). xAI rejects the
+/// the reference tool-strict filtering). xAI rejects the
 /// OpenAI structured-outputs `strict` field on tool function definitions.
 fn strip_strict_from_tools(out: &mut Value) {
     let Some(tools) = out.get_mut("tools").and_then(|v| v.as_array_mut()) else {
@@ -113,7 +113,7 @@ fn apply_xai_response_transforms(out: &mut Value) {
 }
 
 /// Set `finish_reason = "tool_calls"` on choices where xAI returned an empty
-/// string but the message carries tool calls (parity with LiteLLM's
+/// string but the message carries tool calls (parity with the reference
 /// `_fix_choice_finish_reason_for_tool_calls`). The OpenAI contract is that a
 /// tool-call response finishes with `"tool_calls"`.
 fn fix_empty_finish_reason_for_tool_calls(out: &mut Value) {
@@ -146,7 +146,7 @@ fn fix_empty_finish_reason_for_tool_calls(out: &mut Value) {
 }
 
 /// Fold `reasoning_tokens` into `completion_tokens` so the OpenAI subset
-/// invariant `total = prompt + completion` holds (parity with LiteLLM's
+/// invariant `total = prompt + completion` holds (parity with the reference
 /// `_fold_reasoning_tokens_into_completion`). xAI accounts reasoning
 /// additively; without this fold the cost calculator subtracts reasoning
 /// tokens that were never inside `completion_tokens`, mis-pricing the output
@@ -202,7 +202,7 @@ fn fold_reasoning_in_usage_object(usage: &mut Map<String, Value>) {
 fn apply_xai_stream_transforms(value: &mut Value) {
     // Inject a dummy choice when `choices` is empty but `usage` is present, so
     // the orchestrator's usage accumulator processes the final usage chunk
-    // (parity with LiteLLM's `XAIChatCompletionStreamingHandler.chunk_parser`).
+    // (parity with the reference xAI streaming chunk parser).
     let needs_dummy_choice = {
         let choices_empty = value
             .get("choices")

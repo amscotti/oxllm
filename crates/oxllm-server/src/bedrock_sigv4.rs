@@ -350,9 +350,9 @@ fn canonical_query_string(query: &str) -> String {
         .join("&")
 }
 
-/// Validate an AWS region name. Mirrors LiteLLM's
+/// Validate an AWS region name. Mirrors the reference
 /// `_VALID_AWS_REGION_PATTERN = re.compile(r"\A[a-z0-9-]+\Z")`
-/// (`litellm/llms/bedrock/base_aws_llm.py:45`): ASCII lowercase letter /
+/// (`llms/bedrock/base_aws_llm.py:45`): ASCII lowercase letter /
 /// digit / hyphen, non-empty, capped at 30 chars to reject stray input.
 ///
 /// A region containing `/`, spaces, or uppercase letters would silently
@@ -449,7 +449,7 @@ pub(crate) fn hex_encode(bytes: &[u8]) -> String {
 /// SigV4 service name for the Bedrock runtime.
 const BEDROCK_SERVICE: &str = "bedrock";
 /// Presigned-URL lifetime for a WebSocket upgrade (15 minutes). AWS caps WS
-/// presign at a few minutes; 900s matches LiteLLM's realtime presign.
+/// presign at a few minutes; 900s matches the reference realtime presign.
 const WS_PRESIGN_EXPIRES_SECS: u64 = 900;
 
 /// Presign the legacy WebSocket-compatible bridge shape via query signing.

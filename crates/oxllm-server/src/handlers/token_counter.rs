@@ -4,7 +4,7 @@
 //! using `crate::tokens::estimate_token_counter_tokens_async` (which dispatches to
 //! `oxllm_core::estimate_request_tokens`, which in turn uses `tiktoken-rs` for
 //! OpenAI models and falls back to `cl100k_base` for everything else — the
-//! same default encoding LiteLLM uses for unrecognised models; only if
+//! same default encoding the reference uses for unrecognised models; only if
 //! `cl100k_base` itself fails to load does it degrade to a `bytes/4`
 //! heuristic). A bounded number of utility jobs use the blocking pool so the
 //! async runtime is not stalled by BPE encoding. No upstream call is made.
@@ -23,16 +23,16 @@ use crate::state::SharedState;
 
 /// Token counter handler.
 ///
-/// Request body shape (matches LiteLLM's `TokenCountRequest`):
+/// Request body shape (matches the reference token-count request):
 /// ```json
 /// { "model": "gpt-4o", "messages": [{"role": "user", "content": "Hello"}] }
 /// ```
 /// A top-level `prompt` string is accepted as an alternative to `messages`
-/// (LiteLLM's `text` argument). At least one of `prompt`, `messages`, or
+/// (the reference `text` argument). At least one of `prompt`, `messages`, or
 /// `contents` must be present, otherwise the request is rejected with 400 —
-/// matching LiteLLM's `proxy_server.token_counter` validation.
+/// matching the reference token-counter validation.
 ///
-/// Response shape (LiteLLM `TokenCountResponse` parity):
+/// Response shape (reference token-count response parity):
 /// ```json
 /// {
 /// "total_tokens": 15,
@@ -45,12 +45,12 @@ use crate::state::SharedState;
 /// ```
 ///
 /// `model_used` resolves the request model's serving deployment and uses the
-/// upstream model id (alias resolution, matching LiteLLM) so the tokenizer and
+/// upstream model id (alias resolution, matching the reference) so the tokenizer and
 /// reported `tokenizer_type` reflect the model that would actually serve the
-/// request. `tokenizer_type` mirrors LiteLLM's
+/// request. `tokenizer_type` mirrors the reference
 /// `str(_select_tokenizer(...)["type"])`, i.e. `"openai_tokenizer"` — oxllm
 /// counts every model with tiktoken BPE, so it never reports
-/// `"huggingface_tokenizer"` even for models LiteLLM would route to an HF
+/// `"huggingface_tokenizer"` even for models the reference would route to an HF
 /// tokenizer.
 ///
 /// This endpoint performs no upstream call and therefore no spend, so it
@@ -88,10 +88,10 @@ pub async fn token_counter(
         auth.user_models.as_deref(),
     )?;
 
-    // LiteLLM rejects with 400 when none of prompt/messages/contents is present
+    // The reference rejects with 400 when none of prompt/messages/contents is present
     // (proxy_server.py:10955-10956). `contents` (Gemini shape) satisfies the
     // contract; `estimate_request_tokens` counts `parts[*].text` best-effort,
-    // and LiteLLM additionally routes through Google's `/countTokens` API when
+    // and the reference additionally routes through Google's `/countTokens` API when
     // `call_endpoint=True` (not wired here — local counting only).
     let has_prompt = request.get("prompt").and_then(|v| v.as_str()).is_some();
     let has_messages = request.get("messages").and_then(|v| v.as_array()).is_some();
@@ -103,7 +103,7 @@ pub async fn token_counter(
     }
 
     // Resolve the deployment's upstream model id (alias resolution, matching
-    // LiteLLM): an alias mapping to `openai/gpt-4o` is counted with `gpt-4o`'
+    // the reference): an alias mapping to `openai/gpt-4o` is counted with `gpt-4o`'
     // tokenizer. Falls back to the request model when no deployment exists.
     let state = shared.load_full();
     let model_used: String = state
@@ -128,11 +128,11 @@ pub async fn token_counter(
     if model_used != model {
         count_body["model"] = json!(model_used);
     }
-    // LiteLLM's local fallback calls `token_counter(model, text, messages,
+    // The reference local fallback calls `token_counter(model, text, messages,
     // custom_tokenizer)` — `tools`/`tool_choice` are only counted when
     // `call_endpoint=True` routes to a provider counting API
     // (proxy_server.py:11698-11704). Strip them so this free informational
-    // endpoint reports the same total a LiteLLM client expects. The billing
+    // endpoint reports the same total an existing client expects. The billing
     // pre-call estimate (TPM/budget hooks) keeps counting tools — there the
     // over-estimate is the safe direction.
     if let Some(obj) = count_body.as_object_mut() {
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn token_counter_empty_messages_returns_reply_priming() {
         let req = json!({"model": "gpt-4o", "messages": []});
-        // LiteLLM parity: even an empty messages list takes the `messages`
+        // Token-count parity: even an empty messages list takes the `messages`
         // branch, so `_count_extra`'s unconditional `+3` reply priming applies
         // (`_count_messages` itself returns 0 for an empty list).
         assert_eq!(oxllm_core::estimate_request_tokens(&req), 3);
@@ -255,7 +255,7 @@ mod tests {
         serde_json::from_slice(&bytes).expect("json")
     }
 
-    // A LiteLLM-compatible client sending only a top-level `prompt` string must
+    // A compatible client sending only a top-level `prompt` string must
     // receive a non-zero count (previously the prompt field was ignored and the
     // endpoint returned 0 silently).
     #[tokio::test]
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(v["tokenizer_type"], "openai_tokenizer");
     }
 
-    // Matching LiteLLM, a body with none of prompt/messages/contents is rejected
+    // Matching the reference, a body with none of prompt/messages/contents is rejected
     // with 400 instead of silently returning total_tokens: 0.
     #[tokio::test]
     #[serial_test::serial(token_counter)]
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
     }
 
-    // `contents` satisfies LiteLLM's "at least one field" contract, so it must
+    // `contents` satisfies the "at least one field" contract, so it must
     // not be rejected with 400. The handler now counts `parts[*].text`
     // best-effort (matching the local-count arms for `input`/`prompt`), so a
     // contents-only body with text parts reports a non-zero `total_tokens`.
@@ -313,7 +313,7 @@ mod tests {
 
     // A `contents` block carrying only non-text parts (e.g. inline_data) is
     // accepted (the contract is satisfied) but estimates to 0 locally because
-    // binary parts do not map to BPE tokens. LiteLLM routes such bodies through
+    // binary parts do not map to BPE tokens. The reference routes such bodies through
     // Google's `/countTokens` endpoint when `call_endpoint=True`; oxllm's local
     // estimator intentionally skips non-text parts. This pins the documented
     // behaviour so a future change is caught.
@@ -336,7 +336,7 @@ mod tests {
         );
     }
 
-    // Alias resolution (LiteLLM parity): a client alias mapping to
+    // Alias resolution (reference parity): a client alias mapping to
     // `openai/gpt-4o` reports `model_used` = upstream `gpt-4o` and the
     // `o200k_base` tokenizer, while `request_model` stays the alias.
     #[tokio::test]
@@ -385,7 +385,7 @@ mod tests {
         );
     }
 
-    // LiteLLM's local token-count fallback ignores `tools`/`tool_choice`
+    // The reference local token-count fallback ignores `tools`/`tool_choice`
     // (they are only counted on the `call_endpoint=True` provider path), so
     // this endpoint must report the same total with and without a `tools`
     // array. The billing pre-call estimate deliberately still counts tools.

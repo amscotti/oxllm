@@ -202,11 +202,7 @@ impl OpenAiCompatProvider {
                 base.trim_end_matches("/v1")
             );
         }
-        if base.ends_with("/chat/completions") {
-            base.to_string()
-        } else {
-            format!("{base}/chat/completions")
-        }
+        crate::util::append_operation_path(base, "chat/completions")
     }
 }
 
@@ -328,12 +324,13 @@ impl ChatProvider for OpenAiCompatProvider {
 
     fn apply_auth(
         &self,
-        _deployment: &Deployment,
+        deployment: &Deployment,
         creds: &ResolvedCredentials,
         headers: &mut HashMap<String, String>,
     ) {
         if self.requires_auth {
             apply_bearer_auth(creds, headers);
+            oxllm_core::provider::apply_auth_overrides(deployment, creds, headers);
         }
     }
 
@@ -387,15 +384,9 @@ impl ChatProvider for OpenAiCompatProvider {
 
 impl EmbeddingProvider for OpenAiCompatProvider {
     fn embedding_url(&self, deployment: &Deployment) -> String {
-        let base = self.chat_base(deployment);
-        // Defensive guard mirroring `endpoint_url` above: a caller who
-        // configures `api_base` as the full embeddings endpoint URL must not
-        // get `/embeddings` appended twice.
-        if base.ends_with("/embeddings") {
-            base.to_string()
-        } else {
-            format!("{base}/embeddings")
-        }
+        // A caller who configures `api_base` as the full embeddings endpoint
+        // must not get `/embeddings` appended twice. Query and fragment stay.
+        crate::util::append_operation_path(self.chat_base(deployment), "embeddings")
     }
 
     fn apply_auth(

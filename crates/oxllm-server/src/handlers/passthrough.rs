@@ -240,7 +240,7 @@ pub async fn rerank(
             }
         };
         if status.is_success() {
-            // U3: honour the LiteLLM response-cost contract on the rerank
+            // U3: honour the gateway response-cost contract on the rerank
             // passthrough surface too — when the upstream reported its own
             // cost, that value is authoritative.
             pipeline.call_ctx.cost_override = upstream_cost;

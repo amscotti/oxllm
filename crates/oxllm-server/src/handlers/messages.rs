@@ -165,7 +165,7 @@ fn anthropic_error_response(
 /// request-identifying detail (URL fragments, model ids) or credential hints
 /// (`sk-…` keys, `Bearer` tokens) from a misbehaving upstream. Redacts those
 /// patterns and caps the length; the raw text is preserved in the `tracing`
-/// log above (LiteLLM applies comparable redirection/sanitisation).
+/// log above (the reference applies comparable redirection/sanitisation).
 fn sanitise_forwarded_error_message(msg: &str) -> String {
     let capped = crate::security::truncate_error_message(msg, 500);
     let lower: Vec<char> = capped.chars().map(|c| c.to_ascii_lowercase()).collect();

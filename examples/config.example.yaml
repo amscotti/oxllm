@@ -1,9 +1,11 @@
 # oxllm proxy configuration — example
 #
-# This follows the LiteLLM config shape so existing users feel at home.
+# This preserves the established gateway config shape.
 # Unknown keys are ignored with a warning.
 # This is an annotated catalog. Remove unused model entries before running;
 # every active os.environ/ reference must exist. For quickstart use config.minimal.yaml.
+# Split configs can add: include: [includes/models.yaml, includes/routing.yaml]
+# Included lists append; included settings replace whole blocks in breadth-first order.
 
 model_list:
   # The `model_name` is what clients send. The `oxllm_params.model` is
@@ -17,6 +19,20 @@ model_list:
       stream_timeout: 60                   # idle timeout between stream chunks
       rpm: 480                             # per-deployment rate limit
       tpm: 1000000                         # per-deployment token limit
+      # drop_params: false                 # overrides the global flag
+      # additional_drop_params: [temperature, max_tokens]
+      # allowed_openai_params: [reasoning_effort]
+      # extra_body: {store: false}          # native wire overrides; config wins
+      # auth_header: api-key               # replaces native auth headers
+      # auth_scheme: raw                   # or Bearer/Token value prefix
+      # Custom illustrative rates (USD/token), including long-context tiers:
+      # input_cost_per_token: 0.000001
+      # output_cost_per_token: 0.000002
+      # input_cost_per_token_above_272k_tokens: 0.000003
+      # output_cost_per_token_above_272k_tokens: 0.000004
+      # tier_threshold_is_inclusive: false  # exact boundary stays at base
+    # model_info:
+    #   supported_environments: [development, staging, production]
 
   # Multiple deployments under the same model_name → load-balanced + failover.
   - model_name: gpt-4o
@@ -112,7 +128,10 @@ model_list:
   # `vertex_project` and `vertex_location` are passed via the `extra` map;
   # `os.environ/` substitution is supported. The bearer token comes from
   # `api_key` (a pre-exchanged GCP access token) or the `GCP_ACCESS_TOKEN`
-  # / `VERTEX_AI_ACCESS_TOKEN` env vars.
+  # / `VERTEX_AI_ACCESS_TOKEN` env vars. Renewable credentials can instead use
+  # vertex_credentials (JSON or file), GOOGLE_APPLICATION_CREDENTIALS (file),
+  # or VERTEX_AI_CREDENTIALS_JSON (inline JSON); omit static api_key in that mode.
+  # Renewable mode acquires once, then renews in the background at half TTL.
   - model_name: vertex-gemini
     oxllm_params:
       model: vertex_ai/gemini-1.5-pro
@@ -127,10 +146,15 @@ model_list:
       api_key: os.environ/GCP_ACCESS_TOKEN
       vertex_project: os.environ/VERTEX_AI_PROJECT
       vertex_location: us-central1
+      # cache_control_injection_points:
+      #   - {location: message, role: system}
+      #   - {location: message, index: -1}
 
 oxllm_settings:
   drop_params: true            # strip unsupported params instead of erroring
-  num_retries: 2               # retries on 5xx/429/timeout (LiteLLM parity default)
+  # modify_params: true        # repair Bedrock tool/thinking history
+  # force_ipv4: true           # legacy switch; prefer general_settings.http_force_ipv4
+  num_retries: 2               # retries on 5xx/429/timeout
   request_timeout: 600         # global default
   routing_strategy: simple_shuffle   # | lowest_latency | lowest_cost | usage_based
                                      # | latency_based | quality_router | tag_based
@@ -152,6 +176,13 @@ oxllm_settings:
   #   "429": 5
   #   "500": 3
   #   "503": 3
+  # Named retries are also accepted (numeric status entries take precedence):
+  # retry_policy:
+  #   TimeoutErrorRetries: 1
+  #   RateLimitErrorRetries: 1
+  #   BadRequestErrorRetries: 0
+  #   AuthenticationErrorRetries: 0
+  #   ContentPolicyViolationErrorRetries: 0
   # quality_router: pick the deployment with the highest configured score
   # routing_strategy: quality_router
   # quality_scores:
@@ -194,6 +225,8 @@ router_settings:
 
 general_settings:
   master_key: os.environ/OXLLM_MASTER_KEY  # required in prod (also set OXLLM_REQUIRE_AUTH=true)
+  # allow_short_master_key: true           # development-only; boot warns
+  # http_force_ipv4: true                  # upstream/image IPv4-only connections
   # Clients may authenticate with Authorization: Bearer <key> (OpenAI SDK)
   # or x-api-key: <key> (Anthropic SDK pointing base_url at oxllm).
   # database_url: os.environ/DATABASE_URL   # optional

@@ -189,7 +189,7 @@ impl Database {
             if matches!(self.placeholder_style(), PlaceholderStyle::Dollar) {
                 self.ensure_spend_event_index_ready(conn).await?;
             }
-            // The original models table used litellm_params. The source-level
+            // The original models table used the legacy params column. The source-level
             // rename did not migrate that column on already-versioned DBs.
             if self.has_column_on(conn, "models", "litellm_params").await?
                 && !self.has_column_on(conn, "models", "oxllm_params").await?
@@ -791,7 +791,7 @@ fn v6_statements_for() -> Vec<String> {
 }
 
 /// v7 statements: add a `blocked` boolean column to the `teams` table,
-/// mirroring LiteLLM's `team.blocked` flag. Team block/unblock flips this
+/// mirroring the reference `team.blocked` flag. Team block/unblock flips this
 /// column instead of clobbering `is_active` on every member key, so an
 /// `/team/unblock` no longer re-enables keys that were individually blocked
 /// via `/key/block` for compromise/abuse/rotation. The column defaults to 0
@@ -813,7 +813,7 @@ fn v7_statements_for(style: PlaceholderStyle) -> Vec<String> {
 }
 
 /// v8 statements: attribute per-request cost to an end-user / customer via
-/// `spend_logs.end_user_id` (OpenAI body `"user"` / LiteLLM `end_user_id`).
+/// `spend_logs.end_user_id` (OpenAI body `"user"` / legacy `end_user_id`).
 /// Distinct from `user_id` (the virtual-key owner). Index supports
 /// per-customer spend lookups without a full-table scan.
 fn v8_statements_for(style: PlaceholderStyle) -> Vec<String> {
@@ -833,7 +833,7 @@ fn v8_statements_for(style: PlaceholderStyle) -> Vec<String> {
 }
 
 /// v9 statements: attribute per-request cost to a request tag via
-/// `spend_logs.tag_name` (`x-oxllm-tag` header / LiteLLM request tags).
+/// `spend_logs.tag_name` (`x-oxllm-tag` header / request-body tags).
 /// Index supports per-tag spend analytics without a full-table scan.
 fn v9_statements_for(style: PlaceholderStyle) -> Vec<String> {
     let add_col = match style {

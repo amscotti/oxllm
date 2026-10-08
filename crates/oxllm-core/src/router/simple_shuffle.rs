@@ -10,22 +10,22 @@ use crate::router::strategy::{RequestContext, RoutingStrategy};
 /// list. Uses `rand` for randomness.
 ///
 /// When one or more deployments carry a capacity signal, the selection is
-/// WEIGHTED random (LiteLLM `simple-shuffle` parity): a deployment's weight
+/// WEIGHTED random (`simple-shuffle` semantics): a deployment's weight
 /// is `oxllm_params.weight`, falling back to `oxllm_params.rpm`, then to
 /// `oxllm_params.tpm`, then to `1` — a deployment with weight 4 is picked
 /// twice as often as one with weight 2. When no deployment carries a weight,
 /// rpm, or tpm, behavior is uniform random.
 ///
-/// Two deliberate divergences from LiteLLM's `simple_shuffle` are documented
+/// Two deliberate divergences from the reference `simple_shuffle` are documented
 /// here so they are not "fixed" by accident: (a) the metric is resolved
-/// per-deployment (weight → rpm → tpm → 1), where LiteLLM selects ONE metric
+/// per-deployment (weight → rpm → tpm → 1), where the reference selects ONE metric
 /// from the first candidate and applies it group-wide; and (b) a deployment
 /// without `weight` falls back to its own `rpm`, then `tpm`, then `1` (per
-/// `effective_weight`), instead of being excluded. LiteLLM's
+/// `effective_weight`), instead of being excluded. The reference
 /// `total_weight <= 0` path moves to the next metric group-wide and starves
 /// any sibling missing it; oxllm's per-deployment fallback never starves an
 /// otherwise-unweighted deployment, so operators porting a mixed-metric
-/// LiteLLM config (e.g. one deployment with `weight=10`, another with only
+/// existing config (e.g. one deployment with `weight=10`, another with only
 /// `rpm=100`) will see the rpm-only deployment still receive traffic.
 #[derive(Debug, Default)]
 pub struct SimpleShuffle;
@@ -38,7 +38,7 @@ pub struct SimpleShuffle;
 /// deployment" — an explicit `Some(0)` is *not* treated as "unset" (it
 /// returns `0` from the `.unwrap_or(1)` fallback chain). A deployment with
 /// `rpm: 0` under a `SimpleShuffle` group with any positive-weight sibling
-/// receives no traffic as long as the sibling is up. This matches LiteLLM's
+/// receives no traffic as long as the sibling is up. This matches the reference
 /// `total_weight <= 0` handling and is intentional for `weight: 0`; the
 /// surprise is `rpm: 0`/`tpm: 0`, which an operator might set meaning "no
 /// rate limit" or as a typo. `usage_based::compute_utilization` guards
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn rpm_biases_selection_when_no_weight() {
-        // LiteLLM parity: with no explicit `weight`, `rpm` is the capacity
+        // Capacity-weight parity: with no explicit `weight`, `rpm` is the capacity
         // signal for the weighted pick.
         let strategy = SimpleShuffle;
         let ctx = RequestContext::new("gpt-4o");
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn tpm_biases_selection_when_no_weight_or_rpm() {
-        // LiteLLM parity: with no explicit `weight` and no `rpm`, `tpm` is
+        // Capacity-weight parity: with no explicit `weight` and no `rpm`, `tpm` is
         // the capacity signal for the weighted pick.
         let strategy = SimpleShuffle;
         let ctx = RequestContext::new("gpt-4o");
@@ -382,12 +382,12 @@ mod tests {
 
     #[test]
     fn mixed_weight_and_rpm_does_not_starve_rpm_only_deployment() {
-        // LiteLLM selects one metric group-wide from the first candidate and
+        // The reference selects one metric group-wide from the first candidate and
         // starves siblings missing it; oxllm resolves the metric per
         // deployment via `effective_weight` (weight → rpm → tpm → 1), so a
         // group with `dep-A: weight=10` and `dep-B: rpm=100` (no weight)
         // gives `dep-B` effective weight 100, not 1 and not 0. Pin this so
-        // a "fix" that collapses to LiteLLM's group-wide metric does not
+        // a "fix" that collapses to the reference group-wide metric does not
         // silently starve the rpm-only deployment in mixed configs.
         let strategy = SimpleShuffle;
         let ctx = RequestContext::new("gpt-4o");
@@ -404,7 +404,7 @@ mod tests {
         }
         // Effective weights are weighted=10 and rpm-only=100, so rpm-only's
         // share is 100/110 ≈ 0.909. If the rpm-only deployment were starved
-        // (LiteLLM's behaviour for a missing group-wide metric) the hit
+        // (the reference behavior for a missing group-wide metric) the hit
         // count would be 0; if its rpm were ignored in favour of weight=1,
         // the share would collapse to 1/11 ≈ 0.091.
         let ratio = rpm_hits as f64 / total as f64;

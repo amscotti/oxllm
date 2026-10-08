@@ -11,7 +11,7 @@ use crate::router::strategy::{RequestContext, RoutingStrategy};
 /// per-deployment pricing override (`OxllmParams::pricing_override`) when
 /// present, otherwise the price-table entry. The static sum is a documented
 /// approximation of request cost: it does not weight the rates by the
-/// request's actual input/output mix (a genuine divergence from LiteLLM's
+/// request's actual input/output mix (a genuine divergence from the reference
 /// `lowest_cost`, which accounts for measured token usage), so deployments
 /// with inverted input/output rates are ranked by the sum.
 ///
@@ -208,7 +208,7 @@ mod tests {
         // B is expensive-input/cheap-output. `LowestCost` ranks by the static
         // sum, so an output-heavy workload that would bill cheaper on B is
         // still routed by the sum — ties keep the first deployment. This
-        // pins the documented approximation (LiteLLM weights by measured
+        // pins the documented approximation (the reference weights by measured
         // usage; oxllm deliberately does not).
         let strategy = LowestCost;
         let ctx = RequestContext::new("model");

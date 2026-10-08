@@ -5,7 +5,7 @@
 //! Groq exposes an OpenAI-compatible surface, so URL building, auth, stream
 //! parsing and the supported-params list are delegated to the shared
 //! [`OpenAiCompatProvider`] engine. Groq diverges on two points (parity with
-//! LiteLLM's `GroqChatConfig`):
+//! the reference `GroqChatConfig`):
 //!
 //! - **`delta.reasoning` → `delta.reasoning_content`**: Groq emits reasoning
 //!   content under the non-standard `reasoning` key on streaming deltas; it is
@@ -13,7 +13,7 @@
 //!   consumers (and oxllm's own response handling) find it.
 //! - **`null` fields stripped from assistant messages**: Groq rejects
 //!   `null`-valued fields on assistant messages (e.g. a round-tripped
-//!   `function_call: null`, LiteLLM issue #5839); null-valued keys are removed
+//!   `function_call: null`, reference issue #5839); null-valued keys are removed
 //!   from assistant messages before forwarding.
 //!
 //! See `docs/adding-a-provider.md`.
@@ -59,7 +59,7 @@ fn apply_groq_request_transforms(out: &mut Value) {
 }
 
 /// Remove keys with `null` values from assistant messages (parity with
-/// LiteLLM's `GroqChatConfig._transform_messages`, issue #5839: Groq rejects
+/// The reference Groq message transform, issue #5839: Groq rejects
 /// `function_call: null`). The top-level `build_chat_request` already drops
 /// `null` top-level params, but nested message fields are preserved — this
 /// closes that gap for assistant messages.

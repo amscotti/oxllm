@@ -708,7 +708,7 @@ thresholds: [0.8, 0.9, 1.0]
     /// Soft-budget parity with the generic-webhook hook
     /// (`hook_fires_soft_budget_exceeded_event`): with `soft_budget_pct`
     /// set, crossing the derived ceiling fires a Slack alert whose header
-    /// text identifies the soft-budget event. Mirrors LiteLLM's
+    /// text identifies the soft-budget event. Mirrors the reference
     /// `soft_budget_crossed` Slack signal.
     #[tokio::test]
     async fn slack_hook_fires_soft_budget_exceeded_event() {

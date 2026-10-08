@@ -167,7 +167,7 @@ pub(crate) fn extract_usage(value: &Value) -> Option<oxllm_core::UsageSummary> {
 
     // Citation tokens (Perplexity Sonar/online). Perplexity does not report a
     // pre-counted value, so we derive an estimate from the response `citations`
-    // array length when present — matching LiteLLM's
+    // array length when present — matching the reference
     // `_enhance_usage_with_perplexity_fields` heuristic (~1 token per
     // citation, floor 1 when citations exist). A provider transform may also
     // surface a precise count under `usage.citation_tokens`, which wins.
@@ -539,7 +539,7 @@ mod tests {
     }
 
     // =================================================================
-    // Ported from LiteLLM test_convert_dict_to_chat_completion.py
+    // Ported from the reference test_convert_dict_to_chat_completion.py
     // Edge cases for usage extraction on provider response shapes.
     // =================================================================
 
@@ -1099,7 +1099,7 @@ mod tests {
         assert_eq!(u.cache_creation_input_tokens, Some(300));
 
         // Billed exactly once: gpt-4o declares no separate cache-creation
-        // rate, so on the price-table path the bucket bills at 0.0 (LiteLLM
+        // rate, so on the price-table path the bucket bills at 0.0 (reference
         // `_get_cost_per_unit` default) — the bill is just the 700 regular
         // input tokens. The pre-fix double-charge would have been
         // 1000*input + 300*input == 1300*input.

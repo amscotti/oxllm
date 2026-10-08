@@ -17,9 +17,9 @@ fn deployment() -> Deployment {
 }
 
 // =============================================================================
-// Ported from LiteLLM `tests/llm_translation/test_jina_ai.py`.
+// Ported from the reference `tests/llm_translation/test_jina_ai.py`.
 //
-// LiteLLM's Jina suite is tiny and live-call based (it hits the network for a
+// The reference Jina suite is tiny and live-call based (it hits the network for a
 // base embedding/rerank). The ports below adapt the observable transform
 // behaviors to `transform_request` / `transform_response`: the embedding
 // request carries the resolved model, input, `task`, and `dimensions`; the

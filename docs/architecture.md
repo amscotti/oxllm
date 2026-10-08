@@ -275,7 +275,7 @@ with the same client `model_name`:
  `model_info.tags` (subset match, `&tag` require, `!tag` exclude,
  `tag_regex`, `default` deployments as fallback pool) |
 | `quality_router` | `quality.rs` | Configured quality scores |
-| `session_affinity` | `session_affinity.rs` | Sticky via `x-oxllm-session-id` (consistent hash) |
+| `session_affinity` | `session_affinity.rs` | Sticky via `x-oxllm-session-id`, or `x-litellm-session-id` when that header is absent or empty (consistent hash, no TTL) |
 | `complexity_router` | `complexity.rs` | Keyword-classify request complexity → tier model pool |
 | `adaptive_router` | `adaptive.rs` | Thompson-sampling bandit per (request type, deployment); learns from post-call outcomes via `hooks/adaptive_hook.rs`; cold start defers to least-busy |
 | `round_robin` | `round_robin.rs` | Per-model-group rotation within each replica; weighted slots use `weight`, then `rpm`, then `tpm`, then 1; counters survive config reloads |

@@ -82,7 +82,7 @@ async fn rollback_succeeded_hooks(hooks: &[Arc<dyn Hook>], ctx: &CallContext, er
 
 /// Run all post-success hooks against the given response summary.
 ///
-/// U10 (LiteLLM `692b22655e`): LiteLLM ran async + sync failure handlers
+/// U10: the reference ran async + sync failure handlers
 /// concurrently against the same mutable logging object, causing crashes.
 /// Oxllm is safe: hooks are awaited **sequentially** in a `for` loop — each
 /// `hook.post_success(ctx, resp).await` completes before the next hook
@@ -99,7 +99,7 @@ pub async fn run_post_success_hooks(
 
 /// Run all post-failure hooks against the given error.
 ///
-/// U10 (LiteLLM `692b22655e`): same concurrent-handler crash as
+/// U10: same concurrent-handler crash as
 /// `run_post_success_hooks`. Oxllm awaits each hook sequentially, so there
 /// is no shared-state race.
 ///

@@ -201,7 +201,7 @@ impl JwtValidator {
         // treatment: jsonwebtoken only checks `aud` *when the claim is
         // present*, so without requiring it a validly-signed token with no
         // `aud` would validate — silently defeating the audience scope the
-        // operator configured (PyJWT/LiteLLM reject it with
+        // operator configured (PyJWT/the reference reject it with
         // `MissingRequiredClaimError("aud")`).
         let mut required = vec!["exp".to_string()];
         if issuer.is_some() {
@@ -254,7 +254,7 @@ impl JwtValidator {
     /// rate-limit hooks run. A request that is rejected downstream after a
     /// successful authentication still burns the token — retries are
     /// replays. This is deliberate (see the module docs for the rationale);
-    /// LiteLLM has no equivalent control to mirror here.
+    /// The reference has no equivalent control to mirror here.
     ///
     /// Failures are typed ([`ReplayError`]): a detected replay is an auth
     /// failure; a cache outage is a server-side failure that callers must
@@ -457,7 +457,7 @@ static UNSCOPED_JWT_WARNED: std::sync::atomic::AtomicBool =
 
 /// Warn (once) when JWT auth is enabled with neither `jwt_audience` nor
 /// `jwt_issuer` configured: any validly-signed token from any minter sharing
-/// the secret is then accepted. LiteLLM emits the same warning
+/// the secret is then accepted. The reference emits the same warning
 /// (`handle_jwt.py::_build_decode_kwargs`). Returns whether this call emitted
 /// the warning, so tests can exercise the gate without touching global state.
 fn warn_unscoped_jwt_once(
@@ -1075,7 +1075,7 @@ mod tests {
     /// a validly-signed token from any minter of the shared secret that
     /// simply omits `aud` would otherwise validate — silently defeating the
     /// audience scope the operator configured. Mirrors the `iss` treatment
-    /// (`issuer_configured_requires_iss_claim`); PyJWT/LiteLLM raise
+    /// (`issuer_configured_requires_iss_claim`); PyJWT/the reference raise
     /// `MissingRequiredClaimError("aud")` in exactly this case.
     #[test]
     fn audience_configured_requires_aud_claim() {
@@ -1226,7 +1226,7 @@ mod tests {
 
     /// A configured non-HMAC / unparseable `jwt_algorithm` must disable JWT
     /// auth entirely (fail closed), never silently downgrade to HS256: an
-    /// operator migrating from LiteLLM plausibly sets `RS256` and pastes the
+    /// operator migrating from an existing proxy plausibly sets `RS256` and pastes the
     /// IdP public key into `jwt_secret`, and HS256 verification keyed on that
     /// public value would let anyone forge tokens.
     #[tokio::test]
@@ -1283,7 +1283,7 @@ mod tests {
 
     /// The unscoped-JWT warning must fire exactly once per gate, and only
     /// when neither `jwt_audience` nor `jwt_issuer` is configured. Mirrors
-    /// LiteLLM's `_build_decode_kwargs` warning (behaviour parity; the log
+    /// The reference decode-kwargs warning (behaviour parity; the log
     /// itself is not captured here — the gate logic is what needs pinning).
     #[test]
     fn unscoped_jwt_warning_fires_once_and_only_when_unscoped() {

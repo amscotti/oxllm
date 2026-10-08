@@ -1,7 +1,7 @@
 # Pricing for provider `anthropic`.
 # Provider slug is implied by the filename; do not set it per-model.
 # Costs are USD per token.
-# prompt_cache_min_tokens sourced from Anthropic docs / LiteLLM price table.
+# prompt_cache_min_tokens sourced from Anthropic docs / the reference price table.
 
 [claude-3-7-sonnet-20250219]
 input_cost_per_token = 3.000000e-6

@@ -70,14 +70,132 @@ oxllm serve --config config.yaml
 
 `validate` checks YAML, env references, typed config and the require-auth guard;
 it does not establish database/Redis/upstream readiness. Missing env references
-are errors. `os.environ/NAME` substitutes strings only, so use YAML numbers and
-booleans directly. The legacy top-level `environment_variables` block does not
-set process variables in shipped builds.
+are errors. `os.environ/NAME` is substituted as a string. If the typed config
+then fails to parse, only substituted values rejected by numeric/boolean fields
+are coerced as integers, floats, or `true`/`false`. String fields keep their
+values, including numeric-looking API keys and header values. Invalid scalar
+values fail the load with the field path and variable name. Ordinary YAML
+strings are not coerced. The legacy top-level
+`environment_variables` block does not set process variables in shipped builds.
+
+`include` is expanded before that substitution. Each entry is a path relative
+to the file that declares it. Lists, including `model_list`, concatenate with
+the declaring file's items first. Every other value is replaced by the included
+file, so `oxllm_settings`, `general_settings`, and `router_settings` are
+replaced as whole blocks and are not deep-merged. Nested includes are applied
+after the siblings already queued. A cycle fails the load and names the chain.
+Repeated files merge once; cycles are rejected even across shared includes.
+Legacy and native gateway-settings names refer to the same replaceable block.
+The hot-reload watcher follows contributing files and their logical symlink
+paths, including files added by later edits. `POST /config/update` validates
+includes and env-driven scalars before atomically writing the root file.
+
+Deployments with `model_info.supported_environments` load only in matching
+environments. The first non-empty `OXLLM_ENVIRONMENT` or `LITELLM_ENVIRONMENT`
+value wins; otherwise oxllm defaults to `development`. An absent/null list
+allows every environment; an empty list allows none. Filtering precedes
+credential/env resolution, so production does not require dev-only credentials.
+The same scope is honored by programmatic state construction and DB models;
+inactive DB definitions can be stored and activated later.
+
+`general_settings.allow_short_master_key: true` permits a non-blank master key
+below 16 bytes only in development, with a warning at boot. Other environments
+reject the flag even with a long key. JWT secrets retain the 16-byte minimum.
+
+Deployment `drop_params` overrides the global flag. `allowed_openai_params`
+preserves explicitly permitted extras without undoing known provider mappings.
+`additional_drop_params` removes top-level keys before transforms can rename
+them and again after body overrides. `extra_body` shallowly overrides the
+native outbound JSON; configured values, including `store: false`, win over
+client/provider values, while routing retains control of `model`. Drops win
+over allows/body overrides. JSON passthrough routes apply the same final pass.
+Nested dotted drop paths are not supported.
+
+Deployment `auth_header` replaces native credential headers; `auth_scheme`
+sets the value prefix. `auth_header: api-key` defaults to a raw key, while
+`auth_header: authorization` defaults to `Bearer`. Explicit `raw`, `none` or an
+empty scheme sends no prefix. Header names/schemes are validated, and
+`extra_headers` is applied afterwards. These overrides work on transformed and
+provider-authenticated passthrough paths with API-key/bearer credentials; AWS
+signing remains owned by the signer.
+
+`azure_ai/` serves Foundry native Claude messages, compatible vendor chat and
+text embeddings. Configure the resource or full endpoint in `api_base`; existing
+query strings are preserved and explicit `api_version` fills an absent
+`api-version` query. Unified `.services.ai.azure.com` resources use `api-key`;
+explicit `azure_ad_token` uses Bearer authentication. Native Cohere embedding
+deployments also recognize unified Foundry hosts, or `api_type: azure_ai` for
+custom gateways, and send `input` to `/models/embeddings`. Azure ML
+`llm_provider-num_tokens` headers are honored for embedding usage and cost.
+See [the Foundry configuration sample](../examples/config.foundry.yaml).
+
+`general_settings.http_force_ipv4: true` restricts the shared upstream and
+image-download clients to IPv4 through DNS filtering and IPv4 local binding.
+The general-settings `force_ipv4` alias and legacy
+`oxllm_settings.force_ipv4` are accepted; an explicit native setting, including
+false, wins. The image client keeps its private-address restrictions even when
+operator-controlled upstreams opt into private bases.
+
+`cache_control_injection_points` supports Anthropic message-role/index selectors
+on transformed chat requests. Indices refer to source messages before system
+splitting. Existing controls/TTLs are preserved; missing targets are skipped
+and existing tool/system/message controls count toward the four-block cap.
+Malformed selectors and points combined with explicitly disabled global
+prompt caching are rejected during validation. Automatic cache insertion from
+the global prompt-routing switch remains a separate feature.
+
+Deployment `*_above_<N>k_tokens`/`*_above_<N>_tokens` prices apply to all tokens
+after the prompt crosses the threshold. At 272,000 tokens the base applies;
+at 272,001 the tier applies. `tier_threshold_is_inclusive: true` opts into an
+inclusive boundary. Cache-creation tokens count toward context length,
+including standalone one-hour details. Malformed tier keys/rates are warned.
+
+Named `retry_policy` entries map onto status counts and structured categories.
+Timeouts map to 408; actual upstream 504s belong to the 5xx category.
+`BadRequestErrorRetries` and `AuthenticationErrorRetries` accept only zero.
+Their zero allowed-fails mappings opt those statuses into immediate fallback;
+other request-content errors remain terminal unless explicitly opted in.
+Explicit numeric retry entries win over aliases. Nonzero content-policy
+retry parity is not established by the zero-retry compatibility tests.
+Exhausted deployments are excluded for the remainder of the current request,
+even with `cooldown_time: 0`; future requests may reconsider them immediately.
+
+Vertex renewable auth supports service-account and authorized-user JSON,
+with precedence: static deployment `api_key`, deployment `vertex_credentials`,
+explicit access-token env, `GOOGLE_APPLICATION_CREDENTIALS`, then inline
+`VERTEX_AI_CREDENTIALS_JSON` (or `LITELLM_VERTEX_AI_CREDENTIALS`). Omit the static
+deployment key/access-token override to select renewable mode. Initial token
+acquisition performs a coalesced exchange; afterwards a background worker renews
+at half TTL, signing a fresh assertion when needed. Valid cached tokens remain
+available during renewal. Failed renewal retries with backoff, and an expired
+token is rejected rather than forwarded. The bounded identity cache has a
+two-hour idle policy; eviction or resolver shutdown cancels workers and releases
+refresh material. Full ADC discovery/federation/impersonation is not implemented.
+
+Bedrock Cohere/Titan text embeddings use InvokeModel with SigV4 over the exact
+sent bytes. Runtime URLs use the resolved signing region. Usage comes from
+the native body, then the invocation token-count header, then text estimation
+when metering is absent. Mantle token scopes follow an official custom base's
+host region so an ambient region cannot create a mismatched token.
+
+A database model row whose `model_name` matches a YAML deployment is skipped;
+the YAML deployment is the one that is served. Spend logs flush every 60
+seconds. The Postgres pool allows at most 20 connections. Session affinity is
+a stateless hash of the session id and has no TTL. Datadog receives logs for
+successful requests and terminal failures, excluding cache hits/master-key
+requests; failure messages redact credential-shaped values. Redis/PG service
+failure callbacks are not supplied by this request hook.
+
+Bedrock Converse always merges adjacent user/assistant roles and parallel tool
+results while retaining content metadata and signed reasoning. Enable
+`oxllm_settings.modify_params: true` for undeclared historical tools,
+tool-result/follow-up continuation turns, and unsigned tool-history thinking
+repairs. A deployment's `modify_params` explicitly overrides the global value.
 
 | Setting | Apply method |
 |---|---|
 | `model_list`, aliases, routing/retry/fallback knobs, request-time limits, cache TTL, config-derived hooks | File reload |
-| Master/JWT settings, `trusted_proxy_cidrs`, `allowed_ips`, HTTP pool/connect settings, guardrails | File reload |
+| Master/JWT settings, `trusted_proxy_cidrs`, `allowed_ips`, HTTP pool/connect/IPv4 settings, guardrails | File reload |
 | DB URL, primary cache backend/Redis connection, infrastructure credentials | Restart; existing connections survive file reload |
 | Port, body-size middleware, management/proxy CORS, declarative passthrough route registration | Restart; HTTP router is built at startup |
 | `log_format`, OTel endpoint/service, `spend_log_retention_days`, shutdown drain timing | Restart |

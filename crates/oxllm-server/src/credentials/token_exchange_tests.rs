@@ -261,3 +261,257 @@ async fn expired_token_refresh_failure_surfaces_error_instead_of_stale_token() {
     assert!(matches!(error, Error::Upstream { status: 500, .. }));
     failing.assert_hits_async(1).await;
 }
+
+struct RenewalFixture {
+    exchange: Arc<TokenExchange>,
+    requests: Arc<std::sync::atomic::AtomicUsize>,
+    blocked: Arc<std::sync::atomic::AtomicBool>,
+    failing: Arc<std::sync::atomic::AtomicBool>,
+    release: Arc<tokio::sync::Notify>,
+    server: tokio::task::JoinHandle<()>,
+}
+
+impl RenewalFixture {
+    async fn new(lifetime: u64) -> Self {
+        use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let requests = Arc::new(AtomicUsize::new(0));
+        let blocked = Arc::new(AtomicBool::new(false));
+        let failing = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let app = Router::new().route("/token", post({
+            let requests = requests.clone();
+            let blocked = blocked.clone();
+            let failing = failing.clone();
+            let release = release.clone();
+            move || {
+                let (requests, blocked, failing, release) = (requests.clone(), blocked.clone(), failing.clone(), release.clone());
+                async move {
+                    let number = requests.fetch_add(1, Ordering::SeqCst) + 1;
+                    if blocked.load(Ordering::SeqCst) {
+                        release.notified().await;
+                    }
+                    if failing.load(Ordering::SeqCst) {
+                        (StatusCode::BAD_GATEWAY, "secret-marker").into_response()
+                    } else {
+                        Json(json!({"access_token": format!("token-{number}"), "expires_in": lifetime})).into_response()
+                    }
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        Self {
+            exchange: Arc::new(TokenExchange::for_test(endpoint, Duration::from_secs(5))),
+            requests,
+            blocked,
+            failing,
+            release,
+            server,
+        }
+    }
+
+    async fn wait_for_requests(&self, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while self.requests.load(std::sync::atomic::Ordering::SeqCst) < expected {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn wait_for_token(&self, expected: &str) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if self
+                    .exchange
+                    .background_token(b"identity", form)
+                    .await
+                    .unwrap()
+                    == expected
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+}
+
+impl Drop for RenewalFixture {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+
+async fn advance_renewal_time(seconds: u64) {
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(seconds)).await;
+    tokio::time::resume();
+}
+
+#[tokio::test]
+async fn half_ttl_background_renewal_does_not_block_readers_or_duplicate_exchanges() {
+    use std::sync::atomic::Ordering;
+    let fixture = RenewalFixture::new(10).await;
+    assert_eq!(
+        fixture
+            .exchange
+            .background_token(b"identity", form)
+            .await
+            .unwrap(),
+        "token-1"
+    );
+    fixture.blocked.store(true, Ordering::SeqCst);
+    advance_renewal_time(5).await;
+    fixture.wait_for_requests(2).await;
+    // Renewal is in flight, with no subsequent request needed to start it.
+    for _ in 0..8 {
+        let token = tokio::time::timeout(
+            Duration::from_millis(100),
+            fixture.exchange.background_token(b"identity", form),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(token, "token-1");
+    }
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
+    fixture.blocked.store(false, Ordering::SeqCst);
+    fixture.release.notify_one();
+    fixture.wait_for_token("token-2").await;
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn background_renewal_failure_keeps_a_valid_token_but_never_serves_an_expired_one() {
+    use std::sync::atomic::Ordering;
+    let fixture = RenewalFixture::new(10).await;
+    assert_eq!(
+        fixture
+            .exchange
+            .background_token(b"identity", form)
+            .await
+            .unwrap(),
+        "token-1"
+    );
+    fixture.failing.store(true, Ordering::SeqCst);
+    advance_renewal_time(5).await;
+    fixture.wait_for_requests(2).await;
+    let key: [u8; 32] = Sha256::digest(b"identity").into();
+    let slot = fixture.exchange.renewable_cache.get(&key).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if matches!(
+                *slot.entry.lock().await,
+                Some(RenewableEntry::Ready {
+                    failure: Some(_),
+                    ..
+                })
+            ) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        fixture
+            .exchange
+            .background_token(b"identity", form)
+            .await
+            .unwrap(),
+        "token-1"
+    );
+    advance_renewal_time(5).await;
+    let error = fixture
+        .exchange
+        .background_token(b"identity", form)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::Upstream { status: 502, .. }));
+    assert!(!error.to_string().contains("secret-marker"));
+    assert!(!error.to_string().contains("token-1"));
+    fixture.failing.store(false, Ordering::SeqCst);
+    advance_renewal_time(35).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(token) = fixture.exchange.background_token(b"identity", form).await {
+                assert_ne!(token, "token-1");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn renewable_tokens_remain_ready_after_a_controlled_seventy_minute_soak() {
+    let fixture = RenewalFixture::new(3600).await;
+    assert_eq!(
+        fixture
+            .exchange
+            .background_token(b"identity", form)
+            .await
+            .unwrap(),
+        "token-1"
+    );
+    advance_renewal_time(1800).await;
+    fixture.wait_for_requests(2).await;
+    fixture.wait_for_token("token-2").await;
+    advance_renewal_time(1800).await;
+    fixture.wait_for_requests(3).await;
+    fixture.wait_for_token("token-3").await;
+    advance_renewal_time(600).await;
+    assert_eq!(
+        fixture
+            .exchange
+            .background_token(b"identity", form)
+            .await
+            .unwrap(),
+        "token-3"
+    );
+}
+
+#[tokio::test]
+async fn evicting_a_renewable_identity_cancels_its_worker_and_releases_refresh_material() {
+    let server = MockServer::start_async().await;
+    let token = server
+        .mock_async(|when, then| {
+            when.method(POST).path("/token");
+            then.status(200)
+                .json_body(json!({"access_token": "token", "expires_in": 3600}));
+        })
+        .await;
+    let exchange = Arc::new(exchange(&server));
+    let material = Arc::new(());
+    let weak = Arc::downgrade(&material);
+    assert_eq!(
+        exchange
+            .background_token(b"identity", move || {
+                let _keep_alive = &material;
+                form()
+            })
+            .await
+            .unwrap(),
+        "token"
+    );
+    let key: [u8; 32] = Sha256::digest(b"identity").into();
+    exchange.renewable_cache.invalidate(&key).await;
+    exchange.renewable_cache.run_pending_tasks().await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    token.assert_hits_async(1).await;
+}

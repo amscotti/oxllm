@@ -4,9 +4,9 @@ use oxllm_core::provider::{Provider, ResolvedCredentials};
 use std::collections::HashMap;
 
 // =============================================================================
-// Ported from LiteLLM `tests/llm_translation/test_elevenlabs.py`.
+// Ported from the reference `tests/llm_translation/test_elevenlabs.py`.
 //
-// LiteLLM's ElevenLabs suite has three pieces: a live-call STT base class
+// The reference ElevenLabs suite has three pieces: a live-call STT base class
 // (`TestElevenLabsAudioTranscription`, model `elevenlabs/scribe_v1`), a
 // diarize/`language_code` parameter-passthrough test (network-mocked), and a
 // pure TTS transform suite (`TestElevenLabsTextToSpeechTransformation`). The

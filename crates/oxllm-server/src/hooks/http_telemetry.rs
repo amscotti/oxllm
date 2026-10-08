@@ -85,6 +85,9 @@ pub(crate) fn resolve_endpoint(endpoint: Option<&str>, default: &str) -> String 
 /// to keep the struct field readable (and satisfy clippy::type_complexity).
 pub type PayloadBuilder = dyn Fn(&CallContext, &ResponseSummary) -> Value + Send + Sync;
 
+/// Optional failure payload. Unset backends stay silent on `post_failure`.
+pub type FailurePayloadBuilder = dyn Fn(&CallContext, &oxllm_core::Error) -> Value + Send + Sync;
+
 /// Generic HTTP telemetry hook — fire-and-forget POST to a configurable
 /// endpoint. Each concrete backend provides a payload-builder closure.
 ///
@@ -98,6 +101,9 @@ pub struct HttpTelemetryHook {
     /// Provider-specific payload builder. Captures resolved config so the base
     /// does not need to know each backend's config fields.
     build_payload: Box<PayloadBuilder>,
+    /// When set, `post_failure` posts this payload. Other backends leave it
+    /// unset and `supports_failure_events` stays false.
+    build_failure: Option<Box<FailurePayloadBuilder>>,
     /// Bounded sender into the background POST task. Cheap to clone per
     /// request; `try_send` never blocks.
     tx: mpsc::Sender<QueuedPayload>,
@@ -227,11 +233,22 @@ impl HttpTelemetryHook {
             url,
             auth_header,
             build_payload: Box::new(build_payload),
+            build_failure: None,
             tx,
             memory,
             event_name,
             redact_secret_values,
         })
+    }
+
+    /// Attach a failure payload. Only backends that call this emit failure
+    /// events; the default stays silent.
+    pub fn with_failure_payload<G>(mut self, build_failure: G) -> Self
+    where
+        G: Fn(&CallContext, &oxllm_core::Error) -> Value + Send + Sync + 'static,
+    {
+        self.build_failure = Some(Box::new(build_failure));
+        self
     }
 
     /// The configured POST URL (for tests).
@@ -248,7 +265,26 @@ impl Hook for HttpTelemetryHook {
         if ctx.cache_hit || ctx.is_master {
             return;
         }
-        let mut payload = (self.build_payload)(ctx, resp);
+        self.enqueue_payload((self.build_payload)(ctx, resp));
+    }
+
+    async fn post_failure(&self, ctx: &CallContext, err: &oxllm_core::Error) {
+        if ctx.cache_hit || ctx.is_master {
+            return;
+        }
+        let Some(build) = self.build_failure.as_ref() else {
+            return;
+        };
+        self.enqueue_payload(build(ctx, err));
+    }
+
+    fn supports_failure_events(&self) -> bool {
+        self.build_failure.is_some()
+    }
+}
+
+impl HttpTelemetryHook {
+    fn enqueue_payload(&self, mut payload: Value) {
         // Defense-in-depth: strip well-known credential-bearing keys from the
         // payload before it leaves the process. Langsmith/Helicone/W&B/
         // Datadog/MLflow all ship request/response bodies to third-party

@@ -344,7 +344,7 @@ async fn forward_to_target(
 /// The pass-through route's matched `path` config field is not available here
 /// (axum doesn't surface it), so we treat the entire inbound path as the
 /// suffix and forward it verbatim. This is a deliberate divergence from
-/// LiteLLM's `construct_target_url_with_subpath`
+/// the reference `construct_target_url_with_subpath`
 /// (`pass_through_endpoints.py:589-624`), which strips the matched route
 /// prefix and appends only the captured subpath (when `include_subpath=True`).
 /// oxllm forwards the full inbound path instead — e.g. a request to

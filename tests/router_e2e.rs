@@ -1274,7 +1274,7 @@ async fn test_prompt_cache_ignores_small_prompts() {
 }
 
 /// Allowed fails: a deployment cools as soon as its failure count EXCEEDS
-/// `allowed_fails` (LiteLLM `>` semantics), instead of exhausting
+/// `allowed_fails` (exclusive `>` semantics), instead of exhausting
 /// `num_retries` first. With `allowed_fails: 2` the deployment tolerates 2
 /// failures and cools on the 3rd.
 #[tokio::test]
@@ -1297,7 +1297,7 @@ async fn test_allowed_fails_cools_deployment_after_threshold() {
     let (handle, _state) = start_oxllm(config).await.expect("server should start");
 
     // Three failures exceed the allowed_fails limit of 2 (count=3 > limit=2
-    // under LiteLLM `>` semantics) and cool the deployment — the remaining
+    // under exclusive `>` semantics) and cool the deployment — the remaining
     // retries are skipped.
     let resp = send_request(&handle, "gpt-4o").await;
     assert_eq!(resp.status(), 500);
@@ -1317,7 +1317,7 @@ async fn test_allowed_fails_cools_deployment_after_threshold() {
 }
 
 /// 4xx policy: with `allowed_fails_policy: {"401": 0}` a single 401 cools
-/// the deployment immediately (401s are never retried). LiteLLM `>`
+/// the deployment immediately (401s are never retried). Exclusive `>`
 /// semantics: count=1 > limit=0 → LimitReached on the first failure.
 #[tokio::test]
 async fn test_allowed_fails_policy_cools_immediately_on_401() {

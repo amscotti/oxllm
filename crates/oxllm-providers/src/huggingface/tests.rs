@@ -22,7 +22,7 @@ fn deployment_with_model(model: &str) -> Deployment {
     dep
 }
 
-// --- URL routing: ported from LiteLLM `test_get_complete_url` ---
+// --- URL routing: ported from the reference `test_get_complete_url` ---
 
 #[test]
 fn endpoint_url_default_for_plain_model() {
@@ -84,7 +84,7 @@ fn endpoint_url_routes_hf_inference_provider() {
     );
 }
 
-// --- URL routing with api_base: ported from LiteLLM `test_get_complete_url_inference_endpoints` ---
+// --- URL routing with api_base: ported from the reference inference-endpoint tests ---
 
 fn deployment_with_api_base(api_base: &str) -> Deployment {
     let mut dep = deployment_with_model("huggingface/tgi");
@@ -128,7 +128,7 @@ fn endpoint_url_with_api_base_cases() {
     }
 }
 
-// --- URL helper: ported from LiteLLM `test_build_chat_completion_url_function` ---
+// --- URL helper: ported from the reference chat-completion URL tests ---
 
 #[test]
 fn build_chat_completion_url_appends_paths() {
@@ -171,7 +171,7 @@ fn build_chat_completion_url_appends_paths() {
     }
 }
 
-// --- Auth: ported from LiteLLM `test_validate_environment` ---
+// --- Auth: ported from the reference environment-validation tests ---
 
 #[test]
 fn apply_auth_uses_bearer_token() {
@@ -185,11 +185,11 @@ fn apply_auth_uses_bearer_token() {
     );
 }
 
-// --- Request transform: ported from LiteLLM `test_transform_request` (no-provider case) ---
+// --- Request transform: ported from the reference no-provider case ---
 
 #[test]
 fn transform_request_preserves_model_without_provider_prefix() {
-    // LiteLLM `test_transform_request` case where the model has no provider
+    // Reference request-transform case where the model has no provider
     // prefix: the model id is forwarded unchanged. (The provider-prefix case
     // requires a network provider-mapping lookup, which is out of scope for a
     // pure transform.)

@@ -7,11 +7,13 @@
 //!
 //! ## Current state
 //!
-//! The initial implementation supports **pre-configured access tokens** only:
-//! the host reads `GCP_ACCESS_TOKEN` (or `VERTEX_AI_ACCESS_TOKEN`) from the
-//! environment and forwards it verbatim as a bearer token. Tokens expire after
-//! roughly one hour, so operators are responsible for refreshing them out of
-//! band.
+//! The host accepts explicit access tokens or renewable Google credentials.
+//! `vertex_credentials` accepts a service-account or authorized-user JSON
+//! object, JSON string, or file path. `GOOGLE_APPLICATION_CREDENTIALS` selects
+//! an ambient credential file. OAuth tokens are cached and refreshed on demand
+//! before expiry; concurrent exchanges for one identity are coalesced.
+//! Static `GCP_ACCESS_TOKEN` / `VERTEX_AI_ACCESS_TOKEN` values are forwarded
+//! verbatim and need external rotation.
 //!
 //! ## Project / location configuration
 //!
@@ -21,17 +23,15 @@
 //! environment, use the config loader's `os.environ/` substitution in YAML,
 //! e.g. `vertex_project: os.environ/VERTEX_AI_PROJECT`.
 //!
-//! ## Future: Application Default Credentials
+//! ## Application Default Credentials subset
 //!
-//! Full ADC support (read `GOOGLE_APPLICATION_CREDENTIALS` → service-account
-//! JSON → JWT-sign an OAuth2 assertion → exchange for a short-lived access
-//! token, with caching) is a planned enhancement. It requires a JWT/RSA
-//! signing dependency and a token-cache with expiry, neither of which belongs
-//! in the pure provider crate.
+//! The host exchanges service-account RS256 assertions and authorized-user
+//! refresh tokens. Metadata-server discovery, gcloud default-file discovery,
+//! federation, impersonation and non-default universes remain unsupported.
 
 /// The primary env var the host reads to obtain a pre-exchanged GCP bearer
 /// token for Vertex AI.
 pub const ENV_GCP_ACCESS_TOKEN: &str = "GCP_ACCESS_TOKEN";
 
-/// Alternative env var name (mirrors LiteLLM's convention).
+/// Alternative env var name (retained for compatibility).
 pub const ENV_VERTEX_ACCESS_TOKEN: &str = "VERTEX_AI_ACCESS_TOKEN";

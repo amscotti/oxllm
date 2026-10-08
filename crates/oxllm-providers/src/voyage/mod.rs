@@ -43,12 +43,12 @@ impl EmbeddingProvider for VoyageProvider {
         // (`https://proxy.example.com`) is treated the same way for both
         // endpoints: `/v1` is inserted, full endpoints pass through.
         //
-        // Parity note: LiteLLM's `VoyageEmbeddingConfig.get_complete_url`
+        // Parity note: the reference Voyage embedding URL builder
         // appends `/embeddings` directly to any base not already ending in
         // `/embeddings` (so a bare proxy base yields `…/embeddings`, not
         // `…/v1/embeddings`). We deliberately diverge to keep symmetry with
         // `rerank_url` and the OpenAI-compat convention; callers porting a
-        // LiteLLM config that sets a bare proxy base should append `/v1`
+        // existing config that sets a bare proxy base should append `/v1`
         // themselves or expect the `/v1` segment to be inserted.
         match deployment.oxllm_params.api_base.as_deref() {
             None => format!("{DEFAULT_VOYAGE_BASE}/embeddings"),
@@ -204,7 +204,7 @@ impl RerankProvider for VoyageProvider {
         // Voyage returns results under `data` (not `results`). A missing `data`
         // array signals a malformed/empty/error response — surface it rather
         // than synthesizing a fake empty success that would mask the failure
-        // and skip the host's retry/error-hook path. Mirrors LiteLLM's
+        // and skip the host's retry/error-hook path. Mirrors the reference
         // `VoyageRerankConfig.transform_rerank_response` (`ValueError`).
         let raw_results = body.get("data").and_then(|v| v.as_array());
         let results: Vec<Value> = match raw_results {
@@ -260,7 +260,7 @@ impl Provider for VoyageProvider {
 /// Coerce a JSON token count to `u64`, accepting both integer and float
 /// encodings. Some JSON encoders emit whole-number token counts as floats
 /// (e.g. `120.0`); `Value::as_u64` returns `None` for those, which would
-/// silently zero usage and bill the request at $0. LiteLLM's Python
+/// silently zero usage and bill the request at $0. The reference Python
 /// `usage.get("total_tokens", 0)` accepts both.
 fn as_token_count(v: &Value) -> Option<u64> {
     v.as_u64().or_else(|| v.as_f64().map(|f| f as u64))

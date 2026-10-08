@@ -38,7 +38,7 @@ pub(crate) async fn models_page(
 /// (e.g. `openai/gpt-4o`). The optional fields pass through verbatim into
 /// `oxllm_params.*`.
 ///
-/// The HTML form field is still named `litellm_model` (see
+/// The HTML form field retains its legacy name (see
 /// `templates/pages/models.html`); the serde rename keeps the parser in sync
 /// with the template until the template is renamed too.
 #[derive(Debug, Deserialize, Default)]

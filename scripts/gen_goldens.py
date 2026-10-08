@@ -1,26 +1,17 @@
 #!/usr/bin/env python3
-"""Compare LiteLLM transforms with oxllm provider fixture cases.
+"""Compare upstream transforms with oxllm provider fixture cases.
 
-Reads LiteLLM's provider transform classes (one directory up) and prints
+Reads upstream provider transform classes (one directory up) and prints
 input/expected pairs. The current Anthropic and OpenAI goldens are manually
 curated (see their VERSION files); this script must not overwrite them or
-claim they were generated from a LiteLLM commit.
+claim they were generated from an upstream commit.
 
 ``--write`` is allowed only for an existing fixture directory whose VERSION
-already records ``litellm-commit: <40-hex SHA>``. This provenance check runs
+already records a full upstream-commit provenance marker. This check runs
 for every selected provider before any file is written. CI does not run it.
 
-Usage (from oxllm repo root)::
-
-    # Dry-run: print expected JSON to stdout
-    uv run --directory ../litellm python ../oxllm/scripts/gen_goldens.py --provider anthropic
-
-    # Only for explicitly LiteLLM-generated fixtures; current manual fixtures refuse this
-    uv run --directory ../litellm python ../oxllm/scripts/gen_goldens.py --provider anthropic --write
-
-    uv run --directory ../litellm python ../oxllm/scripts/gen_goldens.py --provider all --write
-
-Requires: LiteLLM repo at ``../litellm`` with ``uv`` environment.
+Run with the sibling checkout's uv environment. The default is a dry run;
+``--provider`` selects cases and ``--write`` requires generated provenance.
 """
 
 from __future__ import annotations
@@ -251,7 +242,7 @@ def main() -> int:
         print(f"LiteLLM repo not found at {LITELLM_ROOT}", file=sys.stderr)
         return 1
 
-    # Ensure litellm is importable when invoked outside its venv cwd.
+    # Ensure the upstream package is importable outside its venv cwd.
     sys.path.insert(0, str(LITELLM_ROOT))
 
     rc = 0

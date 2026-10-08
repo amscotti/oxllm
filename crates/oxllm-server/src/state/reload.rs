@@ -51,6 +51,9 @@ impl AppState {
 /// (`std::env::set_var` is `unsafe` in edition 2024 and this crate is
 /// `#![deny(unsafe_code)]`).
 fn enforce_reload_require_auth(config: &ProxyConfig) -> anyhow::Result<()> {
+    if crate::app::short_master_key_counts(&config.general_settings) {
+        return Ok(());
+    }
     let env_value = std::env::var("OXLLM_REQUIRE_AUTH").ok();
     reload_require_auth_guard(
         &config.general_settings.master_key,

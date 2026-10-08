@@ -22,7 +22,7 @@ const STRIP: &str = "gemini";
 /// several OpenAI-only fields (`logit_bias`, `store`, `metadata`) that Gemini
 /// rejects; Gemini does accept `modalities`, `audio` (on TTS/audio models), and
 /// `service_tier` (`"priority"` / `"flex"`), so those are kept — matching
-/// LiteLLM's `get_supported_openai_params` for Gemini.
+/// the reference supported-param list for Gemini.
 ///
 /// This override drives **both** param-handling paths: the host's
 /// `drop_params` stripping (under `drop_params = true` keys outside this list

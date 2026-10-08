@@ -33,7 +33,7 @@
 //!
 //! Per-object TTL is enforced client-side by stamping an
 //! `x-amz-meta-expires` header (Unix-seconds deadline) on PUT and checking it
-//! on GET, mirroring LiteLLM's read-side `Expires` enforcement. S3 does not
+//! on GET, mirroring the reference read-side `Expires` enforcement. S3 does not
 //! auto-delete on `Expires`, so a bucket lifecycle rule is still recommended
 //! to bound storage growth.
 //! `None` means no expiry; `Some(Duration::ZERO)` invalidates a prior value.

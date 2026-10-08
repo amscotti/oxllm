@@ -7,7 +7,7 @@ use crate::config::types::AimConfig;
 use crate::guardrails::GuardrailResult;
 
 /// AIM Security `/fw/v1/analyze` response — the "firewall" policy model used
-/// by LiteLLM (`litellm/proxy/guardrails/guardrail_hooks/aim/aim.py`).
+/// by the reference (`proxy/guardrails/guardrail_hooks/aim/aim.py`).
 ///
 /// The firewall API is policy-driven rather than score-driven: the response
 /// carries a `required_action.action_type` of `"monitor_action"`,
@@ -45,14 +45,14 @@ pub(crate) struct AimScanRequest {
 }
 
 /// Block when the AIM firewall reports `action_type == "block_action"`
-/// (matches LiteLLM's `if action_type == "block_action":` semantics at
+/// (matches the reference `if action_type == "block_action":` semantics at
 /// `aim/aim.py:120`).
 const ACTION_BLOCK: &str = "block_action";
 
 /// Anonymize (PII redaction) action: AIM returns a `redacted_chat` whose
 /// `all_redacted_messages` carry the PII-redacted text. The body's
 /// `messages[].content` is rewritten in place with the redacted version
-/// (matching LiteLLM's `_anonymize_request` at `aim/aim.py:156-183`).
+/// (matching the reference `_anonymize_request` at `aim/aim.py:156-183`).
 const ACTION_ANONYMIZE: &str = "anonymize_action";
 
 /// AIM Security prompt-injection detection guardrail.
@@ -123,11 +123,11 @@ impl AimGuardrail {
     ///
     /// Returns `GuardrailResult::Block` when the AIM firewall reports
     /// `action_type == "block_action"`. `monitor_action` and any unknown
-    /// action type allow the request through (matching LiteLLM's behavior at
+    /// action type allow the request through (matching the reference behavior at
     /// `aim/aim.py:115-125`). When `action_type == "anonymize_action"`, the
     /// `redacted_chat.all_redacted_messages` payload is written back into
     /// `body.messages[].content` in place before allowing (matching
-    /// LiteLLM's `_anonymize_request` at `aim/aim.py:156-183`); multimodal
+    /// the reference `_anonymize_request` at `aim/aim.py:156-183`); multimodal
     /// (non-string) content degrades to block so image/audio parts are never
     /// silently stripped. Fail-open: errors log a warning and allow the
     /// request through.
@@ -154,7 +154,7 @@ impl AimGuardrail {
                 if result.required_action.action_type == ACTION_ANONYMIZE {
                     // AIM offers a redacted version of the conversation.
                     // Write it back into the body before allowing so PII
-                    // does not reach the upstream LLM unmasked (LiteLLM's
+                    // does not reach the upstream LLM unmasked (the reference
                     // `_anonymize_request` at `aim/aim.py:156-183`).
                     if let Some(block_reason) = apply_anonymize(body, &result.redacted_chat) {
                         tracing::warn!(
@@ -179,13 +179,13 @@ impl AimGuardrail {
 
 /// Apply AIM's `redacted_chat` to the request body in place, rewriting each
 /// message's string `content` with the corresponding redacted version. Mirrors
-/// LiteLLM's `_anonymize_request` + `apply_redacted_messages_back`, but rewrites
+/// the reference `_anonymize_request` + `apply_redacted_messages_back`, but rewrites
 /// `content` in place (preserving `role`, `tool_calls`, `name`, etc.) rather
 /// than replacing the whole messages array — so function-calling structure
 /// survives the redaction.
 ///
 /// Returns `Some(reason)` (caller should `Block`) when the body carries
-/// multimodal (non-string) content, matching LiteLLM's `has_non_string_content`
+/// multimodal (non-string) content, matching the reference `has_non_string_content`
 /// guard: the anonymize path operates on string offsets and cannot preserve
 /// image/audio parts, so multimodal input degrades to block-on-detect.
 fn apply_anonymize(body: &mut Value, redacted_chat: &Value) -> Option<String> {
@@ -201,7 +201,7 @@ fn apply_anonymize(body: &mut Value, redacted_chat: &Value) -> Option<String> {
     let messages = body.get("messages").and_then(Value::as_array)?;
 
     // Degrade to block on multimodal input (non-string, non-null content) so
-    // mask-in-place never silently strips image/audio parts (LiteLLM's
+    // mask-in-place never silently strips image/audio parts (the reference
     // `has_non_string_content` guard at `aim.py:165`).
     let has_multimodal = messages.iter().any(|msg| {
         !matches!(
@@ -247,8 +247,8 @@ mod tests {
 
     #[test]
     fn scan_response_parsing() {
-        // Real AIM firewall response shape (per LiteLLM's verified
-        // integration at `litellm/proxy/guardrails/guardrail_hooks/aim/aim.py`).
+        // Real AIM firewall response shape (per the verified reference
+        // integration at `proxy/guardrails/guardrail_hooks/aim/aim.py`).
         let data = json!({
             "required_action": {
                 "action_type": "block_action",
@@ -378,7 +378,7 @@ mod tests {
         // `all_redacted_messages` carry the PII-redacted text. The body's
         // message content must be rewritten with the redacted version before
         // allowing, so PII does not reach the upstream LLM unmasked (matching
-        // LiteLLM's `_anonymize_request` at `aim/aim.py:156-183`).
+        // the reference `_anonymize_request` at `aim/aim.py:156-183`).
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method("POST").path("/fw/v1/analyze");
@@ -407,7 +407,7 @@ mod tests {
     async fn integration_scan_anonymize_blocks_multimodal() {
         // Multimodal (non-string) content degrades to block: the anonymize
         // path operates on string offsets and would silently strip image /
-        // audio parts if it rewrote content in place. Matching LiteLLM's
+        // audio parts if it rewrote content in place. Matching the reference
         // `has_non_string_content` guard at `aim/aim.py:165`.
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn constructor_targets_firewall_endpoint() {
-        // The endpoint must be `/fw/v1/analyze` (LiteLLM-aligned), not the
+        // The endpoint must be `/fw/v1/analyze` (reference-aligned), not the
         // historical `/api/v1/prompt/scan`.
         let config = AimConfig {
             enabled: Some(true),

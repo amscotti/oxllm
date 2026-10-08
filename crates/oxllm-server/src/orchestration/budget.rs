@@ -21,7 +21,7 @@ use crate::hooks::spend_keys::{deployment_spend_key, provider_spend_key};
 use crate::scheduler::parse_budget_duration;
 
 /// Default TTL for deployment/provider spend counters when no duration is
-/// configured: one day (LiteLLM's default budget window).
+/// configured: one day (the reference default budget window).
 const DEFAULT_ROUTER_BUDGET_TTL: Duration = Duration::from_secs(86400);
 
 /// Bound per-request fan-out to a remote cache while avoiding one network
@@ -110,7 +110,7 @@ pub fn evaluate_router_budget(
 }
 
 /// Resolve the spend-counter TTL for a deployment: its `budget_duration`
-/// parsed LiteLLM-style, falling back to [`DEFAULT_ROUTER_BUDGET_TTL`].
+/// parsed using the duration grammar, falling back to [`DEFAULT_ROUTER_BUDGET_TTL`].
 fn deployment_budget_ttl(deployment: &oxllm_core::deployment::Deployment) -> Duration {
     deployment
         .oxllm_params

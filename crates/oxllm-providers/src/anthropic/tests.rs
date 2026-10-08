@@ -1,6 +1,6 @@
 use super::*;
 use oxllm_core::Endpoint;
-use oxllm_core::deployment::{Deployment, OxllmParams};
+use oxllm_core::deployment::{CacheControlInjectionPoint, Deployment, OxllmParams};
 use oxllm_core::provider::{ChatProvider, Provider, ResolvedCredentials};
 use serde_json::json;
 
@@ -107,6 +107,45 @@ fn endpoint_url_respects_custom_base() {
     assert_eq!(
         p.endpoint_url(&dep),
         "https://custom.example.com/v1/messages"
+    );
+}
+
+#[test]
+fn endpoint_url_keeps_base_that_already_ends_in_messages() {
+    let p = AnthropicProvider;
+    let mut dep = deployment();
+    dep.oxllm_params.api_base =
+        Some("https://example.services.ai.azure.com/anthropic/v1/messages".to_string());
+    assert_eq!(
+        p.endpoint_url(&dep),
+        "https://example.services.ai.azure.com/anthropic/v1/messages"
+    );
+}
+
+#[test]
+fn endpoint_url_keeps_query_on_a_messages_base() {
+    let p = AnthropicProvider;
+    let mut dep = deployment();
+    dep.oxllm_params.api_base = Some(
+        "https://example.services.ai.azure.com/anthropic/v1/messages?api-version=2024-05-01-preview"
+            .to_string(),
+    );
+    assert_eq!(
+        p.endpoint_url(&dep),
+        "https://example.services.ai.azure.com/anthropic/v1/messages?api-version=2024-05-01-preview"
+    );
+}
+
+#[test]
+fn endpoint_url_appends_messages_and_keeps_query() {
+    let p = AnthropicProvider;
+    let mut dep = deployment();
+    dep.oxllm_params.api_base = Some(
+        "https://example.services.ai.azure.com/anthropic/v1?api-version=2024-05-01".to_string(),
+    );
+    assert_eq!(
+        p.endpoint_url(&dep),
+        "https://example.services.ai.azure.com/anthropic/v1/messages?api-version=2024-05-01"
     );
 }
 
@@ -293,7 +332,7 @@ fn metadata_passes_through() {
 }
 
 // =================================================================
-// Ported LiteLLM test scenarios
+// Ported reference test scenarios
 // =================================================================
 
 // --- Assistant message with thinking blocks in request ---
@@ -886,7 +925,7 @@ fn response_with_citations_document_block() {
 // --- Structured output (response_format json_object) in request ---
 // Ported from: test_anthropic_structured_output
 // Tests that response_format json_object is mapped to a synthetic
-// `json_tool_call` tool + forced `tool_choice`, the approach LiteLLM uses to
+// `json_tool_call` tool + forced `tool_choice`, the approach the reference uses to
 // back-fill structured outputs on Claude models that predate native
 // `output_format` support.
 
@@ -1442,7 +1481,7 @@ fn response_cache_tokens_appear_under_prompt_tokens_details() {
 
     // Cache-read AND cache-creation tokens are folded into prompt_tokens so
     // the response obeys the OpenAI `cache_read ⊆ prompt_tokens` invariant
-    // and matches the Bedrock Converse path's convention (LiteLLM folds
+    // and matches the Bedrock Converse path's convention (the reference folds
     // both): 100 input + 80 read + 20 created = 200.
     assert_eq!(out["usage"]["prompt_tokens"], 200);
     assert_eq!(out["usage"]["completion_tokens"], 4);
@@ -2325,7 +2364,7 @@ fn strict_field_dropped_from_tools() {
 }
 
 // =================================================================
-// Ported from LiteLLM test_convert_dict_to_chat_completion.py
+// Ported from the reference test_convert_dict_to_chat_completion.py
 // Edge cases for response → OpenAI ChatCompletion conversion.
 // =================================================================
 
@@ -2756,7 +2795,7 @@ fn stream_empty_signature_delta_returns_none() {
     assert!(p.transform_stream_chunk(raw).expect("ok").is_none());
 }
 
-/// U24 (LiteLLM commit bbd52984b1): Anthropic occasionally emits a single
+/// U24: Anthropic occasionally emits a single
 /// `content_block_delta` event carrying BOTH a `thinking_delta` and a
 /// `signature_delta` in the same `delta` object. The parser must surface
 /// BOTH pieces — dropping either loses reasoning text or the signature
@@ -3264,7 +3303,7 @@ fn response_valid_tool_name_round_trips_unchanged() {
 
 #[test]
 fn request_parallel_tool_calls_false_disables_parallel_when_tool_choice_present() {
-    // LiteLLM nests the disable flag inside tool_choice when one is supplied.
+    // The reference nests the disable flag inside tool_choice when one is supplied.
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude",
@@ -3324,7 +3363,7 @@ fn request_parallel_tool_calls_true_omits_flag() {
 
 #[test]
 fn request_user_param_maps_to_metadata_user_id() {
-    // OpenAI `user` → Anthropic `metadata.user_id` (LiteLLM convention).
+    // OpenAI `user` → Anthropic `metadata.user_id` (reference convention).
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude",
@@ -3355,8 +3394,8 @@ fn request_user_param_merges_with_existing_metadata() {
 #[test]
 fn request_reasoning_effort_maps_to_thinking_budget() {
     // Each OpenAI reasoning_effort level maps to a specific thinking budget
-    // matching LiteLLM's DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET constants
-    // (litellm/constants.py:183-189). Use a pre-4.6 model so the legacy
+    // matching the reference DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET constants
+    // (constants.py:183-189). Use a pre-4.6 model so the legacy
     // budget-based thinking path runs (4.6+ models use adaptive thinking —
     // see `request_reasoning_effort_adaptive_model_emits_adaptive_thinking`).
     // Use a max_tokens well above the largest budget so the budget-clamp guard
@@ -3392,7 +3431,7 @@ fn request_reasoning_effort_maps_to_thinking_budget() {
 #[test]
 fn request_reasoning_effort_none_omits_thinking() {
     // Feature #4: `none` skips thinking entirely (no thinking block emitted),
-    // mirroring LiteLLM's `_map_reasoning_effort`.
+    // mirroring the reference reasoning-effort mapping.
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-3-7-sonnet",
@@ -3496,7 +3535,7 @@ fn request_reasoning_effort_adaptive_model_emits_adaptive_thinking() {
     // Adaptive-thinking models (4.6+/5+) self-size their thinking budget, so
     // `reasoning_effort` must produce `thinking: {"type": "adaptive"}` (not the
     // legacy `{"type": "enabled", "budget_tokens": N}`) and additionally set
-    // `output_config.effort` — mirroring LiteLLM's `_map_reasoning_effort`
+    // `output_config.effort` — mirroring the reference reasoning-effort mapping
     // (transformation.py:1197-1200) and REASONING_EFFORT_TO_OUTPUT_CONFIG_EFFORT.
     let p = AnthropicProvider;
     let req = json!({
@@ -3518,7 +3557,7 @@ fn request_reasoning_effort_adaptive_model_emits_adaptive_thinking() {
 
 #[test]
 fn request_reasoning_effort_adaptive_model_minimal_maps_to_low_effort() {
-    // `minimal` collapses to `low` in output_config.effort (LiteLLM's
+    // `minimal` collapses to `low` in output_config.effort (the reference
     // REASONING_EFFORT_TO_OUTPUT_CONFIG_EFFORT), while still emitting
     // adaptive thinking.
     let p = AnthropicProvider;
@@ -3555,7 +3594,7 @@ fn request_reasoning_effort_none_on_adaptive_model_omits_thinking() {
 fn request_max_tokens_float_is_accepted() {
     // Some JSON serializers emit integer-valued max_tokens as a float
     // (e.g. 128.0). The transform must accept it rather than silently falling
-    // back to the per-model default — matching LiteLLM's
+    // back to the per-model default — matching the reference
     // `int(round(value))` coercion.
     let p = AnthropicProvider;
     let req = json!({
@@ -3749,7 +3788,7 @@ fn golden_chat_response_002_thinking_translation() {
     }
     // prompt_tokens now folds `cache_creation_input_tokens` in as well
     // (input 25 + cache-created 100 = 125; total 125 + 42 = 167) — the
-    // LiteLLM convention, aligned with the Bedrock Converse transform so the
+    // Reference convention, aligned with the Bedrock Converse transform so the
     // same model reports identical usage regardless of serving surface. The
     // golden predates this; patch the expected usage in-place instead of
     // regenerating the immutable golden file (same pattern as the P4
@@ -3961,7 +4000,7 @@ fn request_tool_schema_without_unsupported_fields_unchanged() {
 // Claude Code tool definitions ship `type:"custom"` in `input_schema`.
 // Bedrock rejects this (`tools.N.input_schema.type: Input should be
 // 'object'`); the sanitizer rewrites it to `"object"` recursively, mirroring
-// LiteLLM's `normalize_json_schema_custom_types_to_object`.
+// the reference custom JSON-schema type normalization.
 
 #[test]
 fn tool_input_schema_type_custom_normalized_to_object() {
@@ -5324,7 +5363,7 @@ fn request_json_schema_strict_injects_additional_properties_false() {
     );
 }
 
-/// U32 (LiteLLM commit 46440e2df4): Anthropic's structured-output schema
+/// U32: Anthropic's structured-output schema
 /// validator rejects JSON Schema keywords it does not implement
 /// (`uniqueItems`, `contains`, `minProperties`, `maxProperties`). The
 /// native `output_config.format` path must strip them recursively before
@@ -6682,7 +6721,7 @@ fn is_adaptive_thinking_model_helper_is_inverse_of_effort_beta() {
 
 #[test]
 fn reasoning_effort_budget_matches_litellm_constants() {
-    // Budgets must match LiteLLM's DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET
+    // Budgets must match the reference DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET
     // (constants.py:183-189). `minimal` is clamped up to the Anthropic minimum
     // of 1024 (ANTHROPIC_MIN_THINKING_BUDGET_TOKENS).
     assert_eq!(reasoning_effort_budget("minimal"), 1024);
@@ -7825,5 +7864,169 @@ fn many_colliding_tool_names_assigned_without_overwrite() {
         names.len(),
         n,
         "every tool must get a distinct sanitized name"
+    );
+}
+
+fn point(role: Option<&str>, index: Option<i64>) -> CacheControlInjectionPoint {
+    CacheControlInjectionPoint {
+        location: "message".to_string(),
+        role: role.map(str::to_string),
+        index,
+    }
+}
+
+#[test]
+fn cache_breakpoints_mark_system_and_last_message() {
+    let p = AnthropicProvider;
+    let mut deployment = deployment();
+    deployment.oxllm_params.cache_control_injection_points =
+        Some(vec![point(Some("system"), None), point(None, Some(-1))]);
+    let req = json!({
+        "model": "claude-3-5-sonnet",
+        "messages": [
+            {"role": "system", "content": "be brief"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "again"},
+        ],
+    });
+    let out = p.transform_request(&req, &deployment).expect("transform");
+    assert_eq!(out["system"][0]["cache_control"]["type"], "ephemeral");
+    assert_eq!(out["system"][0]["text"], "be brief");
+    let messages = out["messages"].as_array().expect("messages");
+    assert!(messages[0].get("cache_control").is_none());
+    assert!(
+        messages[0]["content"].get("cache_control").is_none() || messages[0]["content"].is_string()
+    );
+    assert_eq!(
+        messages[2]["content"][0]["cache_control"]["type"],
+        "ephemeral"
+    );
+    assert_eq!(messages[2]["content"][0]["text"], "again");
+}
+
+#[test]
+fn cache_breakpoint_does_not_overwrite_caller_cache_control() {
+    let p = AnthropicProvider;
+    let mut deployment = deployment();
+    deployment.oxllm_params.cache_control_injection_points =
+        Some(vec![point(Some("system"), None)]);
+    let req = json!({
+        "model": "claude-3-5-sonnet",
+        "messages": [
+            {"role": "system", "content": [
+                {"type": "text", "text": "kept", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+            ]},
+            {"role": "user", "content": "hi"},
+        ],
+    });
+    let out = p.transform_request(&req, &deployment).expect("transform");
+    assert_eq!(out["system"][0]["cache_control"]["ttl"], "1h");
+}
+
+#[test]
+fn cache_breakpoint_index_past_the_end_is_skipped() {
+    let p = AnthropicProvider;
+    let mut deployment = deployment();
+    deployment.oxllm_params.cache_control_injection_points = Some(vec![point(None, Some(5))]);
+    let req = json!({
+        "model": "claude-3-5-sonnet",
+        "messages": [{"role": "user", "content": "hi"}],
+    });
+    let out = p
+        .transform_request(&req, &deployment)
+        .expect("missing target is skipped");
+    assert!(out["messages"][0]["content"].is_string());
+}
+
+#[test]
+fn deployment_without_cache_breakpoints_adds_none() {
+    let p = AnthropicProvider;
+    let req = json!({
+        "model": "claude-3-5-sonnet",
+        "messages": [
+            {"role": "system", "content": "plain"},
+            {"role": "user", "content": "hi"},
+        ],
+    });
+    let out = p.transform_request(&req, &deployment()).expect("transform");
+    assert!(
+        out["system"].is_string(),
+        "unset points keep a string system: {out}"
+    );
+    assert!(out["messages"][0]["content"].is_string());
+}
+
+#[test]
+fn cache_breakpoints_use_source_indices_before_system_messages_are_split() {
+    let mut dep = deployment();
+    dep.oxllm_params.cache_control_injection_points = Some(vec![point(None, Some(1))]);
+    let request = json!({"messages": [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "second"}
+    ]});
+    let out = AnthropicProvider.transform_request(&request, &dep).unwrap();
+    assert_eq!(
+        out["messages"][0]["content"][0]["cache_control"]["type"],
+        "ephemeral"
+    );
+    assert!(out["messages"][1]["content"].is_string());
+}
+
+#[test]
+fn role_cache_breakpoints_honor_all_matches_and_the_shared_provider_limit() {
+    let mut dep = deployment();
+    dep.oxllm_params.cache_control_injection_points = Some(vec![point(Some("user"), None)]);
+    let request = json!({"messages": [
+        {"role": "system", "content": [{"type": "text", "text": "kept", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]},
+        {"role": "user", "content": "one"}, {"role": "user", "content": "two"},
+        {"role": "user", "content": "three"}, {"role": "user", "content": "four"}
+    ], "tools": [{"type": "function", "function": {"name": "tool", "parameters": {"type": "object"}, "cache_control": {"type": "ephemeral"}}}]});
+    let out = AnthropicProvider.transform_request(&request, &dep).unwrap();
+    assert_eq!(out["system"][0]["cache_control"]["ttl"], "1h");
+    assert_eq!(
+        out["messages"][0]["content"][0]["cache_control"]["type"],
+        "ephemeral"
+    );
+    assert_eq!(
+        out["messages"][1]["content"][0]["cache_control"]["type"],
+        "ephemeral"
+    );
+    assert!(out["messages"][2]["content"].is_string());
+    assert!(out["messages"][3]["content"].is_string());
+}
+
+#[test]
+fn configured_system_cache_point_does_not_require_a_system_message() {
+    let mut dep = deployment();
+    dep.oxllm_params.cache_control_injection_points =
+        Some(vec![point(Some("system"), None), point(None, Some(-1))]);
+    let out = AnthropicProvider
+        .transform_request(
+            &json!({"messages": [{"role": "user", "content": "hi"}]}),
+            &dep,
+        )
+        .unwrap();
+    assert!(out.get("system").is_none());
+    assert_eq!(
+        out["messages"][0]["content"][0]["cache_control"]["type"],
+        "ephemeral"
+    );
+}
+
+#[test]
+fn tool_result_cache_point_survives_native_message_conversion() {
+    let mut dep = deployment();
+    dep.oxllm_params.cache_control_injection_points = Some(vec![point(None, Some(-1))]);
+    let request = json!({"messages": [
+        {"role": "assistant", "content": null, "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "tool", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call-1", "content": "result"}
+    ]});
+    let out = AnthropicProvider.transform_request(&request, &dep).unwrap();
+    assert_eq!(out["messages"][1]["content"][0]["type"], "tool_result");
+    assert_eq!(
+        out["messages"][1]["content"][0]["cache_control"]["type"],
+        "ephemeral"
     );
 }

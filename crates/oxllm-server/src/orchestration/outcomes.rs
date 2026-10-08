@@ -88,10 +88,10 @@ pub(crate) enum UpstreamError {
 /// into whole seconds to wait before the next attempt. Returns `None` when
 /// the header is absent, malformed, or resolves to a non-positive delay.
 ///
-/// Mirrors LiteLLM's `_get_retry_after_from_exception_header`
-/// (`litellm/utils.py`): a numeric value is used verbatim; an HTTP-date is
+/// Mirrors the reference retry-after header parsing
+/// (`utils.py`): a numeric value is used verbatim; an HTTP-date is
 /// converted to `date - now`. Callers treat a non-positive result as "no
-/// signal" and fall back to exponential backoff (LiteLLM gates on
+/// signal" and fall back to exponential backoff (the reference gates on
 /// `0 < retry_after <= 60` in `_calculate_retry_after`).
 pub(crate) fn retry_after_secs(headers: Option<&HeaderMap>) -> Option<u64> {
     let raw = headers?.get("retry-after")?.to_str().ok()?.trim();
@@ -111,7 +111,7 @@ pub(crate) fn retry_after_secs(headers: Option<&HeaderMap>) -> Option<u64> {
 
 /// Check if an HTTP status code is retryable.
 ///
-/// Matches LiteLLM's `_should_retry` (`litellm/utils.py`): **408** (Request
+/// Matches the reference retry classifier (`utils.py`): **408** (Request
 /// Timeout), **409** (Conflict / lock timeout), **429** (Too Many Requests),
 /// and **>= 500** (server errors) are retried. All other 4xx are terminal
 /// client errors. Keeping this classifier in lock-step with the chat path's
@@ -130,18 +130,33 @@ pub(crate) fn is_retryable_status(status: reqwest::StatusCode) -> bool {
 /// than a fault in the caller's request content: 401 (stale/invalid vendor
 /// credential), 403 (credential not entitled for this model), 404 (model
 /// decommissioned at the provider). These are exactly the statuses for
-/// which LiteLLM's `async_function_with_fallbacks`
-/// (`litellm/router.py:6435`) walks the configured `fallbacks` chain after
+/// which the reference `async_function_with_fallbacks`
+/// (`router.py:6435`) walks the configured `fallbacks` chain after
 /// the primary fails — an operator's `fallbacks: [{primary: [secondary]}]`
 /// exists to rescue precisely this scenario.
 ///
-/// Deliberate divergence from LiteLLM (which falls back on ANY primary
+/// Deliberate divergence from the reference (which falls back on ANY primary
 /// exception, 400 included): request-content 4xx (400/413/422/…) do NOT
 /// become fallback-eligible here — an abusive client must not be able to
 /// fan one malformed request across every configured deployment. Only
 /// statuses that say something about the *deployment* fan out.
 pub(crate) fn is_deployment_fault_status(status: u16) -> bool {
     matches!(status, 401 | 403 | 404)
+}
+
+/// An explicit zero allowed-fails entry opts a client status into immediate
+/// deployment failover. Other request-content errors remain terminal.
+pub(crate) fn explicitly_allows_client_fallback(
+    state: &crate::state::AppState,
+    status: u16,
+) -> bool {
+    state
+        .router
+        .config()
+        .allowed_fails_policy
+        .as_ref()
+        .and_then(|policy| policy.get(&status.to_string()))
+        == Some(&0)
 }
 
 /// Check if an error response body indicates a context-length-exceeded

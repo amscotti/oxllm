@@ -824,6 +824,7 @@ fn serialized_pricing_preserves_all_optional_token_and_duration_fields() {
         cost_per_second_rate: Some(4.0),
         input_cost_per_second: Some(5.0),
         output_cost_per_second: Some(6.0),
+        ..Default::default()
     };
     let encoded = serde_json::to_value(&pricing).expect("serialize");
     let decoded: DeploymentPricing = serde_json::from_value(encoded.clone()).expect("deserialize");

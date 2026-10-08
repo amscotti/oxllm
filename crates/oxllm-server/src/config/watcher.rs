@@ -3,6 +3,7 @@
 //! Uses the `notify` crate to watch the config file. On change (debounced),
 //! reloads the config, rebuilds `AppState`, and swaps atomically via `ArcSwap`.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,11 +44,16 @@ pub type Rebuild = Arc<
 /// the swap.
 pub fn spawn_watcher(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebuild: Rebuild) {
     tokio::spawn(async move {
-        watch_loop(config_path, shared, rebuild).await;
+        watch_loop(config_path, shared, rebuild, None).await;
     });
 }
 
-async fn watch_loop(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebuild: Rebuild) {
+async fn watch_loop(
+    config_path: PathBuf,
+    shared: Arc<ArcSwap<AppState>>,
+    rebuild: Rebuild,
+    ready: Option<tokio::sync::oneshot::Sender<()>>,
+) {
     // Canonicalize the config path so relevance checks match the path form
     // delivered by the OS watcher. On macOS in particular, `notify`'s
     // FSEvents backend resolves symlinks (e.g. `/var` → `/private/var`), so
@@ -56,9 +62,7 @@ async fn watch_loop(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebuil
     // paths would then never match. Falling back to the original path keeps
     // the watcher functional when canonicalization fails (e.g. a transient
     // ENOENT during a rename).
-    let config_path: PathBuf = tokio::fs::canonicalize(&config_path)
-        .await
-        .unwrap_or(config_path);
+    let config_path = absolute_path(config_path);
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(64);
 
@@ -73,13 +77,20 @@ async fn watch_loop(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebuil
             }
         };
 
-    let watch_path = config_path.parent().unwrap_or(&config_path);
-    if let Err(e) = watcher.watch(watch_path, notify::RecursiveMode::NonRecursive) {
-        tracing::error!(error = %e, path = ?watch_path, "failed to watch config path");
+    let mut files = watched_config_files(&config_path).await;
+    let mut watched_parents = HashSet::new();
+    if !ensure_parents_watched(&mut watcher, &files, &mut watched_parents) {
         return;
     }
 
-    tracing::info!(path = %config_path.display(), "config hot-reload watcher started");
+    tracing::info!(
+        path = %config_path.display(),
+        files = files.len(),
+        "config hot-reload watcher started"
+    );
+    if let Some(ready) = ready {
+        let _ = ready.send(());
+    }
 
     let debounce = Duration::from_millis(DEBOUNCE_MS);
 
@@ -88,15 +99,15 @@ async fn watch_loop(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebuil
         maybe_event = rx.recv() => {
         match maybe_event {
         Some(Ok(event)) => {
-        if is_relevant_event(&event, &config_path) {
+        if is_relevant_to_any(&event, &files) {
         // Real debounce: drain the channel for the full window so a
         // burst of N events produces exactly one reload, not N.
-        drain_during(&mut rx, debounce, &config_path).await;
+        drain_during(&mut rx, debounce, &files).await;
         // Snapshot the on-disk content BEFORE the rebuild: a write landing
         // after the rebuild closure reads the file (but before we regain
         // control) is invisible to that rebuild, so we must detect it by
         // comparing content fingerprints afterwards.
-        let mut last = fingerprint(&config_path).await;
+        let mut last = fingerprint_all(&files).await;
         // Only drain when the reload succeeds: if the rebuild failed (e.g.
         // it read a partially-written file), the event signaling the
         // *completed* write may still be queued; dropping it would silently
@@ -115,8 +126,10 @@ async fn watch_loop(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebuil
             // changed. Bounded so a writer continuously rewriting the
             // config cannot spin this loop forever.
             while rx.try_recv().is_ok() {}
+            files = watched_config_files(&config_path).await;
+            let _ = ensure_parents_watched(&mut watcher, &files, &mut watched_parents);
             for _ in 0..3 {
-                let now = fingerprint(&config_path).await;
+                let now = fingerprint_all(&files).await;
                 if now == last {
                     break;
                 }
@@ -127,6 +140,8 @@ async fn watch_loop(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebuil
                     // next retry iteration's fingerprint change) retries.
                     break;
                 }
+                files = watched_config_files(&config_path).await;
+                let _ = ensure_parents_watched(&mut watcher, &files, &mut watched_parents);
                 while rx.try_recv().is_ok() {}
             }
         }
@@ -166,7 +181,7 @@ async fn watch_loop(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebuil
 async fn drain_during(
     rx: &mut tokio::sync::mpsc::Receiver<notify::Result<notify::Event>>,
     window: Duration,
-    config_path: &std::path::Path,
+    config_paths: &[PathBuf],
 ) {
     let mut deadline = tokio::time::Instant::now() + window;
     loop {
@@ -183,7 +198,7 @@ async fn drain_during(
                     // config file itself, so the window truly elapses
                     // "after the last file event" without letting sibling
                     // churn starve the reload.
-                    Some(Ok(ev)) if is_relevant_event(&ev, config_path) => {
+                    Some(Ok(ev)) if is_relevant_to_any(&ev, config_paths) => {
                         deadline = tokio::time::Instant::now() + window;
                     }
                     Some(_) => {}
@@ -205,6 +220,95 @@ async fn fingerprint(path: &std::path::Path) -> Option<u64> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     hasher.write(&bytes);
     Some(hasher.finish())
+}
+
+fn is_relevant_to_any(event: &notify::Event, config_paths: &[PathBuf]) -> bool {
+    config_paths
+        .iter()
+        .any(|path| is_relevant_event(event, path))
+}
+
+async fn watched_config_files(root: &std::path::Path) -> Vec<PathBuf> {
+    // Watch logical paths as well as canonical targets: symlink swaps change
+    // the logical parent, while file writes may arrive under the target path.
+    let mut raw = vec![root.to_path_buf()];
+    if let Some(current) = crate::config::loader::current_config_path() {
+        let current = absolute_path(current);
+        let same_root = current == root
+            || match (
+                tokio::fs::canonicalize(&current).await,
+                tokio::fs::canonicalize(root).await,
+            ) {
+                (Ok(current), Ok(root)) => current == root,
+                _ => false,
+            };
+        if same_root {
+            raw.push(current);
+            raw.extend(crate::config::loader::config_contributor_paths());
+        }
+    }
+    let mut out = Vec::new();
+    for path in raw {
+        let path = absolute_path(path);
+        if !out.contains(&path) {
+            out.push(path.clone());
+        }
+        if let Ok(canon) = tokio::fs::canonicalize(&path).await {
+            if !out.contains(&canon) {
+                out.push(canon);
+            }
+        }
+    }
+    out
+}
+
+fn absolute_path(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&path))
+            .unwrap_or(path)
+    }
+}
+
+fn ensure_parents_watched<W: Watcher>(
+    watcher: &mut W,
+    files: &[PathBuf],
+    watched_parents: &mut HashSet<PathBuf>,
+) -> bool {
+    let mut watched_any = !watched_parents.is_empty();
+    for file in files {
+        let parent = file.parent().unwrap_or(file.as_path()).to_path_buf();
+        if !watched_parents.insert(parent.clone()) {
+            watched_any = true;
+            continue;
+        }
+        if let Err(e) = watcher.watch(&parent, notify::RecursiveMode::NonRecursive) {
+            tracing::error!(error = %e, path = ?parent, "failed to watch config directory");
+            watched_parents.remove(&parent);
+        } else {
+            watched_any = true;
+        }
+    }
+    if !watched_any {
+        tracing::error!("failed to watch any config directory");
+    }
+    watched_any
+}
+
+async fn fingerprint_all(paths: &[PathBuf]) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut any = false;
+    for path in paths {
+        if let Some(fp) = fingerprint(path).await {
+            any = true;
+            path.hash(&mut hasher);
+            hasher.write_u64(fp);
+        }
+    }
+    any.then_some(hasher.finish())
 }
 
 fn is_relevant_event(event: &notify::Event, config_path: &std::path::Path) -> bool {
@@ -309,6 +413,70 @@ mod tests {
     use super::*;
     use crate::config::types::{ConfigModel, GeneralSettings, OxllmSettings, ProxyConfig};
     use oxllm_core::deployment::OxllmParams;
+
+    #[test]
+    fn included_files_reload_and_new_include_directories_are_followed() {
+        let _guard = crate::config::loader::CONFIG_PATH_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["includes", "next"] {
+            std::fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        let root = dir.path().join("root.yaml");
+        let first = dir.path().join("includes/models.yaml");
+        let next = dir.path().join("next/models.yaml");
+        let write_model = |path: &std::path::Path, name: &str| {
+            std::fs::write(path, format!("model_list:\n  - model_name: {name}\n    oxllm_params:\n      model: openai/gpt-4o\n")).unwrap();
+        };
+        write_model(&first, "initial");
+        write_model(&next, "new-directory");
+        std::fs::write(&root, "model_list: []\ninclude: [includes/models.yaml]\n").unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let config = crate::config::load_config(root.to_str().unwrap()).unwrap();
+            let shared = Arc::new(ArcSwap::from_pointee(AppState::new(config).unwrap()));
+            let rebuild_path = root.clone();
+            let rebuild: Rebuild = Arc::new(move |previous| {
+                let path = rebuild_path.clone();
+                Box::pin(async move {
+                    let config = crate::config::load_config_async(path.to_str().unwrap()).await?;
+                    previous.reload_from_config(config)
+                })
+            });
+            let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+            tokio::spawn(watch_loop(root.clone(), shared.clone(), rebuild, Some(ready_tx)));
+            tokio::time::timeout(Duration::from_secs(6), ready_rx).await
+                .expect("watcher must register before writes").expect("watcher started");
+            let wait_for_model = |name: &'static str| {
+                let shared = shared.clone();
+                async move {
+                    tokio::time::timeout(Duration::from_secs(6), async {
+                        loop {
+                            if shared
+                                .load()
+                                .deployments
+                                .iter()
+                                .any(|deployment| deployment.model_name == name)
+                            {
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        }
+                    })
+                    .await
+                    .unwrap_or_else(|_| panic!("expected include reload to {name}; live models: {:?}; contributors: {:?}",
+                        shared.load().deployments.iter().map(|deployment| &deployment.model_name).collect::<Vec<_>>(),
+                        crate::config::loader::config_contributor_paths()));
+                }
+            };
+            write_model(&first, "edited-include");
+            wait_for_model("edited-include").await;
+            std::fs::write(&root, "model_list: []\ninclude: [next/models.yaml]\n").unwrap();
+            wait_for_model("new-directory").await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            write_model(&next, "edited-new-include");
+            wait_for_model("edited-new-include").await;
+        });
+    }
 
     fn test_config(model_name: &str) -> ProxyConfig {
         ProxyConfig {
@@ -535,7 +703,8 @@ mod tests {
 
         let window = Duration::from_millis(100);
         let started = tokio::time::Instant::now();
-        drain_during(&mut rx, window, config_path).await;
+        let config_paths = [config_path.to_path_buf()];
+        drain_during(&mut rx, window, &config_paths).await;
         let elapsed = started.elapsed();
 
         // Should have drained the queue (channel empty afterwards) and waited
@@ -584,7 +753,8 @@ mod tests {
 
         let window = Duration::from_millis(100);
         let started = tokio::time::Instant::now();
-        drain_during(&mut rx, window, config_path).await;
+        let config_paths = [config_path.to_path_buf()];
+        drain_during(&mut rx, window, &config_paths).await;
         let elapsed = started.elapsed();
 
         assert!(

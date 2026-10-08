@@ -136,7 +136,7 @@ async fn vertex_claude_forwards_to_raw_predict_with_anthropic_version() {
     // The Claude branch should POST to `:rawPredict` with the bearer token
     // and `anthropic_version: "vertex-2023-10-16"` in the body. Vertex encodes
     // the model in the URL path and rejects a top-level `model` field
-    // (LiteLLM `data.pop("model", None)`).
+    // (the reference `data.pop("model", None)`).
     let upstream_mock = mock.mock(|when, then| {
         when.method(httpmock::Method::POST)
             .path("/v1/projects/test-gcp-project/locations/us-central1/publishers/anthropic/models/claude-3-5-sonnet@20241022:rawPredict")

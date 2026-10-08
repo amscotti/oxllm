@@ -140,7 +140,7 @@ fn sentinel_url_uses_reserved_invalid_tld() {
 fn default_api_version_is_modern_2025_release() {
     // The old default `2024-02-15-preview` predates `max_completion_tokens`,
     // `stream_options`, and o-series models. The `2024-10-21` GA release added
-    // those, and `2025-02-01-preview` is LiteLLM's current
+    // those, and `2025-02-01-preview` is the reference current
     // `AZURE_DEFAULT_API_VERSION`, carrying reasoning-effort / service-tier
     // fields used by GPT-5 and later. The default must be at least
     // `2025-02-01-preview` so these features work out of the box.
@@ -155,7 +155,7 @@ fn default_api_version_is_modern_2025_release() {
         (year, month, day) > (2024, 10, 21),
         "default API version {DEFAULT_AZURE_API_VERSION} must be newer than 2024-10-21"
     );
-    // Pinned to LiteLLM's AZURE_DEFAULT_API_VERSION.
+    // Pinned to the reference AZURE_DEFAULT_API_VERSION.
     assert_eq!(
         DEFAULT_AZURE_API_VERSION, "2025-02-01-preview",
         "default must track LiteLLM's AZURE_DEFAULT_API_VERSION (2025-02-01-preview)"
@@ -357,14 +357,14 @@ fn transform_request_preserves_request_model() {
     assert_eq!(out["messages"][0]["content"], "Hi");
 }
 
-// --- Ported from LiteLLM test_azure_openai.py ---
+// --- Ported from the reference test_azure_openai.py ---
 //
 // These tests verify that the Azure OpenAI provider correctly passes through
 // all API parameters (identity transform for request body), handles streaming
 // chunks with modern fields, and constructs correct endpoint URLs for image
 // generation and deployment-path scenarios.
 
-// Litellm test: test_azure_gpt_4o_with_tool_call_and_response_format
+// Reference test: test_azure_gpt_4o_with_tool_call_and_response_format
 // Azure identity transform preserves all openai params including tools + response_format
 #[test]
 fn request_preserves_all_openai_params() {
@@ -383,7 +383,7 @@ fn request_preserves_all_openai_params() {
     assert_eq!(out, req);
 }
 
-// Litellm test: test_openai_chat_completion_streaming_handler_reasoning_content
+// Reference test: test_openai_chat_completion_streaming_handler_reasoning_content
 // (Azure uses the same SSE parser as OpenAI)
 #[test]
 fn stream_chunk_with_reasoning_content() {
@@ -402,7 +402,7 @@ fn stream_chunk_with_reasoning_content() {
     );
 }
 
-// Litellm test: test_streaming_tool_calls_with_n_greater_than_1 (chunk parsing)
+// Reference test: test_streaming_tool_calls_with_n_greater_than_1 (chunk parsing)
 #[test]
 fn stream_chunk_with_tool_calls() {
     let p = AzureProvider;
@@ -422,7 +422,7 @@ fn stream_chunk_with_tool_calls() {
     assert_eq!(out["choices"][0]["delta"]["tool_calls"][0]["index"], 0);
 }
 
-// Litellm test: test_process_azure_endpoint_url (deployment-path URL pattern)
+// Reference test: test_process_azure_endpoint_url (deployment-path URL pattern)
 // Azure routes the model via the deployment name in the URL path. This test
 // validates the chat-completions URL construction when the model carries the
 // `azure/` prefix.
@@ -439,7 +439,7 @@ fn endpoint_url_with_model_that_has_azure_prefix() {
     );
 }
 
-// Litellm test: test_azure_extra_headers (auth header passthrough)
+// Reference test: test_azure_extra_headers (auth header passthrough)
 // Azure applies auth via `api-key` header. This test verifies the header
 // is set correctly and that the Authorization header is NOT used.
 #[test]
@@ -667,7 +667,7 @@ fn apply_auth_falls_back_to_api_key_for_generic_apikey() {
 //
 // Azure is stricter than OpenAI: a bare-string `image_url` (must be an object
 // `{"url": ...}`) and a null `function_call.arguments` (must be a string) are
-// both rejected by Azure but accepted by OpenAI. LiteLLM's
+// both rejected by Azure but accepted by OpenAI. The reference
 // `convert_to_azure_openai_messages` fixes these up before sending.
 #[test]
 fn transform_request_normalizes_bare_string_image_url() {
@@ -754,7 +754,7 @@ fn transform_request_leaves_string_arguments_unchanged() {
 
 // --- Coverage for the missing-arguments coercion gap (LOW) ---
 //
-// LiteLLM's `_azure_tool_call_invoke_helper` coerces `arguments` when it is
+// The reference Azure tool-call helper coerces `arguments` when it is
 // missing OR null (`get(...) is None`). oxllm previously only coerced the
 // null case; a `function_call` with only `name` (no `arguments` key) was
 // passed through unchanged and Azure may reject it with a 400.
@@ -783,7 +783,7 @@ fn transform_request_normalizes_missing_function_call_arguments() {
 //
 // An `AzureAd` token is a bearer token, NOT a shared key. Azure rejects it
 // from the `api-key` header with a 401, so it must go on
-// `Authorization: Bearer` — matching LiteLLM's `_base_validate_azure_environment`
+// `Authorization: Bearer` — matching the reference Azure-environment validation
 // AAD fallback. This is the provider-side half of AAD support; the host-side
 // resolver (Entra ID / managed identity token acquisition with refresh) is a
 // separate component.
@@ -862,7 +862,7 @@ fn apply_auth_routes_jwt_shaped_key_to_bearer_and_hex_key_to_api_key() {
 
 // --- Coverage for the Azure v1 API routing (LOW) ---
 //
-// LiteLLM's `_is_azure_v1_api_version` detects `api_version` values
+// The reference Azure v1 detector recognizes `api_version` values
 // `preview` / `latest` / `v1` and routes to `{base}/openai/v1/{endpoint}`
 // (model in body) instead of the deployment-path URL. oxllm previously
 // always built the deployment-path URL.
@@ -917,7 +917,7 @@ fn endpoint_url_uses_deployment_path_for_dated_api_version() {
 /// `https://{resource}.services.ai.azure.com/openai/v1/` host). Operators
 /// paste that full base into `api_base`; the provider must not append the
 /// route a second time (`/openai/v1/openai/v1/...`), which is a known
-/// LiteLLM bug.
+/// reference bug.
 #[test]
 fn endpoint_url_does_not_double_v1_base_prefix() {
     let p = AzureProvider;
@@ -956,7 +956,7 @@ fn endpoint_url_does_not_double_classic_openai_prefix() {
     );
 }
 
-/// LiteLLM accepts `api_version: latest` as an alias for the v1 surface, but
+/// The reference accepts `api_version: latest` as an alias for the v1 surface, but
 /// Azure's v1 REST reference documents only `v1` and `preview` as valid
 /// `api-version` query values, so the alias must emit `v1` on the wire.
 #[test]

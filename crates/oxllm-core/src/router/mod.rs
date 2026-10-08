@@ -67,7 +67,7 @@ pub enum AllowedFailDecision {
         /// The effective limit (per-status policy or global `allowed_fails`).
         limit: u32,
     },
-    /// The failure count exceeded the configured limit (LiteLLM semantics:
+    /// The failure count exceeded the configured limit (exclusive semantics:
     /// `count > limit`, so `allowed_fails: N` tolerates N failures and
     /// cools on the (N+1)th) — cool the deployment and move on to the next
     /// one.
@@ -896,7 +896,7 @@ impl Router {
     /// pool beats failing the request when the tier pool is entirely cooling
     /// down ("degraded beats none", like the health-check safety net), but
     /// the widening is confined to the requested model's own group: an
-    /// unrelated model is never served, matching LiteLLM's complexity router
+    /// unrelated model is never served, matching the reference complexity router
     /// (which falls back to the requested model group, not the whole model
     /// list). A request whose model group resolves nothing (including an
     /// unknown model) yields an empty chain → `None` → 404. Also returns the
@@ -1207,7 +1207,7 @@ impl Router {
     /// ([`RouterConfig::exception_retry_policy`]) is configured, in which
     /// case `num_retries` acts as the final fallback tier for
     /// cooldown-worthy statuses (server errors, 429, 408, 401, 404 —
-    /// LiteLLM's `_is_cooldown_required` set). Other client-error 4xx are
+    /// the reference `_is_cooldown_required` set). Other client-error 4xx are
     /// never counted implicitly: an abusive client cannot cool a healthy
     /// deployment for generic 4xx (mirroring the client-error exclusion of
     /// the percentage path below). Explicit per-status opt-ins
@@ -1245,7 +1245,7 @@ impl Router {
         };
 
         // H5: resolve the limit. When an exception retry policy is configured,
-        // fall back to num_retries — but only for statuses LiteLLM considers
+        // fall back to num_retries — but only for statuses the reference considers
         // cooldown-worthy (`_is_cooldown_required`, cooldown_handlers.py:
         // server errors, 429, 408, 401, 404). Other client-error 4xx are the
         // client's fault, not the deployment's: counting them (cool dep A →
@@ -1253,7 +1253,7 @@ impl Router {
         // client-error exclusion the percentage path applies one screen up.
         // Explicit opt-ins (a `RetryPolicy` category naming the status, or an
         // `allowed_fails_policy` entry for it) still count, mirroring
-        // LiteLLM's `_has_explicit_allowed_fails_policy_for_exception`.
+        // the reference explicit allowed-fails policy check.
         let mut limit = self.allowed_fails_limit_for(status);
         if limit.is_none()
             && self.config.exception_retry_policy.is_some()
@@ -1278,14 +1278,14 @@ impl Router {
                 let count =
                     self.cooldown
                         .record_failure(key, status, Duration::from_secs(window_secs));
-                // LiteLLM parity (`should_cooldown_based_on_allowed_fails_policy`,
-                // `litellm/router_utils/cooldown_handlers.py:542`, with the
+                // Failure-policy parity (`should_cooldown_based_on_allowed_fails_policy`,
+                // `router_utils/cooldown_handlers.py:542`, with the
                 // `updated_fails > allowed_fails` comparison at `:586`): the limit is
                 // the number of failures *tolerated* within the window; the
                 // deployment cools only on the (N+1)th failure (`count > limit`),
                 // NOT the Nth (`count >= limit`). With `allowed_fails: 2` the
                 // deployment tolerates 2 failures and cools on the 3rd, matching
-                // upstream semantics for an operator porting a LiteLLM config.
+                // upstream semantics for an operator porting an existing config.
                 if count > limit {
                     AllowedFailDecision::LimitReached { count, limit }
                 } else {
@@ -1456,8 +1456,8 @@ impl Router {
 
     /// Resolve the per-status retry count from the effective retry policy.
     /// A routing-group override retry_policy takes precedence; missing
-    /// statuses fall back to the global retry_policy, then to the effective
-    /// `num_retries` (group override first, then global).
+    /// statuses fall back to the global retry_policy, then the structured
+    /// exception policy, then effective `num_retries` (group first, then global).
     pub fn retries_for_status(&self, status: u16) -> u32 {
         self.retries_for_status_model(status, "")
     }
@@ -1475,6 +1475,14 @@ impl Router {
         }
         if let Some(n) = self.config.retry_policy.get(&key) {
             return *n;
+        }
+        if let Some(count) = self
+            .config
+            .exception_retry_policy
+            .as_ref()
+            .and_then(|policy| policy.limit_for_status(status))
+        {
+            return count;
         }
         group
             .and_then(|g| g.num_retries)
@@ -1538,7 +1546,7 @@ impl<'r> CooldownKeyCache<'r> {
 /// server-side condition) are excluded — an abusive client spraying 4xx at a
 /// healthy deployment must not cool it. Everything else — status 0 (the
 /// network-error bucket), 1xx/2xx/3xx oddities, and 5xx — reflects the
-/// deployment, matching LiteLLM's `_is_cooldown_required` catch-all
+/// deployment, matching the reference `_is_cooldown_required` catch-all
 /// ("should cool down for all other errors", cooldown_handlers.py:245-248).
 fn is_server_reflecting_status(status: u16) -> bool {
     status == 0 || !(400..500).contains(&status) || status == 429 || status == 408
@@ -1546,7 +1554,7 @@ fn is_server_reflecting_status(status: u16) -> bool {
 
 /// Whether an HTTP status may cool a deployment through the implicit
 /// `num_retries` fallback tier of [`Router::record_failure_and_check`]:
-/// server-reflecting statuses plus the two 4xx LiteLLM's
+/// server-reflecting statuses plus the two 4xx the reference
 /// `_is_cooldown_required` (cooldown_handlers.py:233-247) singles out as
 /// deployment-fault (401 bad credentials, 404 model gone). All other 4xx
 /// are client-caused and must not count toward cooldown.
@@ -1554,11 +1562,11 @@ fn cooldown_worthy_status(status: u16) -> bool {
     is_server_reflecting_status(status) || matches!(status, 401 | 404)
 }
 
-/// Priority-order tiers (LiteLLM `oxllm_params.order` parity): lower
+/// Priority-order tiers (`oxllm_params.order`): lower
 /// `order` = higher priority. When at least one candidate sets `order`,
 /// only candidates in the lowest-order tier survive; deployments without
 /// `order` count as the lowest-priority tier (`u32::MAX`), matching
-/// LiteLLM, where unset-order deployments become eligible only once every
+/// the reference, where unset-order deployments become eligible only once every
 /// ordered deployment has cooled down.
 ///
 /// Composes with cooldowns: the filter runs after the cooldown filter in
@@ -1597,7 +1605,7 @@ fn order_tier_filter(available: Vec<&Deployment>) -> Vec<&Deployment> {
 ///   cross-provider requests.
 /// - A `provider/*` configured model matches only requested models whose own
 ///   provider prefix equals `provider`. A requested model without a `/`
-///   defaults to the `openai` provider (LiteLLM convention), so `openai/*`
+///   defaults to the `openai` provider, so `openai/*`
 ///   matches bare names like `gpt-4o` while `anthropic/*` does not.
 /// - A partial pattern whose model part carries a `*` (e.g. `groq/llama-*`,
 ///   `openai/gpt-4*`) matches same-provider requests whose model name matches

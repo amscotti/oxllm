@@ -170,7 +170,7 @@ pub struct AppState {
     /// Process-wide graceful-shutdown flag, flipped to `true` early in the
     /// drain path of [`crate::app::run`]. The liveness/readiness probes
     /// consult it (via [`AppState::is_shutting_down`]) and return
-    /// `503 {"status":"shutting_down"}` once set, mirroring LiteLLM's
+    /// `503 {"status":"shutting_down"}` once set, mirroring the reference
     /// `GracefulShutdownManager.is_shutting_down()` semantics so k8s probes
     /// get a clean 503 (instead of a probe timeout) and stop routing new
     /// traffic into a draining pod. Preserved across hot-reloads: a config

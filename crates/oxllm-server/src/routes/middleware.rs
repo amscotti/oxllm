@@ -171,7 +171,7 @@ where
 /// Files / platform assistants, threads, messages), and `OPTIONS` (preflight).
 /// No `PUT`/`PATCH` routes exist in the v1 group today.
 ///
-/// `allow_headers` is a wildcard (matching LiteLLM's `proxy_server.py:1852`) so
+/// `allow_headers` is a wildcard (matching the reference `proxy_server.py:1852`) so
 /// that browser clients using Anthropic-style auth (`x-api-key`, `api-key`) and
 /// the Anthropic SDK headers (`anthropic-version`, `anthropic-beta`) are not
 /// blocked by a narrow preflight allow-list. This is safe because
@@ -181,8 +181,8 @@ where
 /// `expose_headers` lists the `x-oxllm-*` / `x-ratelimit-*` / `retry-after` /
 /// `x-request-id` response headers the pipeline and orchestration layers stamp,
 /// so browser JS can read routing observability, cost, and rate-limit metadata
-/// from `fetch()` responses. Mirrors LiteLLM's
-/// `expose_headers=LITELLM_UI_ALLOW_HEADERS` (`proxy_server.py:1853`), scoped
+/// from `fetch()` responses. Mirrors the reference
+/// management-UI exposed-header list (`proxy_server.py:1853`), scoped
 /// to oxllm's own header family.
 pub(crate) fn build_proxy_cors(
     origins: &Option<Vec<String>>,
@@ -455,7 +455,7 @@ mod tests {
     /// Anthropic-style auth sends a preflight with
     /// `Access-Control-Request-Headers: x-api-key, anthropic-version`; if the
     /// CORS layer does not allow those, the browser blocks the actual request.
-    /// We use a wildcard (`allow_headers(Any)`, matching LiteLLM's
+    /// We use a wildcard (`allow_headers(Any)`, matching the reference
     /// `proxy_server.py:1852`), which is safe because the origin allow-list is
     /// already finite.
     #[tokio::test]

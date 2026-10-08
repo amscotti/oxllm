@@ -79,7 +79,7 @@ pub(crate) fn parse_openai_stream_chunk(chunk: &str) -> Result<Option<Value>> {
     let value: Value = serde_json::from_str(json_str)
         .map_err(|e| oxllm_core::Error::Transform(format!("invalid stream chunk: {e}")))?;
     if let Some(error) = value.get("error").filter(|e| match e {
-        // Match LiteLLM's Python truthiness (`data.get("error", False)`): only
+        // Match the reference Python truthiness (`data.get("error", False)`): only
         // a non-empty string or a non-empty object is a real upstream error.
         // `null`/`false`/`0`/`""`/`[]`/`{}` are "no error" and the chunk flows
         // through as normal content, so a falsy field can never drop the
@@ -91,7 +91,7 @@ pub(crate) fn parse_openai_stream_chunk(chunk: &str) -> Result<Option<Value>> {
         // Bound the message to spec-sanctioned shapes so a missing/non-string
         // `message` never causes the whole error object (which may carry
         // `request_id`/internal diagnostics) to be stringified to the client.
-        // A bare-string error is safe to forward verbatim (LiteLLM does the
+        // A bare-string error is safe to forward verbatim (the reference does the
         // same in its chunk handlers); only the object case is field-bounded.
         let message = error.as_str().map(str::to_string).unwrap_or_else(|| {
             error
@@ -241,7 +241,7 @@ mod tests {
     fn malformed_in_body_error_defaults_to_500() {
         let raw = r#"data: {"error":"provider failed"}"#;
         let err = parse_openai_stream_chunk(raw).expect_err("must surface provider error");
-        // A bare-string error is forwarded verbatim (parity with LiteLLM's
+        // A bare-string error is forwarded verbatim (parity with the reference
         // chunk handlers, which `raise` the string); status stays 500 since a
         // string carries no `code`/`type`.
         assert!(matches!(
@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(out["id"], "x");
     }
 
-    /// A falsy but non-null `error` field (LiteLLM uses Python truthiness:
+    /// A falsy but non-null `error` field (the reference uses Python truthiness:
     /// `data.get("error", False)`) must not surface as a spurious upstream
     /// error and drop the chunk's real content.
     #[test]

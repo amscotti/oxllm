@@ -96,7 +96,7 @@ fn helicone_payload(ctx: &CallContext, resp: &ResponseSummary) -> Value {
 
     // MEDIUM #3: Helicone's ingestion API expects usage at the top level of
     // the payload only; embedding it inside `response.usage` is redundant and
-    // risks double-counting if Helicone sums both. LiteLLM's helicone helper
+    // risks double-counting if Helicone sums both. The reference helicone helper
     // sends usage only at the top level. Keep `response` as just the raw
     // upstream body — never synthesise a `usage` field inside it.
     let response = resp.body.clone().unwrap_or(Value::Null);

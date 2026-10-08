@@ -183,7 +183,7 @@ pub struct CallContext {
     /// Cache-control directives this principal is authorised to send
     /// (`["insert", "no-cache", ...]`). Populated from the virtual key during
     /// auth. When `Some` and non-empty, the cache hook rejects a request whose
-    /// `cache:` object uses a key not on the allowlist (LiteLLM
+    /// `cache:` object uses a key not on the allowlist (the reference
     /// `_PROXY_CacheControlCheck`). `None` or empty means unrestricted. Master
     /// key bypasses the check via [`CallContext::is_master`].
     pub allowed_cache_controls: Option<Vec<String>>,

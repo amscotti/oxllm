@@ -14,8 +14,8 @@ pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 5;
 
 /// Lakera Guard `/v2/guard` scan result.
 ///
-/// Matches the LiteLLM v2 `LakeraAIResponse` shape
-/// (`litellm/types/proxy/guardrails/guardrail_hooks/lakera_ai_v2.py`):
+/// Matches the reference v2 `LakeraAIResponse` shape
+/// (`types/proxy/guardrails/guardrail_hooks/lakera_ai_v2.py`):
 ///
 /// ```json
 /// { "flagged": true, "payload": [...], "breakdown": [...], "dev_info": {...} }
@@ -28,7 +28,7 @@ pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 5;
 /// fail-open-on-error-body design used by AIM/Bedrock/Model Armor.
 ///
 /// The historical `score` field is intentionally absent: the v2 API does not
-/// return one, and LiteLLM v2 decides the block purely on
+/// return one, and the reference v2 decides the block purely on
 /// `lakera_response.get("flagged") is True`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LakeraScanResult {
@@ -53,10 +53,10 @@ pub(crate) struct LakeraScanRequest {
 ///
 /// Calls the Lakera Guard v2 API (`POST {endpoint}/v2/guard`) to scan
 /// messages for prompt injection. Blocks when the response reports
-/// `flagged: true` (matching LiteLLM v2's
+/// `flagged: true` (matching the reference v2
 /// `lakera_ai_v2.LakeraGuardrailRequestBase` semantics). When `monitor` mode
 /// is enabled, flagged requests are logged server-side and allowed through
-/// instead of blocked (matching LiteLLM v2's `on_flagged: "monitor"`).
+/// instead of blocked (matching the reference v2 `on_flagged: "monitor"`).
 /// Fail-open: errors are logged and the request is allowed through.
 #[derive(Clone)]
 pub struct LakeraGuardrail {
@@ -156,7 +156,7 @@ impl LakeraGuardrail {
     /// Check a request body for prompt injection via Lakera Guard.
     ///
     /// Returns `GuardrailResult::Block` when the Lakera v2 response reports
-    /// `flagged: true` (matching LiteLLM v2's
+    /// `flagged: true` (matching the reference v2
     /// `if lakera_response.get("flagged") is True` semantics). Fail-open:
     /// errors log a warning and allow the request through.
     pub async fn check_request(&self, body: &Value) -> GuardrailResult {
@@ -172,7 +172,7 @@ impl LakeraGuardrail {
                 if result.flagged {
                     if self.monitor {
                         // Monitor mode: log the violation server-side and
-                        // allow the request through (matching LiteLLM v2's
+                        // allow the request through (matching the reference v2
                         // `on_flagged: "monitor"` at `lakera_ai_v2.py:261`).
                         tracing::warn!(
                             payload = ?result.payload,
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn scan_response_parsing() {
-        // Real Lakera v2 response shape (per LiteLLM
+        // Real Lakera v2 response shape (per the reference
         // `LakeraAIResponse` TypedDict).
         let data = json!({
             "flagged": true,
@@ -597,7 +597,7 @@ mod tests {
     #[tokio::test]
     async fn monitor_mode_allows_flagged_request() {
         // In monitor mode, a flagged request is logged server-side and
-        // allowed through (matching LiteLLM v2's `on_flagged: "monitor"`).
+        // allowed through (matching the reference v2 `on_flagged: "monitor"`).
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method("POST").path("/v2/guard");

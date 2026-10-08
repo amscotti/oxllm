@@ -310,11 +310,12 @@ impl AppState {
 /// ([`ReusePolicy::Preserve`]), mirroring the documented preservation rules
 /// on each [`AppState`] field.
 pub(crate) fn assemble(
-    config: ProxyConfig,
+    mut config: ProxyConfig,
     parts: BuildParts,
     policy: ReusePolicy<'_>,
 ) -> anyhow::Result<AppState> {
     crate::auth::validate_auth_config(&config.general_settings)?;
+    crate::config::loader::filter_supported_environments(&mut config);
     let old = match policy {
         ReusePolicy::Fresh => None,
         ReusePolicy::Preserve(prev) => Some(prev),
@@ -346,13 +347,14 @@ pub(crate) fn assemble(
     }
 
     // Config-compat observability: oxllm honors ANY non-empty `model`
-    // prefix as a provider slug (deliberate divergence from LiteLLM, which
+    // prefix as a provider slug (deliberate divergence from the reference, which
     // only honors known providers and falls back to OpenAI), so a
     // HuggingFace-style id like `meta-llama/Llama-3.1-8B` produces slug
     // `meta-llama` and a request-time 400 "unsupported provider". Warn at
     // load time so the misconfiguration is visible before the first
     // request trips over it.
     for dep in &deployments {
+        dep.oxllm_params.validate_auth_overrides()?;
         let slug = dep.provider_slug();
         if parts.registry.get(slug).is_none() {
             tracing::warn!(
@@ -729,6 +731,14 @@ const DEFAULT_POOL_IDLE_TIMEOUT_SECS: u64 = 90;
 /// builder in the workspace sets an equivalent total deadline.
 const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_SECS: u64 = 30;
 
+fn http_ipv4_only(config: &ProxyConfig) -> bool {
+    config
+        .general_settings
+        .http_force_ipv4
+        .or(config.oxllm_settings.force_ipv4)
+        .unwrap_or(false)
+}
+
 /// Build the shared HTTP client with tuned connection-pool settings.
 ///
 /// Pool sizing and timeouts are read from `general_settings`
@@ -740,7 +750,7 @@ const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_SECS: u64 = 30;
 /// amplifying SSRF probes via 3xx chains. If a provider genuinely needs to
 /// follow a redirect, handle it explicitly at the call site.
 ///
-/// U19 (LiteLLM commit `fcaf673418`): the deployment's `num_retries` reached
+/// U19: the deployment's `num_retries` reached
 /// the provider client, which applied its own retries on top of the router's
 /// retry loop — double-counting. oxllm is safe: this builder sets **no retry
 /// policy** on the `reqwest` client (no `.retry()` / retry middleware). The
@@ -749,6 +759,7 @@ const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_SECS: u64 = 30;
 /// per attempt. There is no transport-level retry to double-count.
 pub(crate) fn build_http_client(config: &ProxyConfig) -> anyhow::Result<reqwest::Client> {
     let gs = &config.general_settings;
+    let ipv4_only = http_ipv4_only(config);
     let max_idle = gs
         .http_pool_max_idle_per_host
         .unwrap_or(DEFAULT_POOL_MAX_IDLE_PER_HOST);
@@ -767,8 +778,14 @@ pub(crate) fn build_http_client(config: &ProxyConfig) -> anyhow::Result<reqwest:
     // fetch (the image-URL path takes user-supplied hosts). Gated on
     // `allow_private_api_base` to preserve the local-Ollama-on-loopback opt-in
     // (and to keep the e2e suite, which targets httpmock on 127.0.0.1, working).
-    if !gs.allow_private_api_base.unwrap_or(false) {
-        builder = builder.dns_resolver(std::sync::Arc::new(crate::security::SsrfResolver::new()));
+    let allow_private = gs.allow_private_api_base.unwrap_or(false);
+    if !allow_private || ipv4_only {
+        builder = builder.dns_resolver(std::sync::Arc::new(
+            crate::security::SsrfResolver::with_options(allow_private, ipv4_only),
+        ));
+    }
+    if ipv4_only {
+        builder = builder.local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     }
     if let Some(connect_secs) = gs.http_connect_timeout_secs {
         builder = builder.connect_timeout(Duration::from_secs(connect_secs));
@@ -800,6 +817,7 @@ pub(crate) fn build_http_client(config: &ProxyConfig) -> anyhow::Result<reqwest:
 /// for the whole request lifetime.
 pub(crate) fn build_image_http_client(config: &ProxyConfig) -> anyhow::Result<reqwest::Client> {
     let gs = &config.general_settings;
+    let ipv4_only = http_ipv4_only(config);
     let max_idle = gs
         .http_pool_max_idle_per_host
         .unwrap_or(DEFAULT_POOL_MAX_IDLE_PER_HOST);
@@ -813,7 +831,12 @@ pub(crate) fn build_image_http_client(config: &ProxyConfig) -> anyhow::Result<re
         .tcp_keepalive(Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_SECS))
-        .dns_resolver(std::sync::Arc::new(crate::security::SsrfResolver::new()));
+        .dns_resolver(std::sync::Arc::new(
+            crate::security::SsrfResolver::with_options(false, ipv4_only),
+        ));
+    if ipv4_only {
+        builder = builder.local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    }
     if let Some(connect_secs) = gs.http_connect_timeout_secs {
         builder = builder.connect_timeout(Duration::from_secs(connect_secs));
     }
@@ -855,7 +878,7 @@ fn parse_trusted_proxies(config: &ProxyConfig) -> Arc<[ipnet::IpNet]> {
 /// "unknown config keys are ignored with a warning" rule.
 ///
 /// An explicitly **empty** list yields `Ok(Some(empty))` — deny all requests,
-/// matching LiteLLM's `_check_valid_ip`, which compares against the list
+/// matching the reference IP check, which compares against the list
 /// directly so an empty allowlist matches no one. Collapsing `Some([])` into
 /// `None` (allow-all) would turn an operator typo into an open relay.
 ///
@@ -890,6 +913,10 @@ fn parse_allowed_ips(config: &ProxyConfig) -> anyhow::Result<Option<Arc<[ipnet::
     }
     Ok(Some(Arc::from(parsed)))
 }
+
+#[cfg(test)]
+#[path = "http_client_tests.rs"]
+mod http_client_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1020,8 +1047,8 @@ mod tests {
                 ..Default::default()
             },
         ] {
-            let config = proxy_with_general(settings);
-            assert!(crate::config::loader::validate_proxy_config(&config).is_err());
+            let mut config = proxy_with_general(settings);
+            assert!(crate::config::loader::validate_proxy_config(&mut config).is_err());
             assert!(crate::app::enforce_require_auth_guard(&config).is_err());
             assert!(AppState::new(config.clone()).is_err());
             assert!(state.reload_from_config(config).is_err());
@@ -1032,7 +1059,7 @@ mod tests {
     #[test]
     fn parse_allowed_ips_empty_list_yields_deny_all() {
         // An explicitly empty allowlist must NOT collapse to `None`
-        // (allow-all): LiteLLM's `_check_valid_ip` compares against the list
+        // (allow-all): the reference IP check compares against the list
         // directly, so an empty list denies everyone — fail-closed.
         let config = proxy_with_general(crate::config::types::GeneralSettings {
             allowed_ips: Some(vec![]),

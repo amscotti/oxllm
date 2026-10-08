@@ -73,7 +73,7 @@ test.describe("oxllm admin MVP", () => {
     await page.goto("/keys");
     await page.getByRole("button", { name: /create key/i }).click();
     await page.locator('#key_alias').fill(`e2e-key-${stamp}`);
-    // Team is a <select> of existing teams (LiteLLM-style)
+    // Team is a <select> of existing teams
     const teamSelect = page.locator("select#team_id");
     await expect(teamSelect).toBeVisible();
     const teamOptions = await teamSelect.locator("option").count();

@@ -88,7 +88,7 @@ pub(super) fn transform_request_converse_with_base_model(
 
     // When guardrails are configured, the trailing run of consecutive user
     // messages is auto-tagged so its text blocks are wrapped in
-    // `guardContent` for selective guardrail scanning. Mirrors LiteLLM's
+    // `guardContent` for selective guardrail scanning. Mirrors the reference
     // `_convert_consecutive_user_messages_to_guarded_text`.
     let guardrails_active = build_guardrail_config(extra).is_some();
     let mut request_messages: Vec<Value> = request
@@ -121,7 +121,7 @@ pub(super) fn transform_request_converse_with_base_model(
                 let mut content = vec![block];
                 // A `cache_control` hint on the tool message (message-
                 // level or inside its content array) injects a trailing
-                // `cachePoint` sibling block — matches LiteLLM's tool-
+                // `cachePoint` sibling block — matches the reference tool-
                 // result cache handling.
                 if has_cache_control(msg) || tool_result_content_has_cache_control(msg) {
                     content.push(build_cache_point_block());
@@ -138,12 +138,14 @@ pub(super) fn transform_request_converse_with_base_model(
         }
     }
 
+    let modify_params = extra.get("modify_params").and_then(Value::as_bool) == Some(true);
+    let converse_messages = merge_consecutive_messages(converse_messages, modify_params);
     let mut out = Map::new();
     out.insert("messages".to_string(), Value::Array(converse_messages));
     if !system_blocks.is_empty() {
         out.insert("system".to_string(), Value::Array(system_blocks));
     }
-    // LiteLLM always emits `inferenceConfig` (possibly empty) — match that
+    // The reference always emits `inferenceConfig` (possibly empty) — match that
     // so request shapes are stable across deployments.
     out.insert(
         "inferenceConfig".to_string(),
@@ -270,6 +272,10 @@ pub(super) fn transform_request_converse_with_base_model(
     // equivalent field.
     apply_parallel_tool_calls(feature_model, request, &mut out)?;
 
+    if modify_params {
+        repair_converse_history(request, &mut out);
+    }
+
     if uses_json_tool
         && out
             .get("additionalModelRequestFields")
@@ -284,6 +290,103 @@ pub(super) fn transform_request_converse_with_base_model(
     }
 
     Ok(Value::Object(out))
+}
+
+/// Group adjacent turns after role mapping, so several tool results from one
+/// assistant turn share one user turn. Content metadata is retained, with
+/// signed reasoning kept ahead of assistant text as required by the wire API.
+fn merge_consecutive_messages(messages: Vec<Value>, modify_params: bool) -> Vec<Value> {
+    let mut merged: Vec<Value> = Vec::with_capacity(messages.len());
+    for mut message in messages {
+        let assistant = message.get("role").and_then(Value::as_str) == Some("assistant");
+        let tool_results = |message: &Value| {
+            message
+                .get("content")
+                .and_then(Value::as_array)
+                .is_some_and(|blocks| blocks.iter().any(|block| block.get("toolResult").is_some()))
+        };
+        let separate_results = modify_params
+            && !assistant
+            && merged.last().is_some_and(|previous| {
+                previous.get("role") == message.get("role")
+                    && tool_results(previous) != tool_results(&message)
+            });
+        if separate_results {
+            merged.push(json!({"role": "assistant", "content": [{"text": "Continue."}]}));
+        }
+        if let Some(previous) = merged.last_mut()
+            && previous.get("role") == message.get("role")
+            && let Some(content) = previous.get_mut("content").and_then(Value::as_array_mut)
+            && let Some(Value::Array(blocks)) = message.get_mut("content")
+        {
+            content.append(blocks);
+            if assistant {
+                content.sort_by_key(|block| block.get("reasoningContent").is_none());
+            }
+        } else {
+            merged.push(message);
+        }
+    }
+    merged
+}
+
+/// Bedrock requires tool configuration even when the tools only occur in
+/// history. Recover minimal declarations and disable thinking for unsigned
+/// historical tool-use turns rather than sending an invalid thinking request.
+fn repair_converse_history(request: &Value, out: &mut Map<String, Value>) {
+    let Some(messages) = out.get("messages").and_then(Value::as_array) else {
+        return;
+    };
+    let mut names: Vec<&str> = Vec::new();
+    let mut unsigned_tool_turn = false;
+    for message in messages {
+        let Some(blocks) = message.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        let has_reasoning = blocks
+            .iter()
+            .any(|block| block.get("reasoningContent").is_some());
+        for block in blocks {
+            if let Some(name) = block
+                .get("toolUse")
+                .and_then(|tool| tool.get("name"))
+                .and_then(Value::as_str)
+            {
+                if !name.is_empty() && !names.contains(&name) {
+                    names.push(name);
+                }
+                unsigned_tool_turn |= !has_reasoning;
+            }
+        }
+    }
+    let tools = names
+        .into_iter()
+        .map(|name| {
+            json!({"toolSpec": {
+                "name": name, "description": "Historical function declaration.",
+                "inputSchema": {"json": {"type": "object"}}
+            }})
+        })
+        .collect::<Vec<_>>();
+    let explicit_none = request.get("tool_choice").is_some_and(|choice| {
+        choice.as_str() == Some("none")
+            || choice.get("type").and_then(Value::as_str) == Some("none")
+    });
+    if !tools.is_empty() && !out.contains_key("toolConfig") && !explicit_none {
+        out.insert("toolConfig".into(), json!({"tools": tools}));
+    }
+    if unsigned_tool_turn
+        && let Some(fields) = out
+            .get_mut("additionalModelRequestFields")
+            .and_then(Value::as_object_mut)
+        && fields
+            .get("thinking")
+            .and_then(|thinking| thinking.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|kind| matches!(kind, "enabled" | "adaptive"))
+    {
+        fields.insert("thinking".into(), json!({"type": "disabled"}));
+    }
 }
 
 /// Profiles hide their source model. An explicit, concrete base-model hint is
@@ -556,7 +659,7 @@ fn apply_top_k(request: &Value, model: &str, out: &mut Map<String, Value>) -> Re
 }
 
 /// Build the Converse `guardrailConfig` body field from the deployment's
-/// `extra` params. Accepts LiteLLM-style snake_case (`guardrail_id`,
+/// `extra` params. Accepts snake_case (`guardrail_id`,
 /// `guardrail_version`) or AWS-native camelCase (`guardrailIdentifier`,
 /// `guardrailVersion`). Returns `None` unless both id and version are
 /// present (Bedrock requires both).
@@ -689,7 +792,7 @@ fn apply_reasoning_effort(request: &Value, model: &str, out: &mut Map<String, Va
 /// caller already supplied a pre-shaped `serviceTier` object (forwarded by
 /// `PASS_THROUGH_TOP_LEVEL_KEYS`).
 ///
-/// LiteLLM reference: `_map_service_tier_param`.
+/// Reference behavior: `_map_service_tier_param`.
 fn apply_service_tier(request: &Value, out: &mut Map<String, Value>) {
     // Don't override an explicit pre-shaped `serviceTier` object.
     if request.get("serviceTier").is_some() {
@@ -709,11 +812,11 @@ fn apply_service_tier(request: &Value, out: &mut Map<String, Value>) {
 
 /// Pass `context_management` through into
 /// `additionalModelRequestFields.context_management`. Converse's format is
-/// close to the Anthropic/OpenAI list form; LiteLLM runs an OpenAI→Anthropic
+/// close to the Anthropic/OpenAI list form; the reference runs an OpenAI→Anthropic
 /// mapper for list inputs and passes dicts through unchanged — we do the
 /// same basic passthrough here (both shapes forwarded verbatim).
 ///
-/// LiteLLM reference: `_map_context_management_param`.
+/// Reference behavior: `_map_context_management_param`.
 fn apply_context_management(request: &Value, out: &mut Map<String, Value>) {
     let Some(cm) = request.get("context_management") else {
         return;
@@ -809,7 +912,7 @@ fn drop_temperature_incompatible_with_thinking(out: &mut Map<String, Value>) {
 /// Converse's native `toolConfig.toolChoice` has no parallel-use flag.
 /// Anthropic-family models accept the flag through the model-specific
 /// `additionalModelRequestFields.tool_choice` object (with the required
-/// `type` discriminator), mirroring how LiteLLM serves
+/// `type` discriminator), mirroring how the reference serves
 /// `enable_parallel_tool_use` on Bedrock Claude. Other model families have no
 /// equivalent field, so an explicit `parallel_tool_calls: false` is rejected
 /// rather than silently ignored.
@@ -955,14 +1058,14 @@ pub(crate) use crate::util::inject_additional_properties_false;
 
 /// Does this JSON value carry a non-null OpenAI-style `cache_control` hint?
 /// Used to decide whether to inject a Converse `cachePoint` breakpoint after
-/// the carrying message or content block. LiteLLM reference:
+/// the carrying message or content block. Reference behavior:
 /// `_get_cache_point_block` / `_build_cache_point_block`.
 fn has_cache_control(obj: &Value) -> bool {
     obj.get("cache_control").is_some_and(|v| !v.is_null())
 }
 
 /// Does any element of a tool message's `content` array carry a
-/// `cache_control` hint? LiteLLM checks both message-level and content-level
+/// `cache_control` hint? The reference checks both message-level and content-level
 /// `cache_control` on tool-result messages.
 fn tool_result_content_has_cache_control(msg: &Value) -> bool {
     msg.get("content")
@@ -972,7 +1075,7 @@ fn tool_result_content_has_cache_control(msg: &Value) -> bool {
 
 /// Build a Converse `cachePoint` content block from an OpenAI-style
 /// `cache_control` hint. The `type` is always `"default"` (the only value
-/// Bedrock's Converse API accepts). LiteLLM optionally forwards a `ttl` for
+/// Bedrock's Converse API accepts). The reference optionally forwards a `ttl` for
 /// Claude 4.5 models; we keep the basic `{type: "default"}` form.
 fn build_cache_point_block() -> Value {
     json!({"cachePoint": {"type": "default"}})
@@ -1072,7 +1175,7 @@ fn convert_user_content(msg: &Value) -> Result<Vec<Value>> {
                         // `guarded_text` → Converse `guardContent` block for
                         // selective guardrail scanning. The Bedrock schema
                         // nests a `GuardrailConverseTextBlock` (`{text:{text}}`)
-                        // — matches `litellm_core_utils/prompt_templates/factory.py`.
+                        // — matches the reference prompt-template factory.
                         if let Some(t) = obj.get("text").and_then(|v| v.as_str()) {
                             if !t.is_empty() {
                                 blocks.push(json!({"guardContent": {"text": {"text": t}}}));
@@ -1115,7 +1218,7 @@ fn convert_user_content(msg: &Value) -> Result<Vec<Value>> {
 /// end) are left alone. No-op when there is no trailing user run.
 ///
 /// The downstream [`convert_user_content`] then maps `guarded_text` →
-/// `guardContent`. Mirrors LiteLLM's
+/// `guardContent`. Mirrors the reference
 /// `_convert_consecutive_user_messages_to_guarded_text`
 /// (`converse_transformation.py:141`).
 fn tag_trailing_user_messages_as_guarded(messages: &mut [Value]) {
@@ -1480,7 +1583,7 @@ fn build_tool_config(
             // Converse gains the same normalization the Anthropic path gets:
             // `type:"custom"` → `"object"` (Claude Code custom-tool marker
             // that Bedrock rejects), `oneOf` → `anyOf`, and `uniqueItems`
-            // stripping. LiteLLM does the equivalent in
+            // stripping. The reference does the equivalent in
             // `normalize_json_schema_custom_types_to_object`.
             let schema = sanitize_tool_input_schema(
                 function
@@ -1506,7 +1609,7 @@ fn build_tool_config(
     // Nova web-search grounding: when `web_search_options` is present and the
     // model is a Nova model, inject a `systemTool` for `nova_grounding`.
     // Nova doesn't support the OpenAI web_search_options sub-fields, so we
-    // just enable grounding with no options (mirrors LiteLLM's
+    // just enable grounding with no options (mirrors the reference
     // `_map_web_search_options`). Non-Nova models are skipped.
     if is_nova_model(model) && request.get("web_search_options").is_some() {
         tool_specs.push(json!({"systemTool": {"name": "nova_grounding"}}));
@@ -1542,7 +1645,7 @@ fn build_tool_config(
 /// | `"none"` / `{type:"none"}`                      | (handled by caller)    |
 ///
 /// Both the bare-string and object forms are recognised (OpenAI's
-/// `tool_choice` accepts either), matching LiteLLM's normalisation.
+/// `tool_choice` accepts either), matching the reference normalisation.
 fn map_tool_choice(choice: &Value) -> Option<Value> {
     // Bare-string form: `"auto"` / `"required"` / `"none"`.
     if let Some(s) = choice.as_str() {
@@ -2019,7 +2122,7 @@ fn transform_response_converse_impl(
             // Track a separate tool-call counter so `tool_calls[].index`
             // reflects the position within the `tool_calls` array (0, 1, 2,
             // …) rather than the content-block index, which OpenAI's
-            // non-streaming `chat.completion` shape expects. LiteLLM does the
+            // non-streaming `chat.completion` shape expects. The reference does the
             // same in `_get_indexed_tool_calls`.
             let mut tool_call_idx: usize = 0;
             for block in content.iter() {
@@ -2706,7 +2809,7 @@ fn strip_data_prefix(s: &str) -> String {
 }
 
 /// Map a Converse `stopReason` onto an OpenAI `finish_reason`. Unknown
-/// values default to `stop` (matching LiteLLM's `map_finish_reason`).
+/// values default to `stop` (matching the reference finish-reason mapping).
 pub(crate) fn map_finish_reason(reason: Option<&str>) -> Value {
     let mapped = match reason {
         Some("end_turn") | Some("stop_sequence") | Some("stop") => "stop",
@@ -2785,7 +2888,7 @@ pub(crate) fn looks_like_converse_response(body: &Value) -> bool {
 // Anthropic accepts. The host layer is responsible for setting HTTP headers;
 // this helper strips the unsupported values from the `anthropic-beta` header
 // (case-insensitive key lookup) so the host can call it just before the
-// request goes out on the Converse path. LiteLLM reference:
+// request goes out on the Converse path. Reference behavior:
 // `UNSUPPORTED_BEDROCK_CONVERSE_BETA_PATTERNS`
 // (`converse_transformation.py:97`).
 
@@ -2829,3 +2932,7 @@ pub fn filter_converse_beta_headers(headers: &mut HashMap<String, String>) {
         headers.insert(key, kept.join(","));
     }
 }
+
+#[cfg(test)]
+#[path = "converse_compatibility_tests.rs"]
+mod compatibility_tests;

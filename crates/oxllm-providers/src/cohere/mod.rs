@@ -282,7 +282,7 @@ impl ChatProvider for CohereProvider {
 
     fn apply_auth(
         &self,
-        _deployment: &Deployment,
+        deployment: &Deployment,
         creds: &ResolvedCredentials,
         headers: &mut HashMap<String, String>,
     ) {
@@ -293,7 +293,14 @@ impl ChatProvider for CohereProvider {
                 None => return,
             },
         };
-        headers.insert("authorization".to_string(), format!("Bearer {bearer}"));
+        if crate::util::uses_foundry_inference(deployment)
+            && !matches!(creds, ResolvedCredentials::AzureAd { .. })
+        {
+            headers.insert("api-key".into(), bearer.to_string());
+        } else {
+            headers.insert("authorization".to_string(), format!("Bearer {bearer}"));
+        }
+        oxllm_core::provider::apply_auth_overrides(deployment, creds, headers);
     }
 
     fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
@@ -318,7 +325,7 @@ impl ChatProvider for CohereProvider {
         }
         // Standard OpenAI sampling params. Route through `request_param`
         // (top-level then `extra_body`) for parity with the Cohere-native
-        // params below, so a caller using LiteLLM's `extra_body` pass-through
+        // params below, so a caller using the `extra_body` pass-through
         // convention is not silently ignored.
         for key in [
             "temperature",
@@ -379,7 +386,7 @@ impl ChatProvider for CohereProvider {
         let (content, tool_calls) = extract_assistant_content(&body["message"]);
         let mut message = Map::new();
         message.insert("role".to_string(), json!("assistant"));
-        // Match OpenAI/LiteLLM: emit `content: null` for a tool-call message
+        // Match the OpenAI contract: emit `content: null` for a tool-call message
         // with no text so strict clients can branch on `content.is_null()`.
         let content_value = if tool_calls.is_empty() || !content.is_empty() {
             Value::String(content)
@@ -421,7 +428,7 @@ impl ChatProvider for CohereProvider {
         );
 
         // Cohere v2 RAG responses carry citations under `message.citations`
-        // (per the v2 Chat API docs and LiteLLM's `CohereV2ChatResponse`
+        // (per the v2 Chat API docs and the reference `CohereV2ChatResponse`
         // type / `v2_transformation.transform_response`). Surface them as a
         // provider-specific extension on the OpenAI response. Fall back to a
         // top-level `body.citations` defensively for non-standard upstreams.
@@ -512,6 +519,9 @@ impl ChatProvider for CohereProvider {
 
 impl EmbeddingProvider for CohereProvider {
     fn embedding_url(&self, deployment: &Deployment) -> String {
+        if crate::util::uses_foundry_inference(deployment) {
+            return crate::util::foundry_endpoint_url(deployment, "embeddings", false);
+        }
         cohere_endpoint_url(deployment, DEFAULT_COHERE_BASE, "v2", "embed")
     }
 
@@ -525,6 +535,12 @@ impl EmbeddingProvider for CohereProvider {
     }
 
     fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
+        if crate::util::uses_foundry_inference(deployment) {
+            return Ok(crate::openai_compat::build_embedding_request(
+                request,
+                resolve_model(request, deployment),
+            ));
+        }
         let mut out = Map::new();
         let model = resolve_model(request, deployment);
         out.insert("model".to_string(), Value::String(model.to_string()));
@@ -533,7 +549,7 @@ impl EmbeddingProvider for CohereProvider {
         out.insert("texts".to_string(), json!(texts));
         // Cohere embed models are asymmetric: `search_document` for indexing,
         // `search_query` for retrieval queries. Honour a caller-supplied
-        // `input_type` (top-level or `extra_body`, the LiteLLM pass-through
+        // `input_type` (top-level or `extra_body`, the native pass-through
         // convention), validated against Cohere's allow-list; otherwise default
         // to `search_document`. An invalid value is dropped so we never send
         // a value Cohere would 422 on.
@@ -566,6 +582,13 @@ impl EmbeddingProvider for CohereProvider {
     }
 
     fn transform_response(&self, body: &Value, model: &str) -> Result<Value> {
+        if body.get("data").and_then(Value::as_array).is_some() {
+            return EmbeddingProvider::transform_response(
+                &crate::openai::OpenAiProvider,
+                body,
+                model,
+            );
+        }
         let mut data: Vec<Value> = Vec::new();
         if let Some(embeddings) = body.get("embeddings") {
             if let Some(arr) = embeddings.as_array() {
@@ -599,7 +622,7 @@ impl EmbeddingProvider for CohereProvider {
             }
         }
 
-        // LiteLLM's embed `_calculate_usage` sums `billed_units.input_tokens`
+        // The reference embedding usage calculation sums `billed_units.input_tokens`
         // (text) and `billed_units.images` (image-embedding token count) into
         // `prompt_tokens`. For an image-embedding call Cohere reports tokens
         // under `images`, not `input_tokens`, so both must be considered.
@@ -756,7 +779,7 @@ fn resolve_model<'a>(request: &'a Value, deployment: &'a Deployment) -> &'a str 
 }
 
 /// Look up a request parameter, preferring the top-level key and falling back
-/// to `extra_body.<key>` (the LiteLLM pass-through convention). Null values
+/// to `extra_body.<key>` (the native pass-through convention). Null values
 /// are treated as absent.
 fn request_param<'a>(request: &'a Value, key: &str) -> Option<&'a Value> {
     request.get(key).filter(|v| !v.is_null()).or_else(|| {
@@ -1413,5 +1436,8 @@ fn build_message_end_chunk(value: &Value) -> Value {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod foundry_tests;
 #[cfg(test)]
 mod v2_contract_tests;

@@ -52,14 +52,14 @@ pub enum RoutingStrategyKind {
     /// oxllm extension: strict round-robin that cycles through the candidate
     /// list with a monotonically incrementing counter so consecutive
     /// requests hit different deployments. Weighted deployments occupy
-    /// proportional slots. LiteLLM does **not** ship a strict round-robin
+    /// proportional slots. The reference does **not** ship a strict round-robin
     /// strategy (its `RoutingStrategy` enum lists only `simple_shuffle`,
     /// `least_busy`, `latency_based`, `cost_based`, `usage_based_routing*`,
     /// and `provider_budget_limiting`); this fills the gap for
     /// load-testing, deterministic debug traces, and fair request
     /// splitting. The default remains
     /// [`SimpleShuffle`](RoutingStrategyKind::SimpleShuffle), matching
-    /// LiteLLM's `simple-shuffle` default.
+    /// the reference `simple-shuffle` default.
     RoundRobin,
 }
 
@@ -116,11 +116,11 @@ pub struct RouterConfig {
     pub default_fallbacks: Vec<FallbackRule>,
     /// Cooldown duration (seconds) for failed deployments.
     ///
-    /// Defaults to 60 — an intentional divergence from LiteLLM, which
+    /// Defaults to 60 — an intentional divergence from the reference, which
     /// defaults `cooldown_time` to 5 seconds
-    /// (`litellm/constants.py:33`, `DEFAULT_COOLDOWN_TIME_SECONDS`). The
+    /// (`constants.py:33`, `DEFAULT_COOLDOWN_TIME_SECONDS`). The
     /// longer default keeps routing capacity stable after transient
-    /// failures; set `cooldown_time` explicitly when porting a LiteLLM
+    /// failures; set `cooldown_time` explicitly when porting an existing
     /// config so the behavior matches what upstream would have given you.
     pub cooldown_time_secs: u64,
     /// Quality scores per deployment model (used by `QualityRouter`).
@@ -143,16 +143,16 @@ pub struct RouterConfig {
     /// before a deployment is cooled. `None` disables the allowed-fails
     /// policy (existing behavior: cool after retries are exhausted).
     ///
-    /// LiteLLM parity: the limit is the count of failures *tolerated* — a
+    /// Failure-policy parity: the limit is the count of failures *tolerated* — a
     /// deployment with `allowed_fails: 3` survives 3 failures within the
     /// window and cools on the 4th (`updated_fails > allowed_fails`, see
     /// `should_cooldown_based_on_allowed_fails_policy` at
-    /// `litellm/router_utils/cooldown_handlers.py:542`).
+    /// `router_utils/cooldown_handlers.py:542`).
     pub allowed_fails: Option<u32>,
     /// Per-HTTP-status failure thresholds before cooling. Keys are
     /// stringified status codes (e.g. `"429"`, `"401"`); a deployment is
     /// cooled once its failure count for that status *exceeds* the limit
-    /// (LiteLLM parity: N tolerated, cool on N+1; see
+    /// (failure-policy parity: N tolerated, cool on N+1; see
     /// [`RouterConfig::allowed_fails`]). Takes precedence over
     /// `allowed_fails` for listed statuses.
     pub allowed_fails_policy: Option<HashMap<String, u32>>,
@@ -236,17 +236,21 @@ pub struct RouterConfig {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RetryPolicy {
     /// Max retries/failures tolerated for rate-limit errors (HTTP 429).
+    #[serde(alias = "RateLimitErrorRetries")]
     pub rate_limit_retries: Option<u32>,
     /// Max retries/failures tolerated for timeout errors (HTTP 408).
+    #[serde(alias = "TimeoutErrorRetries")]
     pub timeout_retries: Option<u32>,
     /// Max retries/failures tolerated for internal server errors
-    /// (HTTP 500/502/503/504). LiteLLM splits these into separate
+    /// (HTTP 500/502/503/504). The reference splits these into separate
     /// `InternalServerErrorAllowedFails` / `BadGatewayErrorAllowedFails` /
     /// `ServiceUnavailableErrorAllowedFails` fields; oxllm's single 5xx
     /// category covers all four (504 included) — the exact statuses 5xx
     /// flapping produces behind load balancers.
+    #[serde(alias = "InternalServerErrorRetries")]
     pub internal_server_error_retries: Option<u32>,
     /// Max retries/failures tolerated for content-policy errors (HTTP 400).
+    #[serde(alias = "ContentPolicyViolationErrorRetries")]
     pub content_policy_retries: Option<u32>,
 }
 
@@ -254,7 +258,7 @@ impl RetryPolicy {
     /// Resolve the per-category limit for an HTTP status, if this policy
     /// covers it. Returns `None` for statuses not mapped to any category.
     ///
-    /// 401/404 deliberately have no category here: LiteLLM cools them, and
+    /// 401/404 deliberately have no category here: the reference cools them, and
     /// oxllm counts them through the `num_retries` fallback tier of
     /// [`crate::router::Router::record_failure_and_check`] when an
     /// exception policy is configured; operators wanting an explicit
@@ -791,7 +795,7 @@ mod tests {
 
     #[test]
     fn router_config_default_num_retries_matches_litellm() {
-        // LiteLLM's router defaults to `openai.DEFAULT_MAX_RETRIES` = 2;
+        // The reference router defaults to `openai.DEFAULT_MAX_RETRIES` = 2;
         // oxllm must not make one extra attempt per retryable failure.
         assert_eq!(RouterConfig::default().num_retries, 2);
         assert_eq!(RouterConfig::default().max_fallbacks, 5);

@@ -263,7 +263,7 @@ async fn failed_stream_before_headers_releases_in_flight_slot() {
 #[tokio::test]
 async fn mid_stream_disconnect_accounts_failure_and_cools() {
     // The upstream returns 200 headers + one SSE chunk, then aborts. With
-    // `allowed_fails: 0` (LiteLLM `>` semantics: tolerate 0, cool on the
+    // `allowed_fails: 0` (exclusive `>` semantics: tolerate 0, cool on the
     // 1st) the first mid-stream failure must cool the deployment
     // (allowed-fails accounting), and with health-check routing enabled the
     // connection failure must mark it unhealthy.
@@ -319,10 +319,10 @@ async fn mid_stream_disconnect_accounts_failure_and_cools() {
 
 #[tokio::test]
 async fn allowed_fails_zero_cools_on_first_mid_stream_failure() {
-    // LiteLLM `>` parity: with `allowed_fails: 0`, the first mid-stream
+    // Exclusive `>` parity: with `allowed_fails: 0`, the first mid-stream
     // failure (count=1) exceeds the limit (1 > 0) and cools the deployment.
     // This is the streaming-path equivalent of the unit-level
-    // `allowed_fails_litellm_parity_transition_points` test, which pins the
+    // failure-policy transition-point test, which pins the
     // exact (count, limit) transition points for N∈{0,1,2,3} against the
     // `count > limit` comparison. The unit test covers the multi-failure
     // threshold precisely; this e2e test verifies the streaming wiring

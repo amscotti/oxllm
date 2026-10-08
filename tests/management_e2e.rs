@@ -62,6 +62,72 @@ async fn fresh_db() -> Arc<Database> {
 }
 
 #[tokio::test]
+async fn inactive_environment_models_are_stored_without_being_exposed_and_can_be_reactivated() {
+    let upstream = MockServer::start();
+    let (proxy, db) = start_oxllm(proxy_config(&upstream.base_url())).await;
+    let client = common::http_client();
+    let response = client.post(proxy.url("/model/new")).bearer_auth(MASTER_KEY)
+        .json(&json!({"model_name": "inactive-model", "oxllm_params": {
+            "model": "openai/gpt-4o", "api_key": "os.environ/OXLLM_INACTIVE_PROVIDER_SECRET", "api_base": upstream.base_url()
+        }, "model_info": {"supported_environments": []}}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    let created: Value = response.json().await.unwrap();
+    assert!(
+        db.list_all_models_db()
+            .await
+            .unwrap()
+            .iter()
+            .any(|record| record.model_name == "inactive-model")
+    );
+    let models: Value = client
+        .get(proxy.url("/v1/models"))
+        .bearer_auth(MASTER_KEY)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        models["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|model| model["id"] != "inactive-model")
+    );
+    let response = client
+        .post(proxy.url("/v1/chat/completions"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({"model": "inactive-model", "messages": [{"role": "user", "content": "hi"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let response = client.post(proxy.url("/model/update")).bearer_auth(MASTER_KEY)
+        .json(&json!({"model_id": created["model_id"], "model_info": {"supported_environments": null}, "oxllm_params": {"api_key": "synthetic-key"}}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    let models: Value = client
+        .get(proxy.url("/v1/models"))
+        .bearer_auth(MASTER_KEY)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        models["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["id"] == "inactive-model")
+    );
+    shutdown(proxy).await;
+}
+
+#[tokio::test]
 async fn key_scope_references_must_exist_before_a_key_is_created() {
     let mock = MockServer::start();
     let (handle, db) = start_oxllm(proxy_config(&mock.base_url())).await;
@@ -845,7 +911,7 @@ async fn per_key_rpm_enforced_without_global_limits() {
 }
 
 // ---------------------------------------------------------------------------
-// Team limit inheritance (LiteLLM: tests/e2e/budgets/ team enforcement matrix)
+// Team limit inheritance (reference team enforcement matrix)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -4060,7 +4126,7 @@ async fn tag_new_accepts_positive_max_budget() {
 }
 
 // ---------------------------------------------------------------------------
-// C28 MEDIUM: `/customer/delete` now accepts LiteLLM's bulk `user_ids` shape
+// C28 MEDIUM: `/customer/delete` now accepts the reference bulk `user_ids` shape
 // (alongside the legacy single `end_user_id`), with all-or-404 semantics.
 // ---------------------------------------------------------------------------
 

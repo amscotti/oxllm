@@ -61,6 +61,31 @@ pub fn auth_is_configured(
             .is_some_and(|value| !value.trim().is_empty())
 }
 
+/// True when [`auth_is_configured`] is true, or when a non-empty short master
+/// key is accepted by the development-only `allow_short_master_key` hatch.
+///
+/// [`auth_is_configured`] stays false for short keys. Callers that decide
+/// whether the process is in open mode (`validate` reporting, `REQUIRE_AUTH`,
+/// reload, and `POST /config/update`) use this function so the hatch counts.
+pub fn settings_auth_is_configured(settings: &crate::config::types::GeneralSettings) -> bool {
+    auth_is_configured(
+        &settings.master_key,
+        &settings.jwt_secret,
+        &settings.database_url,
+    ) || short_master_key_counts(settings)
+}
+
+/// A non-empty master key shorter than the 16-byte authentication minimum
+/// counts as configured only when the hatch is set and the resolved
+/// environment is development.
+pub fn short_master_key_counts(settings: &crate::config::types::GeneralSettings) -> bool {
+    settings.allow_short_master_key == Some(true)
+        && crate::config::loader::environment_is_development()
+        && settings.master_key.as_deref().is_some_and(|key| {
+            !key.trim().is_empty() && key.len() < crate::auth::MIN_AUTH_SECRET_LEN
+        })
+}
+
 /// Build state from a config, returning both for testing.
 pub fn build_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     Ok(Arc::new(AppState::new(config)?))
@@ -684,12 +709,9 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
             prev.reload_from_config(config)
         })
     });
-    // Canonicalize so relative paths have a real parent for notify to watch.
-    // Use the async filesystem API so the one-time stat does not block the
-    // runtime thread (relevant on slow NFS config mounts).
-    let watch_path = tokio::fs::canonicalize(config_path)
-        .await
-        .unwrap_or_else(|_| PathBuf::from(config_path));
+    // The watcher resolves absolute/canonical paths while retaining logical
+    // symlink paths and the root identity used to track included files.
+    let watch_path = PathBuf::from(config_path);
     crate::config::watcher::spawn_watcher(watch_path, shared.clone(), rebuild);
 
     let state_snapshot = shared.load_full();
@@ -715,6 +737,16 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
 
     if !auth_enabled {
         tracing::warn!("{OPEN_MODE_WARNING}");
+    }
+    if state_snapshot
+        .config
+        .general_settings
+        .allow_short_master_key
+        == Some(true)
+    {
+        tracing::warn!(
+            "general_settings.allow_short_master_key is set; a short master key is accepted only in development"
+        );
     }
 
     let cache_for_scheduler = memory_cache.clone();
@@ -1077,6 +1109,9 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
 /// "config is valid".
 pub fn enforce_require_auth_guard(config: &ProxyConfig) -> anyhow::Result<()> {
     crate::auth::validate_auth_config(&config.general_settings)?;
+    if short_master_key_counts(&config.general_settings) {
+        return Ok(());
+    }
     let env_value = std::env::var("OXLLM_REQUIRE_AUTH").ok();
     require_auth_guard(
         &config.general_settings.master_key,
@@ -1636,10 +1671,10 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
     }
 
-    /// `/health/liveness` and `/health/liveliness` are LiteLLM-compatible
+    /// `/health/liveness` and `/health/liveliness` are legacy-compatible
     /// aliases for `/health` (k8s liveness probe compatibility). They must be
     /// public and return `{"status":"healthy"}` so a deployment migrating from
-    /// LiteLLM does not get 404 on its existing probe paths.
+    /// an existing proxy does not get 404 on its existing probe paths.
     #[tokio::test]
     async fn health_liveness_and_liveliness_aliases_work() {
         let app = build_test_router(config_with_master_key(Some(

@@ -68,7 +68,7 @@ use serde_json::{Value, json};
 const REALTIME_MODEL_PATH_SEGMENT: &AsciiSet = &super::MODEL_PATH_SEGMENT.add(b':');
 
 // ===========================================================================
-// Constants — mirror LiteLLM's `BedrockRealtimeConfig` defaults.
+// Constants — mirror the reference `BedrockRealtimeConfig` defaults.
 // ===========================================================================
 
 /// Default inference configuration.

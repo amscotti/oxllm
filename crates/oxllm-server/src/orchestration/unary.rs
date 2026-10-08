@@ -40,7 +40,7 @@ pub(crate) struct UnarySuccess {
 ///    `default_fallbacks`.
 /// 3. Client errors (4xx except 408/409/429) from the PRIMARY model abort
 ///    immediately — except deployment-fault statuses (401/403/404), which
-///    walk the fallback chains like a retryable failure (LiteLLM
+///    walk the fallback chains like a retryable failure (reference
 ///    `async_function_with_fallbacks` parity, chat parity). From a fallback
 ///    leg the chain continues to the next leg and the last error surfaces
 ///    at exhaustion (chat parity: `try_fallback_chain`).
@@ -88,15 +88,22 @@ where
             post_failure(state, call_ctx, &crate::pipeline::core_error_from_api(&e)).await;
             return Err(e);
         }
-        // LiteLLM parity (`async_function_with_fallbacks`,
-        // `litellm/router.py:6435`): a DEPLOYMENT-fault 4xx from the
+        // Fallback parity (`async_function_with_fallbacks`,
+        // `router.py:6435`): a DEPLOYMENT-fault 4xx from the
         // primary (401 stale credential, 403 not entitled, 404 decommissioned
         // model) is fallback-eligible — fall through to the chain walk below
         // instead of aborting, so the operator's `fallbacks` config rescues
         // a bad primary (chat parity:
         // `outcomes::is_deployment_fault_status`). Request-content 4xx stay
         // terminal.
-        Err(e) if is_client_error(&e) && !is_deployment_fault_status(e.status.as_u16()) => {
+        Err(e)
+            if is_client_error(&e)
+                && !is_deployment_fault_status(e.status.as_u16())
+                && !super::outcomes::explicitly_allows_client_fallback(
+                    state,
+                    e.status.as_u16(),
+                ) =>
+        {
             post_failure(state, call_ctx, &crate::pipeline::core_error_from_api(&e)).await;
             return Err(e);
         }
@@ -108,7 +115,7 @@ where
     // served, matching `try_fallback_chain`. A 4xx from a FALLBACK leg
     // does not abort the chain — the next fallback is tried and the last
     // error surfaces only when every leg failed (chat semantics:
-    // LiteLLM tries the next fallback on any exception from a fallback
+    // The reference tries the next fallback on any exception from a fallback
     // deployment).
     let primary_exists = !state
         .router
@@ -245,6 +252,9 @@ where
                 "deployment rate-limited; marking cooling and trying next"
             );
             state.router.mark_cooldown_for(&cooldown_key, model);
+            ctx.pre_call
+                .excluded_deployment_keys
+                .push(cooldown_key.clone());
             last_err = Some(e);
             continue;
         }
@@ -270,6 +280,9 @@ where
                         .mark(&cooldown_key, budget_err.window);
                 }
                 last_err = Some(budget_err.api_error);
+                ctx.pre_call
+                    .excluded_deployment_keys
+                    .push(cooldown_key.clone());
                 continue;
             }
         };
@@ -331,7 +344,7 @@ where
                         // this 4xx a deployment fault (limit crossed — e.g.
                         // a 401 from stale credentials) AND the model group
                         // has a sibling, cool and fail over instead of
-                        // failing the caller (LiteLLM retries
+                        // failing the caller (the reference retries
                         // AuthenticationError when other deployments are
                         // available). Client-caused 4xx no policy covers
                         // still return immediately.
@@ -358,6 +371,9 @@ where
                                 "deployment-fault client error; cooling and failing over to a sibling"
                             );
                             state.router.mark_cooldown_for(&cooldown_key, model);
+                            ctx.pre_call
+                                .excluded_deployment_keys
+                                .push(cooldown_key.clone());
                             last_err = Some(err);
                             break;
                         }
@@ -390,6 +406,9 @@ where
                             "deployment failed; marking cooling and trying next"
                         );
                         state.router.mark_cooldown_for(&cooldown_key, model);
+                        ctx.pre_call
+                            .excluded_deployment_keys
+                            .push(cooldown_key.clone());
                         last_err = Some(err);
                         break;
                     }
@@ -430,7 +449,7 @@ where
 /// trigger failover to the next deployment.
 ///
 /// 408 (request timeout) and 409 (lock timeout) are excluded alongside
-/// 429: the chat path retries them (LiteLLM `_should_retry` parity, see
+/// 429: the chat path retries them (retry-classifier parity, see
 /// `outcomes::is_retryable_status`), so the unary executor must not treat
 /// them as terminal client errors — an upstream 408 on embeddings
 /// previously aborted with no retry and no failover.
@@ -656,7 +675,7 @@ mod tests {
         assert!(!is_client_error(&ApiError::internal("boom")));
     }
 
-    /// LOW (C11): 408/409 are retryable on the chat path (LiteLLM
+    /// LOW (C11): 408/409 are retryable on the chat path (reference
     /// `_should_retry`); the unary executor must not treat them as
     /// terminal client errors.
     #[test]
@@ -698,7 +717,7 @@ mod tests {
     }
 
     /// LOW (C11): a 4xx from a FALLBACK leg must not abort the chain — the
-    /// next fallback serves (chat parity: LiteLLM tries the next fallback
+    /// next fallback serves (chat parity: the reference tries the next fallback
     /// on any exception from a fallback deployment). Previously the unary
     /// executor returned the fallback's 4xx immediately.
     #[tokio::test]
@@ -788,7 +807,7 @@ mod tests {
     }
 
     /// MEDIUM (C11): a DEPLOYMENT-fault 4xx from the primary (401 — stale
-    /// vendor credential) is fallback-eligible (LiteLLM
+    /// vendor credential) is fallback-eligible (reference
     /// `async_function_with_fallbacks` walks the chain on any primary
     /// exception; chat parity): the configured fallback must serve.
     #[tokio::test]
@@ -827,7 +846,7 @@ mod tests {
     }
 
     /// Companion guard: a request-content 400 from the primary stays
-    /// terminal — no fallback fan-out (deliberate divergence from LiteLLM;
+    /// terminal — no fallback fan-out (deliberate divergence from the reference;
     /// see `outcomes::is_deployment_fault_status`).
     #[tokio::test]
     async fn primary_400_does_not_walk_fallback_chain() {

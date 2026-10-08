@@ -27,6 +27,7 @@ pub(crate) async fn merge_db_deployments(
     cipher: Option<&crate::crypto::CredentialCipher>,
 ) -> anyhow::Result<Vec<Deployment>> {
     let records = db.list_all_models_db().await?;
+    let environment = crate::config::loader::resolved_environment();
 
     let allow_private_api_base = config
         .general_settings
@@ -44,8 +45,23 @@ pub(crate) async fn merge_db_deployments(
     let yaml_names: std::collections::HashSet<String> = existing_names.iter().cloned().collect();
 
     for record in records {
+        if crate::config::loader::raw_model_info_supports_environment(
+            record.model_info.as_ref(),
+            &environment,
+        )
+        .is_ok_and(|active| !active)
+        {
+            tracing::info!(model_name = %record.model_name, environment = %environment,
+                "skipping inactive DB deployment before credential resolution");
+            continue;
+        }
         match db_record_to_deployment(&record, allow_private_api_base, cipher) {
             Ok(dep) => {
+                if !crate::config::loader::deployment_supports_environment(&dep, &environment) {
+                    tracing::info!(model_name = %dep.model_name, environment = %environment,
+                        "skipping DB deployment outside its supported environments");
+                    continue;
+                }
                 if existing_names.contains(&dep.model_name) {
                     let source = if yaml_names.contains(&dep.model_name) {
                         "YAML"
@@ -163,18 +179,15 @@ pub(crate) fn db_record_to_deployment(
 ) -> anyhow::Result<Deployment> {
     let mut params_value = record.oxllm_params.clone();
     decrypt_stored_secrets(&mut params_value, cipher, &record.model_id);
-    crate::config::resolve_env_vars(&mut params_value)?;
-    let oxllm_params: oxllm_core::deployment::OxllmParams = serde_json::from_value(params_value)?;
+    let oxllm_params: oxllm_core::deployment::OxllmParams =
+        crate::config::loader::deserialize_env_value(params_value)?;
 
     if let Some(api_base) = oxllm_params.api_base.as_deref() {
         crate::config::validate_api_base(api_base, allow_private_api_base)?;
     }
 
     let model_info = match record.model_info.clone() {
-        Some(mut v) => {
-            crate::config::resolve_env_vars(&mut v)?;
-            Some(serde_json::from_value(v)?)
-        }
+        Some(v) => Some(crate::config::loader::deserialize_env_value(v)?),
         None => None,
     };
 

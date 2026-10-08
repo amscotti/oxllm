@@ -1,7 +1,7 @@
 //! Hugging Face provider.
 //!
 //! Wire target: `https://router.huggingface.co`. Hugging Face exposes an
-//! OpenAI-compatible Chat Completions surface — in LiteLLM its
+//! OpenAI-compatible Chat Completions surface — in the reference its
 //! `HuggingFaceChatConfig` extends `OpenAIGPTConfig` and the request/response
 //! body is an OpenAI `ChatCompletionRequest` verbatim. The body transform is
 //! therefore a near-identity: we strip the `huggingface/` provider prefix and
@@ -17,13 +17,13 @@
 //!
 //! # Parity gap: provider-routed model ids are not remapped to `providerId`
 //!
-//! LiteLLM's `transform_request` performs a provider-mapping lookup
+//! The reference request transform performs a provider-mapping lookup
 //! (`_fetch_inference_provider_mapping(model_id)[provider]["providerId"]`) so
 //! the upstream body model becomes the provider-specific id the HF Router
 //! expects (e.g. `meta-llama/Llama-3-8B-Instruct` rather than the raw
 //! `together/meta-llama/...` form). This pure-transform layer cannot do that
 //! lookup — it would need the bundled `huggingface_llms_metadata` mapping
-//! table that LiteLLM ships — so the model id is forwarded with only the
+//! table that the reference ships — so the model id is forwarded with only the
 //! `huggingface/` prefix stripped. **Provider-routed HF deployments**
 //! (`together/...`, `novita/...`, `fireworks-ai/...`, `hf-inference/...`)
 //! **may therefore 404 or route incorrectly** when the model id does not
@@ -43,7 +43,7 @@ use serde_json::Value;
 
 /// The default Hugging Face router base URL (no trailing slash).
 ///
-/// This is the base LiteLLM's `HuggingFaceChatConfig` uses for default routing
+/// This is the base the reference `HuggingFaceChatConfig` uses for default routing
 /// (`router.huggingface.co`, not the legacy `api-inference.huggingface.co`).
 pub const DEFAULT_HUGGINGFACE_BASE: &str = "https://router.huggingface.co";
 
@@ -76,7 +76,7 @@ pub fn strip_huggingface_prefix(model: &str) -> &str {
 }
 
 /// Append `/v1/chat/completions` to a base URL, matching Hugging Face's
-/// `_build_chat_completion_url` helper from LiteLLM.
+/// chat-completion URL builder from the reference.
 ///
 /// - A URL already ending in `/chat/completions` is returned unchanged.
 /// - A URL ending in `/v1` gets `/chat/completions` appended.

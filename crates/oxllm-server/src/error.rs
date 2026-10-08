@@ -22,7 +22,7 @@ const BUDGET_EXCEEDED_CODE: &str = "budget_exceeded";
 /// Error `code` marking a 502 synthesized by the *gateway* for a transport
 /// failure (connection refused, DNS, TLS) — the request never reached the
 /// provider. Distinct from a provider-served 502 (`upstream_error`), matching
-/// LiteLLM's `APIConnectionError` vs `APIStatusError` split. Inverse mappers
+/// the reference `APIConnectionError` vs `APIStatusError` split. Inverse mappers
 /// (`crate::pipeline::core_error_from_api`) keys off this code to
 /// re-classify the failure as [`oxllm_core::Error::Network`] so failure hooks
 /// (e.g. the rate-limit RPM/TPM release) treat it as "never reached the
@@ -38,7 +38,7 @@ pub(crate) const UPSTREAM_TIMEOUT_CODE: &str = "upstream_timeout";
 /// `retry-after`. A misbehaving or compromised upstream could otherwise push
 /// every client into an arbitrarily long backoff (`retry-after: 99999999`) —
 /// a cheap client-side DoS amplifier. HTTP-date values are forwarded
-/// verbatim (parity with LiteLLM, which forwards `exc.headers` as-is).
+/// verbatim (parity with the reference, which forwards `exc.headers` as-is).
 const MAX_FORWARDED_RETRY_AFTER_SECS: u64 = 3600;
 
 /// Maximum length of a client-supplied model name echoed into an error
@@ -270,7 +270,7 @@ impl ApiError {
 }
 
 /// Map an upstream HTTP status to the OpenAI `error.type` slug. OpenAI (and
-/// LiteLLM's `openai_exception_handler`) disambiguates errors by `type`:
+/// the reference `openai_exception_handler`) disambiguates errors by `type`:
 /// `invalid_request_error` for 400s, `permission_error` for 403s,
 /// `rate_limit_error` for 429s, and `api_error` for 5xx. Clients that switch
 /// on `error.type` (rather than the status) would otherwise misclassify a
@@ -621,7 +621,7 @@ mod tests {
         // A provider 401 (rejected upstream credential) must carry a code
         // distinct from `None` (which a generic 400 keeps) so clients can
         // detect a stale upstream credential and distinguish it from a
-        // malformed request body. This mirrors LiteLLM's
+        // malformed request body. This mirrors the reference
         // `AuthenticationError` / `BadRequestError` disambiguation.
         let err = ApiError::upstream(401, "invalid api key from provider");
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
@@ -644,7 +644,7 @@ mod tests {
     fn upstream_400_and_404_remain_codeless() {
         // Non-auth, non-rate-limit, non-5xx upstream statuses keep no
         // disambiguating code — they remain indistinguishable from a generic
-        // 4xx by design (no LiteLLM exception type maps to a distinct code
+        // 4xx by design (no reference exception type maps to a distinct code
         // here).
         for status in [400u16, 404, 418, 422] {
             let err = ApiError::upstream(status, "misc");

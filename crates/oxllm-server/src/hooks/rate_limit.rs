@@ -63,7 +63,7 @@ fn parallel_key(api_key_hash: &str) -> String {
 /// Concurrent-request gauge: when `CallContext::max_parallel_requests` is set
 /// (from org records today), this hook reserves one slot via
 /// [`Cache::incr_if_below`] with **no TTL** (true gauge) in `pre_call` and
-/// releases it in `post_success` / `post_failure`. That matches LiteLLM's
+/// releases it in `post_success` / `post_failure`. That matches the reference
 /// intent without the sliding-window bug (U5 / commit 561b6796bc).
 pub struct RateLimitHook {
     /// Backing cache (in-memory or Redis).
@@ -314,7 +314,7 @@ impl RateLimitHook {
     /// starting from the post_success timestamp. The effective window for
     /// that one request's tokens is therefore up to ~120s (pre_call TTL +
     /// post_success TTL). This is an inherent property of the
-    /// reserve-then-adjust pattern with TTL-based eviction — LiteLLM
+    /// reserve-then-adjust pattern with TTL-based eviction — the reference
     /// instead anchors on calendar windows via `budget_reservation`
     /// start-time tracking. The impact is minor: only a slow request's own
     /// delta lingers slightly longer than the nominal 60s window, and only

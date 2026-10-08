@@ -1,6 +1,6 @@
 //! Built-in hook implementations.
 //!
-//! These are the typed analogues of LiteLLM's `proxy/hooks/` chain. They share
+//! These are the typed analogues of the reference `proxy/hooks/` chain. They share
 //! the in-memory cache (or Redis, when wired in) for spend/RPM/TPM counters and
 //! cached responses.
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Routing knobs shared by [`super::OxllmSettings`], [`RouterSettings`], and
 /// [`RoutingGroupConfig`].
 ///
-/// LiteLLM accepts these keys in any of the three locations; embedding this
+/// Routing accepts these keys in any of the three locations; embedding this
 /// struct via `#[serde(flatten)]` keeps the YAML shape identical in all
 /// three while the Rust side has exactly one definition. Precedence between
 /// locations is resolved in `state::router_config::build_router_config`:
@@ -162,11 +162,150 @@ impl RoutingKnobs {
             budget_throttle_pct: group.budget_throttle_pct.or(global.budget_throttle_pct),
         }
     }
+
+    /// Translate legacy exception names found in `retry_policy` onto the
+    /// fields this proxy actually consults.
+    ///
+    /// Numeric status keys stay. Named keys are removed. The four categories
+    /// this proxy models become `exception_retry_policy` fields and, when that
+    /// status is not already present, a status-map retry count:
+    /// `TimeoutErrorRetries` is 408 only (504 is not a timeout),
+    /// `RateLimitErrorRetries` is 429, `ContentPolicyViolationErrorRetries` is
+    /// 400, and `InternalServerErrorRetries` is 500/502/503/504.
+    /// `BadRequestErrorRetries` and `AuthenticationErrorRetries` are accepted
+    /// only at 0, which writes `allowed_fails_policy` for 400/422 and 401/403
+    /// and a zero retry count when that status is still unset. Any other value
+    /// fails: those names have no retry category of their own, and writing a
+    /// non-zero 400 would clobber content-policy retries.
+    ///
+    /// Returns one note per translated name. The caller logs them.
+    pub(crate) fn translate_named_retry_policy(&mut self) -> Result<Vec<String>, String> {
+        let Some(mut policy) = self.retry_policy.take() else {
+            return Ok(Vec::new());
+        };
+        for name in ["BadRequestErrorRetries", "AuthenticationErrorRetries"] {
+            if let Some(count) = policy.get(name).copied() {
+                if count != 0 {
+                    self.retry_policy = Some(policy);
+                    return Err(format!(
+                        "{name}={count} has no retry translation; only 0 is accepted, \
+                         and it maps to allowed_fails_policy (400 and 422 for bad \
+                         request, 401 and 403 for authentication)"
+                    ));
+                }
+            }
+        }
+
+        let mut found = Vec::new();
+        for name in [
+            "TimeoutErrorRetries",
+            "RateLimitErrorRetries",
+            "ContentPolicyViolationErrorRetries",
+            "InternalServerErrorRetries",
+            "BadRequestErrorRetries",
+            "AuthenticationErrorRetries",
+        ] {
+            if let Some(count) = policy.remove(name) {
+                found.push((name, count));
+            }
+        }
+        if found.is_empty() {
+            self.retry_policy = Some(policy);
+            return Ok(Vec::new());
+        }
+        self.retry_policy = if policy.is_empty() {
+            None
+        } else {
+            Some(policy)
+        };
+
+        let mut notes = Vec::new();
+        let mut exception = self.exception_retry_policy.clone().unwrap_or_default();
+        let mut touched_exception = false;
+        let mut allowed = self.allowed_fails_policy.clone().unwrap_or_default();
+        let mut touched_allowed = false;
+        for (name, count) in found {
+            match name {
+                "TimeoutErrorRetries" => {
+                    let resolved = self.insert_retry_status_if_absent("408", count);
+                    exception.timeout_retries = Some(resolved);
+                    touched_exception = true;
+                    notes.push(format!(
+                        "TimeoutErrorRetries={count} -> timeout_retries and retry_policy 408 = {resolved} (504 unchanged)"
+                    ));
+                }
+                "RateLimitErrorRetries" => {
+                    exception.rate_limit_retries =
+                        Some(self.insert_retry_status_if_absent("429", count));
+                    touched_exception = true;
+                    notes.push(format!(
+                        "RateLimitErrorRetries={count} -> rate_limit_retries and retry_policy 429"
+                    ));
+                }
+                "ContentPolicyViolationErrorRetries" => {
+                    exception.content_policy_retries =
+                        Some(self.insert_retry_status_if_absent("400", count));
+                    touched_exception = true;
+                    notes.push(format!(
+                        "ContentPolicyViolationErrorRetries={count} -> content_policy_retries and retry_policy 400"
+                    ));
+                }
+                "InternalServerErrorRetries" => {
+                    let resolved = ["500", "502", "503", "504"]
+                        .into_iter()
+                        .map(|code| self.insert_retry_status_if_absent(code, count))
+                        .max()
+                        .unwrap_or(count);
+                    exception.internal_server_error_retries = Some(resolved);
+                    touched_exception = true;
+                    notes.push(format!(
+                        "InternalServerErrorRetries={count} -> internal_server_error_retries and retry_policy 500, 502, 503, 504"
+                    ));
+                }
+                "BadRequestErrorRetries" => {
+                    allowed.insert("400".to_string(), 0);
+                    allowed.insert("422".to_string(), 0);
+                    touched_allowed = true;
+                    self.insert_retry_status_if_absent("400", 0);
+                    self.insert_retry_status_if_absent("422", 0);
+                    notes.push(
+                        "BadRequestErrorRetries=0 -> allowed_fails_policy 400 and 422".to_string(),
+                    );
+                }
+                "AuthenticationErrorRetries" => {
+                    allowed.insert("401".to_string(), 0);
+                    allowed.insert("403".to_string(), 0);
+                    touched_allowed = true;
+                    self.insert_retry_status_if_absent("401", 0);
+                    self.insert_retry_status_if_absent("403", 0);
+                    notes.push(
+                        "AuthenticationErrorRetries=0 -> allowed_fails_policy 401 and 403"
+                            .to_string(),
+                    );
+                }
+                _ => {}
+            }
+        }
+        if touched_exception {
+            self.exception_retry_policy = Some(exception);
+        }
+        if touched_allowed {
+            self.allowed_fails_policy = Some(allowed);
+        }
+        Ok(notes)
+    }
+
+    fn insert_retry_status_if_absent(&mut self, status: &str, count: u32) -> u32 {
+        let map = self
+            .retry_policy
+            .get_or_insert_with(std::collections::HashMap::new);
+        *map.entry(status.to_string()).or_insert(count)
+    }
 }
 
 /// The top-level `router_settings` block.
 ///
-/// LiteLLM accepts most routing knobs either in `oxllm_settings` or in
+/// Most routing knobs are accepted either in `oxllm_settings` or in
 /// `router_settings`; the latter is the canonical location in newer configs.
 /// `state::router_config::build_router_config` consults both and prefers
 /// `router_settings` when a field is set in both places. Unknown keys fall

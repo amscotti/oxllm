@@ -365,7 +365,7 @@ fn request_preserves_service_tier() {
 #[test]
 fn request_preserves_modalities_and_audio() {
     // `modalities` and (for TTS/audio models) `audio` are Gemini-supported per
-    // LiteLLM's `get_supported_openai_params`, so they must survive transform.
+    // the reference supported-param list, so they must survive transform.
     let p = GeminiProvider;
     let req = json!({
     "model": "gemini-2.5-flash-preview-tts",
@@ -510,7 +510,7 @@ fn supported_params_excludes_openai_only_fields() {
         );
     }
     // `service_tier`, `modalities`, and `audio` (on TTS/audio models) ARE
-    // accepted by Gemini's OpenAI-compat surface (LiteLLM lists them in
+    // accepted by Gemini's OpenAI-compat surface (the reference lists them in
     // `get_supported_openai_params`), so they must survive here.
     for included in ["service_tier", "modalities", "audio"] {
         assert!(

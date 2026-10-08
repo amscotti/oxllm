@@ -1,4 +1,4 @@
-# Adapted from ../litellm/tests/proxy_unit_tests/example_config_yaml/load_balancer.yaml
+# Adapted from the reference load_balancer.yaml fixture.
 oxllm_settings:
   drop_params: true
 

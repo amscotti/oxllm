@@ -43,7 +43,7 @@ impl ChatProvider for OpenRouterProvider {
             .as_deref()
             .unwrap_or(DEFAULT_OPENROUTER_BASE)
             .trim_end_matches('/');
-        // Defensive guard mirroring LiteLLM's `get_complete_url` (and the
+        // Defensive guard mirroring the reference URL builder (and the
         // shared `openai_compat` sibling): a caller who configures `api_base`
         // as the full endpoint URL must not get `/chat/completions` appended
         // twice.

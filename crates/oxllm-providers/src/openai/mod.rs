@@ -400,16 +400,8 @@ impl ChatProvider for OpenAiProvider {
             .oxllm_params
             .api_base
             .as_deref()
-            .unwrap_or("https://api.openai.com/v1")
-            .trim_end_matches('/');
-        // Guard mirroring LiteLLM's `get_complete_url` and the openai_compat
-        // siblings: a caller who configures `api_base` as the full endpoint URL
-        // must not get `/chat/completions` appended twice.
-        if base.ends_with("/chat/completions") {
-            base.to_string()
-        } else {
-            format!("{base}/chat/completions")
-        }
+            .unwrap_or("https://api.openai.com/v1");
+        crate::util::append_operation_path(base, "chat/completions")
     }
 
     fn apply_auth(
@@ -426,6 +418,7 @@ impl ChatProvider for OpenAiProvider {
             },
         };
         headers.insert("authorization".to_string(), format!("Bearer {bearer}"));
+        oxllm_core::provider::apply_auth_overrides(deployment, creds, headers);
 
         // Optional OpenAI multi-organization / project routing. These are
         // captured by `OxllmParams.extra` (a flattened serde_json::Map) when
@@ -482,13 +475,8 @@ impl EmbeddingProvider for OpenAiProvider {
             .oxllm_params
             .api_base
             .as_deref()
-            .unwrap_or("https://api.openai.com/v1")
-            .trim_end_matches('/');
-        if base.ends_with("/embeddings") {
-            base.to_string()
-        } else {
-            format!("{base}/embeddings")
-        }
+            .unwrap_or("https://api.openai.com/v1");
+        crate::util::append_operation_path(base, "embeddings")
     }
 
     fn apply_auth(

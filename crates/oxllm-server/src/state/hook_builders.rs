@@ -34,7 +34,7 @@ use crate::spend_writer::SpendEntry;
 /// group); the [`crate::hooks::AdaptiveHook`] learning hook is registered
 /// only then.
 ///
-/// Also wires the LiteLLM callback lists — `success_callback`,
+/// Also wires the callback lists — `success_callback`,
 /// `failure_callback`, and `callbacks` (dual-fire). The `generic` HTTP
 /// callback is built when requested by any list and gated to the matching
 /// events; the feature-specific hooks (Langfuse, Datadog, ...) are wrapped
@@ -119,7 +119,7 @@ pub(crate) fn build_hooks(
 
     // ---- Callback-driven hooks -------------------------------------------
     //
-    // LiteLLM exposes three callback lists: `success_callback` (fires on
+    // Three callback lists are exposed: `success_callback` (fires on
     // success), `failure_callback` (fires on failure), and `callbacks`
     // (fires on both). The `generic` HTTP callback is built only when
     // requested by any of the three; the feature-specific hooks below
@@ -308,7 +308,7 @@ fn warn_unknown_callback_slugs(settings: &OxllmSettings) {
 }
 
 /// Compute whether a callback slug should fire on success and/or failure
-/// based on its membership in the three LiteLLM callback lists.
+/// based on its membership in the three callback lists.
 ///
 /// Returns `(fire_on_success, fire_on_failure)`:
 /// - in `success_callback` only → `(true, false)`
@@ -348,7 +348,7 @@ fn callback_events(settings: &OxllmSettings, slug: &str) -> (bool, bool) {
 /// (`supports_failure_events() == false`) but the operator listed the slug
 /// under `failure_callback` / `callbacks`, emit a one-time `tracing::warn!`
 /// so the operator learns the limitation at config load rather than
-/// after-the-fact from missing data. Upstream LiteLLM implements failure
+/// after-the-fact from missing data. The reference implements failure
 /// logging for several of these backends (langsmith, datadog, ...); oxllm
 /// does not yet, and the silent no-op was previously pinned by an
 /// integration test without surfacing the gap to operators.
@@ -380,7 +380,7 @@ fn wrap_config_block_hook(
 }
 
 /// Hook wrapper that gates `post_success` / `post_failure` delegation based
-/// on which LiteLLM callback list the wrapped slug was registered under.
+/// on which callback list the wrapped slug was registered under.
 ///
 /// `pre_call` is always delegated so any pre-call logic carried by the inner
 /// hook (cache lookup, budget reservation, ...) still runs regardless of the
@@ -806,9 +806,10 @@ mod tests {
     /// (delegating to the default no-op `post_failure`) but emits a
     /// `tracing::warn!` so the limitation is visible at startup. The
     /// `supports_failure_events()` marker trait method defaults to `false`
-    /// (the Langfuse / Langsmith / Helicone / Datadog / MLflow / W&B / S3 /
-    /// generic-callback hooks all inherit that default); a hook that does
-    /// record failure events overrides it to `true` and silences the warn.
+    /// (Langfuse / Langsmith / Helicone / MLflow / W&B / S3 / generic-callback
+    /// hooks inherit that default). Datadog sets a failure payload, so its
+    /// hook returns true and the wrapper stays quiet. A hook that records
+    /// failure events overrides the marker and silences the warn.
     #[test]
     fn wrap_config_block_hook_marks_default_post_failure_as_unsupported() {
         // The RecordingHook used as a stand-in for the observability backends

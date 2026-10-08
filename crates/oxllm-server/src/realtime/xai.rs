@@ -17,12 +17,12 @@
 //!    `content_part.added`, updated from `output_text.done` /
 //!    `output_audio_transcript.done`, and used to back-fill a missing `part`
 //!    on `.added`/`.done` (defaulting to `{"type":"audio","transcript":""}`
-//!    when no cached entry exists). This is LiteLLM's pass 1, ported from
-//!    `litellm/llms/xai/realtime/transformation.py`.
+//!    when no cached entry exists). This is the reference pass 1, ported from
+//!    `llms/xai/realtime/transformation.py`.
 //! 3. **Inject missing indices**: Grok omits `output_index` /
 //!    `content_index` on streaming response events; GA clients index off
 //!    these fields and panic when absent. Missing fields are defaulted to
-//!    `0` based on the exact event-type sets defined by LiteLLM's
+//!    `0` based on the exact event-type sets defined by the reference
 //!    `_EVENTS_NEEDING_OUTPUT_INDEX` / `_EVENTS_NEEDING_CONTENT_INDEX`.
 //! 4. **Normalize usage objects**: Grok sends an empty usage object where
 //!    the OpenAI format carries `null` or a populated object, and partial
@@ -59,8 +59,8 @@ use super::openai::OpenAIRealtimeProvider;
 
 /// Event types whose GA contract requires an `output_index` field. xAI omits
 /// it on all of these, crashing strict GA clients (e.g. pipecat). Ported
-/// verbatim from LiteLLM's `_EVENTS_NEEDING_OUTPUT_INDEX` frozenset
-/// (`litellm/llms/xai/realtime/transformation.py`).
+/// verbatim from the reference `_EVENTS_NEEDING_OUTPUT_INDEX` frozenset
+/// (`llms/xai/realtime/transformation.py`).
 const EVENTS_NEEDING_OUTPUT_INDEX: &[&str] = &[
     "response.output_item.added",
     "response.output_item.done",
@@ -79,7 +79,7 @@ const EVENTS_NEEDING_OUTPUT_INDEX: &[&str] = &[
 /// Event types whose GA contract requires a `content_index` field. A subset
 /// of [`EVENTS_NEEDING_OUTPUT_INDEX`] — the output-item-level events
 /// (`response.output_item.*`, `response.function_call_arguments.*`) carry
-/// only `output_index`. Ported from LiteLLM's
+/// only `output_index`. Ported from the reference
 /// `_EVENTS_NEEDING_CONTENT_INDEX`.
 const EVENTS_NEEDING_CONTENT_INDEX: &[&str] = &[
     "response.content_part.added",
@@ -119,7 +119,7 @@ pub struct XaiRealtimeProvider {
 /// default part).
 const CONTENT_PART_CACHE_CAP: usize = 1024;
 
-/// Cache key for the content-part back-fill pass. Mirrors LiteLLM's
+/// Cache key for the content-part back-fill pass. Mirrors the reference
 /// `_content_part_key` tuple: `(response_id, item_id, content_index)`.
 type ContentPartKey = (Option<String>, Option<String>, u64);
 
@@ -171,16 +171,16 @@ impl RealtimeProvider for XaiRealtimeProvider {
 
         let mut dirty = false;
         if let Some(obj) = v.as_object_mut() {
-            // 1. Back-fill missing `part` on content_part.* events (LiteLLM
+            // 1. Back-fill missing `part` on content_part.* events (reference
             //    pass 1). Runs before index injection so the cache key uses
             //    the raw event's content_index (defaulting to 0), matching
-            //    LiteLLM's `_content_part_key`.
+            //    content-part cache-key behavior.
             if self.normalize_content_part_events(obj) {
                 dirty = true;
             }
 
             // 2. Inject missing indices on streaming response events. Use
-            //    exact event-type sets (matching LiteLLM's frozensets) rather
+            //    exact event-type sets (matching the reference frozensets) rather
             //    than a substring heuristic: the heuristic missed non-delta
             //    events that still require indices (output_item.added/done,
             //    content_part.added/done, *.done) and would over-match any
@@ -264,7 +264,7 @@ impl RealtimeProvider for XaiRealtimeProvider {
 }
 
 impl XaiRealtimeProvider {
-    /// LiteLLM pass 1: cache and back-fill `part` on `response.content_part.*`
+    /// Reference pass 1: cache and back-fill `part` on `response.content_part.*`
     /// events. xAI omits `part` on `content_part.added`/`content_part.done`,
     /// crashing strict GA clients (Pipecat) that index into it unconditionally.
     ///
@@ -315,7 +315,7 @@ impl XaiRealtimeProvider {
 }
 
 /// Compute the content-part cache key for an event: `(response_id, item_id,
-/// content_index)`. Mirrors LiteLLM's `_content_part_key`; `content_index`
+/// content_index)`. Mirrors the reference content-part cache key; `content_index`
 /// defaults to 0 when absent (xAI omits it — index injection runs *after*
 /// this pass).
 fn content_part_key(obj: &Map<String, Value>) -> ContentPartKey {
@@ -334,7 +334,7 @@ fn content_part_key(obj: &Map<String, Value>) -> ContentPartKey {
     (response_id, item_id, content_index)
 }
 
-/// Seed the cache with a present `part` object (LiteLLM's
+/// Seed the cache with a present `part` object (the reference
 /// `_remember_content_part`). No-op when `part` is absent or not an object.
 /// New keys are not retained once the cache is at
 /// [`CONTENT_PART_CACHE_CAP`].
@@ -356,7 +356,7 @@ fn remember_content_part(
 }
 
 /// Resolve the `part` for an event: a present object part, else the cached
-/// entry, else the `{"type":"audio","transcript":""}` default (LiteLLM's
+/// entry, else the `{"type":"audio","transcript":""}` default (the reference
 /// `_resolve_content_part`).
 fn resolve_content_part(
     cache: &std::sync::Mutex<HashMap<ContentPartKey, Value>>,
@@ -378,7 +378,7 @@ fn resolve_content_part(
     serde_json::json!({"type": "audio", "transcript": ""})
 }
 
-/// Update a single field on the cached content-part (LiteLLM's
+/// Update a single field on the cached content-part (the reference
 /// `_update_content_part_field`). Used by `output_text.done` /
 /// `output_audio_transcript.done` to keep the cache fresh so a later
 /// `content_part.done` missing `part` back-fills the latest value. If the
@@ -422,7 +422,7 @@ fn update_content_part_field(
 /// Inject `create_response: true` into `server_vad` turn-detection blocks
 /// that lack the field. Walks both the top-level `session.turn_detection`
 /// nesting and the GA-nested `session.audio.input.turn_detection` form —
-/// the latter is where GA-schema clients (per LiteLLM's
+/// the latter is where GA-schema clients (per the reference
 /// `_remap_beta_session_to_ga`) place the turn-detection block.
 ///
 /// Returns `true` when any value was mutated, so callers can avoid
@@ -473,7 +473,7 @@ fn default_token_details() -> Value {
 }
 
 /// Coerce a usage object into the full OpenAI GA shape with default-filled
-/// `input_token_details` / `output_token_details`. Mirrors LiteLLM's
+/// `input_token_details` / `output_token_details`. Mirrors the reference
 /// `_normalize_usage`: existing detail subobjects are merged over the
 /// defaults so partial objects (e.g. only `cached_tokens`) still carry the
 /// full key set strict GA clients index into.
@@ -504,7 +504,7 @@ fn normalize_usage_shape(usage: &Map<String, Value>) -> Value {
 
 /// Normalize `response.usage` on `response.created` / `response.done` events.
 ///
-/// Mirrors LiteLLM's `_normalize_response_usage_event`: on `response.created`
+/// Mirrors the reference response-usage normalization: on `response.created`
 /// an empty `{}` usage becomes `null`; on `response.done` an empty `{}`
 /// becomes the default GA shape; any non-empty usage is default-filled with
 /// `*_token_details`. Returns `true` when the event was mutated.
@@ -600,7 +600,7 @@ mod tests {
         assert_eq!(v["content_index"], 0);
     }
 
-    /// HIGH #2: events that LiteLLM's `_EVENTS_NEEDING_OUTPUT_INDEX` covers
+    /// HIGH #2: events that the reference `_EVENTS_NEEDING_OUTPUT_INDEX` covers
     /// but the old `contains("delta")` heuristic missed must now receive
     /// indices. Each of these would crash a strict GA client without the
     /// index.
@@ -651,7 +651,7 @@ mod tests {
         );
     }
 
-    /// HIGH #2: an event type not in LiteLLM's sets must not receive indices.
+    /// HIGH #2: an event type not in the reference sets must not receive indices.
     #[test]
     fn does_not_inject_indices_on_unlisted_event_types() {
         let p = XaiRealtimeProvider::new();
@@ -722,7 +722,7 @@ mod tests {
     }
 
     /// LOW #12: on `response.done`, an empty `response.usage: {}` becomes
-    /// the default GA shape (not null) per LiteLLM's `empty_as_null=False`
+    /// the default GA shape (not null) per the reference `empty_as_null=False`
     /// for the done event.
     #[test]
     fn normalizes_empty_response_usage_on_done_to_default_ga_shape() {
@@ -739,7 +739,7 @@ mod tests {
     }
 
     /// LOW #12: on `response.created`, an empty `response.usage: {}` becomes
-    /// `null` (usage is optional on created, per LiteLLM's `empty_as_null=True`).
+    /// `null` (usage is optional on created, per the reference `empty_as_null=True`).
     #[test]
     fn normalizes_empty_response_usage_on_created_to_null() {
         let p = XaiRealtimeProvider::new();
@@ -813,7 +813,7 @@ mod tests {
     }
 
     /// HIGH #3: GA-schema clients place turn_detection under
-    /// `session.audio.input.turn_detection` (per LiteLLM's
+    /// `session.audio.input.turn_detection` (per the reference
     /// `_remap_beta_session_to_ga`). The injection must descend into this
     /// nested form as well as the top-level form.
     #[test]
