@@ -60,6 +60,19 @@ pub async fn readiness(State(shared): State<SharedState>) -> Response {
             .into_response();
     }
 
+    let checks = dependency_checks(&state).await;
+    let all_healthy = checks.values().all(|value| value.as_str() == Some("ok"));
+    let status = if all_healthy { "healthy" } else { "unhealthy" };
+    let code = if all_healthy {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (code, Json(json!({"status": status, "checks": checks}))).into_response()
+}
+
+/// The readiness probe and service callbacks use the same bounded backend checks.
+pub(crate) async fn dependency_checks(state: &crate::state::AppState) -> Map<String, Value> {
     // Resolve the cache check up front: whether a remote backend was requested
     // and, if so, whether the runtime cache is actually that remote backend.
     // When config asks for a remote backend but `cache_backend` is `Memory`,
@@ -141,12 +154,10 @@ pub async fn readiness(State(shared): State<SharedState>) -> Response {
     let cache_ok = cache_future.await;
 
     let mut checks: Map<String, Value> = Map::new();
-    let mut all_healthy = true;
 
     #[cfg(feature = "db")]
     if db.is_some() || db_configured {
         checks.insert("db".to_string(), json!(if db_ok { "ok" } else { "error" }));
-        all_healthy = all_healthy && db_ok;
     }
 
     if let Some((check_name, _)) = &cache_check {
@@ -154,17 +165,9 @@ pub async fn readiness(State(shared): State<SharedState>) -> Response {
             check_name.clone(),
             json!(if cache_ok { "ok" } else { "error" }),
         );
-        all_healthy = all_healthy && cache_ok;
     }
 
-    let status = if all_healthy { "healthy" } else { "unhealthy" };
-    let body = json!({ "status": status, "checks": checks });
-    let code = if all_healthy {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-    (code, Json(body)).into_response()
+    checks
 }
 
 type Response = axum::response::Response;

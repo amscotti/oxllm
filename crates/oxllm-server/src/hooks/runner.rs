@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use oxllm_core::{CallContext, Error, Hook, HookAction, ResponseSummary};
+use oxllm_core::{CallContext, Error, Hook, HookAction, ResponseSummary, ServiceFailureEvent};
 use serde_json::Value;
 
 use crate::error::ApiError;
@@ -114,6 +114,16 @@ pub async fn run_post_failure_hooks(hooks: &[Arc<dyn Hook>], ctx: &CallContext, 
     }
     for hook in hooks {
         hook.post_failure(ctx, err).await;
+    }
+}
+
+/// Deliver dependency-health failures only to configured service observers.
+/// Request metering and reservation hooks are not invoked for these events.
+pub async fn run_service_failure_hooks(hooks: &[Arc<dyn Hook>], event: &ServiceFailureEvent) {
+    for hook in hooks {
+        if hook.supports_service_events() {
+            hook.post_service_failure(event).await;
+        }
     }
 }
 

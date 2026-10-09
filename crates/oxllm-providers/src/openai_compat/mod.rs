@@ -244,6 +244,18 @@ pub(crate) fn relax_gemini_unsupported_minimal_effort(body: &mut Value, model: &
     }
 }
 
+/// Gemini signatures belong to its own provider fields and tool IDs, never to
+/// Anthropic thinking blocks carried across a mixed-provider conversation.
+pub(crate) fn drop_foreign_thinking_blocks(body: &mut Value) {
+    if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+        for message in messages {
+            if let Some(message) = message.as_object_mut() {
+                message.remove("thinking_blocks");
+            }
+        }
+    }
+}
+
 fn gemini_flash_rejects_minimal(model: &str) -> bool {
     let lower = model.to_ascii_lowercase();
     let leaf = lower.rsplit('/').next().unwrap_or(lower.as_str());
@@ -349,7 +361,9 @@ impl ChatProvider for OpenAiCompatProvider {
         }
         if self.slug == "gemini" {
             relax_gemini_unsupported_minimal_effort(&mut out, model);
+            drop_foreign_thinking_blocks(&mut out);
         }
+        crate::prompt_cache::apply(&mut out, request, deployment);
         Ok(out)
     }
 
@@ -375,7 +389,11 @@ impl ChatProvider for OpenAiCompatProvider {
             return Some(override_list.to_vec());
         }
         if self.publish_supported_params {
-            Some(SUPPORTED_CHAT_PARAMS.to_vec())
+            let mut params = SUPPORTED_CHAT_PARAMS.to_vec();
+            if matches!(self.slug, "bedrock_mantle" | "azure_ai") {
+                params.extend(["cache_control_injection_points", "prompt_cache_options"]);
+            }
+            Some(params)
         } else {
             None
         }

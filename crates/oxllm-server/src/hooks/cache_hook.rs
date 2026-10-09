@@ -450,6 +450,23 @@ fn decode_cache_entry(mut value: Value) -> (Value, Option<f64>) {
     }
 }
 
+fn restore_cached_routing(ctx: &mut CallContext, entry: &Value) {
+    if entry.get("_oxllm_cache_version").and_then(Value::as_u64) == Some(1) {
+        ctx.cached_response_model = entry
+            .get("public_model")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        ctx.serving_model_group = entry
+            .get("model_group")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        ctx.deployment_model = entry
+            .get("deployment_model")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+}
+
 fn context_semantic_scope(semantic: &SemanticCacheRuntime, ctx: &CallContext) -> Option<String> {
     let scope = semantic.scope_for(&ctx.request_body, &ctx.model)?;
     Some(match ctx.cache_namespace.as_deref() {
@@ -471,6 +488,7 @@ impl Hook for CacheHook {
             return Ok(HookAction::Continue);
         }
         let key = context_cache_key(ctx);
+        let lookup_start = std::time::Instant::now();
         if let Some(raw) = self.cache.get(&key).await {
             if let Ok(value) = serde_json::from_str::<Value>(&raw) {
                 tracing::info!(
@@ -482,6 +500,8 @@ impl Hook for CacheHook {
                     "model" => crate::metrics::model_label(&ctx.model)
                 )
                 .increment(1);
+                ctx.cache_lookup_duration = lookup_start.elapsed();
+                restore_cached_routing(ctx, &value);
                 let (body, cost) = decode_cache_entry(value);
                 ctx.cached_response_cost = cost;
                 return Ok(HookAction::ShortCircuit(body));
@@ -515,6 +535,8 @@ impl Hook for CacheHook {
                                 "model" => crate::metrics::model_label(&ctx.model)
                             )
                             .increment(1);
+                            ctx.cache_lookup_duration = lookup_start.elapsed();
+                            restore_cached_routing(ctx, &cached);
                             let (body, cost) = decode_cache_entry(cached);
                             ctx.cached_response_cost = cost;
                             return Ok(HookAction::ShortCircuit(body));
@@ -552,7 +574,10 @@ impl Hook for CacheHook {
             return;
         }
         let key = context_cache_key(ctx);
-        let entry = cache_entry(body, resp.cost);
+        let mut entry = cache_entry(body, resp.cost);
+        entry["public_model"] = serde_json::json!(crate::pipeline::public_response_model(ctx));
+        entry["model_group"] = serde_json::json!(ctx.serving_model_group);
+        entry["deployment_model"] = serde_json::json!(ctx.deployment_model);
         let Ok(serialized) = serde_json::to_string(&entry) else {
             return;
         };

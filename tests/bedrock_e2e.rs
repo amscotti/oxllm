@@ -137,7 +137,7 @@ async fn bedrock_anthropic_non_streaming_signs_and_routes_correctly() {
     let body: Value = resp.json().await.expect("json");
     assert_eq!(body["object"], "chat.completion");
     assert_eq!(body["id"], "msg_bedrock_1");
-    assert_eq!(body["model"], "claude-3-5-sonnet-20241022-v2:0");
+    assert_eq!(body["model"], "bedrock-claude");
     assert_eq!(
         body["choices"][0]["message"]["content"],
         "Hello from Bedrock!"

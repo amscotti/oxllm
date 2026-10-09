@@ -71,6 +71,7 @@ max_input_tokens = 16000
 max_output_tokens = 4096
 cache_read_input_token_cost = 2.750000e-6
 input_cost_per_audio_token = 4.400000e-5
+output_cost_per_audio_token = 8.800000e-5
 
 ["azure/eu/gpt-5-2025-08-07"]
 input_cost_per_token = 1.375000e-6
@@ -508,11 +509,12 @@ max_output_tokens = 16384
 cache_read_input_token_cost = 7.500000e-8
 
 ["azure/gpt-4o-mini-audio-preview-2024-12-17"]
-input_cost_per_token = 2.500000e-6
-output_cost_per_token = 1.000000e-5
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
 max_input_tokens = 128000
 max_output_tokens = 16384
-input_cost_per_audio_token = 4.000000e-5
+input_cost_per_audio_token = 1.000000e-5
+output_cost_per_audio_token = 2.000000e-5
 
 ["azure/gpt-4o-mini-realtime-preview-2024-12-17"]
 input_cost_per_token = 6.000000e-7
@@ -554,14 +556,14 @@ input_cost_per_token = 2.500000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 16000
 max_output_tokens = 2000
-input_cost_per_audio_token = 2.500000e-6
+input_cost_per_audio_token = 6.000000e-6
 
 ["azure/gpt-4o-transcribe-diarize"]
 input_cost_per_token = 2.500000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 16000
 max_output_tokens = 2000
-input_cost_per_audio_token = 2.500000e-6
+input_cost_per_audio_token = 6.000000e-6
 
 ["azure/gpt-5"]
 input_cost_per_token = 1.250000e-6
@@ -917,7 +919,8 @@ input_cost_per_token = 2.500000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
-input_cost_per_audio_token = 4.000000e-5
+input_cost_per_audio_token = 3.200000e-5
+output_cost_per_audio_token = 6.400000e-5
 
 ["azure/gpt-audio-2025-08-28"]
 input_cost_per_token = 2.500000e-6
@@ -937,11 +940,13 @@ input_cost_per_audio_token = 1.000000e-5
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 3.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_image_token_cost = 2.000000e-6
 
 ["azure/gpt-image-2-2026-04-21"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 3.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_image_token_cost = 2.000000e-6
 
 ["azure/gpt-realtime-1.5-2026-02-23"]
 input_cost_per_token = 4.000000e-6
@@ -1083,17 +1088,17 @@ cache_read_input_token_cost = 2.750000e-7
 ["azure/text-embedding-3-large"]
 input_cost_per_token = 1.300000e-7
 output_cost_per_token = 0.0
-max_input_tokens = 8191
+max_input_tokens = 8192
 
 ["azure/text-embedding-3-small"]
 input_cost_per_token = 2.000000e-8
 output_cost_per_token = 0.0
-max_input_tokens = 8191
+max_input_tokens = 8192
 
 ["azure/text-embedding-ada-002"]
 input_cost_per_token = 1.000000e-7
 output_cost_per_token = 0.0
-max_input_tokens = 8191
+max_input_tokens = 8192
 
 ["azure/us/gpt-4.1-2025-04-14"]
 input_cost_per_token = 2.200000e-6
@@ -1161,6 +1166,7 @@ max_input_tokens = 16000
 max_output_tokens = 4096
 cache_read_input_token_cost = 2.750000e-6
 input_cost_per_audio_token = 4.400000e-5
+output_cost_per_audio_token = 8.800000e-5
 
 ["azure/us/gpt-5-2025-08-07"]
 input_cost_per_token = 1.375000e-6
@@ -1516,6 +1522,20 @@ cache_creation_input_token_cost = 1.250000e-6
 cache_creation_input_token_cost_above_1hr = 2.000000e-6
 prompt_cache_min_tokens = 4096
 
+["azure_ai/claude-haiku-5-5"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.000000e-8
+cache_creation_input_token_cost = 1.250000e-7
+cache_creation_input_token_cost_above_1hr = 2.000000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 5.000000e-7
+output_cost_per_token_above_100k_tokens = 2.500000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.000000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.250000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.000000e-6
 ["azure_ai/claude-opus-4-1"]
 input_cost_per_token = 1.500000e-5
 output_cost_per_token = 7.500000e-5
@@ -2664,6 +2684,7 @@ cache_read_input_token_cost_above_272k_tokens = 8.000000e-7
 input_cost_per_token_above_272k_tokens = 8.000000e-6
 cache_creation_input_token_cost_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 3.000000e-5
+supports_prompt_cache_breakpoint = true
 
 ["gpt-5.6-luna"]
 input_cost_per_token = 2.000000e-7
@@ -2676,6 +2697,7 @@ cache_read_input_token_cost_above_272k_tokens = 4.000000e-8
 input_cost_per_token_above_272k_tokens = 4.000000e-7
 cache_creation_input_token_cost_above_272k_tokens = 5.000000e-7
 output_cost_per_token_above_272k_tokens = 1.800000e-6
+supports_prompt_cache_breakpoint = true
 
 ["gpt-5.6-sol"]
 input_cost_per_token = 4.000000e-6
@@ -2688,6 +2710,7 @@ cache_read_input_token_cost_above_272k_tokens = 8.000000e-7
 input_cost_per_token_above_272k_tokens = 8.000000e-6
 cache_creation_input_token_cost_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 3.000000e-5
+supports_prompt_cache_breakpoint = true
 
 ["gpt-5.6-terra"]
 input_cost_per_token = 2.000000e-6
@@ -2700,6 +2723,7 @@ cache_read_input_token_cost_above_272k_tokens = 4.000000e-7
 input_cost_per_token_above_272k_tokens = 4.000000e-6
 cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 1.800000e-5
+supports_prompt_cache_breakpoint = true
 
 [gpt-audio]
 input_cost_per_token = 2.500000e-6
@@ -3016,6 +3040,7 @@ cache_read_input_token_cost = 5.000000e-7
 input_cost_per_token = 1.650000e-6
 output_cost_per_token = 6.600000e-6
 cache_read_input_token_cost = 4.130000e-7
+mode = "responses"
 
 ["azure/eu/computer-use-preview"]
 input_cost_per_token = 3.300000e-6
@@ -3051,6 +3076,7 @@ cache_read_input_token_cost = 1.375000e-7
 input_cost_per_token = 1.375000e-6
 output_cost_per_token = 1.100000e-5
 cache_read_input_token_cost = 1.380000e-7
+mode = "responses"
 
 ["azure/eu/gpt-5-mini"]
 input_cost_per_token = 2.750000e-7
@@ -3065,11 +3091,13 @@ cache_read_input_token_cost = 5.500000e-9
 ["azure/eu/gpt-5-pro"]
 input_cost_per_token = 1.650000e-5
 output_cost_per_token = 1.320000e-4
+mode = "responses"
 
 ["azure/eu/gpt-5.1-codex-max"]
 input_cost_per_token = 1.375000e-6
 output_cost_per_token = 1.100000e-5
 cache_read_input_token_cost = 1.375000e-7
+mode = "responses"
 
 ["azure/eu/gpt-5.2"]
 input_cost_per_token = 1.925000e-6
@@ -3087,10 +3115,12 @@ cache_read_input_token_cost = 1.925000e-7
 input_cost_per_token = 1.925000e-6
 output_cost_per_token = 1.540000e-5
 cache_read_input_token_cost = 1.925000e-7
+mode = "responses"
 
 ["azure/eu/gpt-5.2-pro"]
 input_cost_per_token = 2.310000e-5
 output_cost_per_token = 1.848000e-4
+mode = "responses"
 
 ["azure/eu/gpt-5.3-chat"]
 input_cost_per_token = 1.925000e-6
@@ -3103,6 +3133,7 @@ cache_read_input_token_cost = 1.925000e-7
 input_cost_per_token = 1.925000e-6
 output_cost_per_token = 1.540000e-5
 cache_read_input_token_cost = 1.925000e-7
+mode = "responses"
 
 ["azure/eu/gpt-5.4-mini"]
 input_cost_per_token = 8.250000e-7
@@ -3119,6 +3150,7 @@ input_cost_per_token = 3.300000e-5
 output_cost_per_token = 1.980000e-4
 input_cost_per_token_above_272k_tokens = 6.600000e-5
 output_cost_per_token_above_272k_tokens = 2.970000e-4
+mode = "responses"
 
 ["azure/eu/gpt-5.5-2026-04-24"]
 input_cost_per_token = 5.500000e-6
@@ -3139,6 +3171,8 @@ cache_read_input_token_cost_above_272k_tokens = 2.400000e-6
 input_cost_per_token_above_272k_tokens = 2.400000e-5
 cache_creation_input_token_cost_above_272k_tokens = 3.000000e-5
 output_cost_per_token_above_272k_tokens = 9.000000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
 
 ["azure/eu/gpt-6-luna"]
 input_cost_per_token = 1.200000e-7
@@ -3312,6 +3346,14 @@ cache_read_input_token_cost_above_272k_tokens = 4.000000e-7
 input_cost_per_token_above_272k_tokens = 4.000000e-6
 cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 1.500000e-5
+cache_creation_input_token_cost_above_272k_tokens_priority = 1.000000e-5
+cache_creation_input_token_cost_priority = 5.000000e-6
+cache_read_input_token_cost_above_272k_tokens_priority = 8.000000e-7
+cache_read_input_token_cost_priority = 4.000000e-7
+input_cost_per_token_above_272k_tokens_priority = 8.000000e-6
+input_cost_per_token_priority = 4.000000e-6
+output_cost_per_token_above_272k_tokens_priority = 3.000000e-5
+output_cost_per_token_priority = 2.000000e-5
 
 ["azure/gpt-6-sol-2026-09-22"]
 input_cost_per_token = 2.000000e-6
@@ -3324,6 +3366,14 @@ cache_read_input_token_cost_above_272k_tokens = 4.000000e-7
 input_cost_per_token_above_272k_tokens = 4.000000e-6
 cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 1.500000e-5
+cache_creation_input_token_cost_above_272k_tokens_priority = 1.000000e-5
+cache_creation_input_token_cost_priority = 5.000000e-6
+cache_read_input_token_cost_above_272k_tokens_priority = 8.000000e-7
+cache_read_input_token_cost_priority = 4.000000e-7
+input_cost_per_token_above_272k_tokens_priority = 8.000000e-6
+input_cost_per_token_priority = 4.000000e-6
+output_cost_per_token_above_272k_tokens_priority = 3.000000e-5
+output_cost_per_token_priority = 2.000000e-5
 
 ["azure/gpt-audio"]
 input_cost_per_token = 2.500000e-6
@@ -3337,7 +3387,8 @@ input_cost_per_token = 2.500000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
-input_cost_per_audio_token = 4.000000e-5
+input_cost_per_audio_token = 3.200000e-5
+output_cost_per_audio_token = 6.400000e-5
 
 ["azure/gpt-audio-mini"]
 input_cost_per_token = 6.000000e-7
@@ -3357,31 +3408,37 @@ cache_read_input_token_cost = 5.000000e-7
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 4.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_image_token_cost = 2.500000e-6
 
 ["azure/gpt-image-1-mini"]
 input_cost_per_token = 2.000000e-6
 output_cost_per_token = 8.000000e-6
 cache_read_input_token_cost = 2.000000e-7
+cache_read_input_image_token_cost = 2.500000e-7
 
 ["azure/gpt-image-1.5"]
 input_cost_per_token = 5.000000e-6
-output_cost_per_token = 3.200000e-5
+output_cost_per_token = 1.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_image_token_cost = 2.000000e-6
 
 ["azure/gpt-image-1.5-2025-12-16"]
 input_cost_per_token = 5.000000e-6
-output_cost_per_token = 3.200000e-5
+output_cost_per_token = 1.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_image_token_cost = 2.000000e-6
 
 ["azure/gpt-image-2.5-flare"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 3.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_image_token_cost = 2.000000e-6
 
 ["azure/gpt-image-2.5-sunburst"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 3.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_image_token_cost = 2.000000e-6
 
 ["azure/gpt-live-transcribe"]
 mode = "audio_transcription"
@@ -3439,6 +3496,7 @@ max_input_tokens = 8191
 input_cost_per_token = 1.650000e-6
 output_cost_per_token = 6.600000e-6
 cache_read_input_token_cost = 4.130000e-7
+mode = "responses"
 
 ["azure/us/computer-use-preview"]
 input_cost_per_token = 3.300000e-6
@@ -3474,6 +3532,7 @@ cache_read_input_token_cost = 1.375000e-7
 input_cost_per_token = 1.375000e-6
 output_cost_per_token = 1.100000e-5
 cache_read_input_token_cost = 1.380000e-7
+mode = "responses"
 
 ["azure/us/gpt-5-mini"]
 input_cost_per_token = 2.750000e-7
@@ -3488,11 +3547,13 @@ cache_read_input_token_cost = 5.500000e-9
 ["azure/us/gpt-5-pro"]
 input_cost_per_token = 1.650000e-5
 output_cost_per_token = 1.320000e-4
+mode = "responses"
 
 ["azure/us/gpt-5.1-codex-max"]
 input_cost_per_token = 1.375000e-6
 output_cost_per_token = 1.100000e-5
 cache_read_input_token_cost = 1.375000e-7
+mode = "responses"
 
 ["azure/us/gpt-5.2"]
 input_cost_per_token = 1.925000e-6
@@ -3510,10 +3571,12 @@ cache_read_input_token_cost = 1.925000e-7
 input_cost_per_token = 1.925000e-6
 output_cost_per_token = 1.540000e-5
 cache_read_input_token_cost = 1.925000e-7
+mode = "responses"
 
 ["azure/us/gpt-5.2-pro"]
 input_cost_per_token = 2.310000e-5
 output_cost_per_token = 1.848000e-4
+mode = "responses"
 
 ["azure/us/gpt-5.3-chat"]
 input_cost_per_token = 1.925000e-6
@@ -3526,6 +3589,7 @@ cache_read_input_token_cost = 1.925000e-7
 input_cost_per_token = 1.925000e-6
 output_cost_per_token = 1.540000e-5
 cache_read_input_token_cost = 1.925000e-7
+mode = "responses"
 
 ["azure/us/gpt-5.4-mini"]
 input_cost_per_token = 8.250000e-7
@@ -3542,6 +3606,7 @@ input_cost_per_token = 3.300000e-5
 output_cost_per_token = 1.980000e-4
 input_cost_per_token_above_272k_tokens = 6.600000e-5
 output_cost_per_token_above_272k_tokens = 2.970000e-4
+mode = "responses"
 
 ["azure/us/gpt-5.5-2026-04-24"]
 input_cost_per_token = 5.500000e-6
@@ -3588,6 +3653,14 @@ cache_read_input_token_cost_above_272k_tokens = 4.400000e-7
 input_cost_per_token_above_272k_tokens = 4.400000e-6
 cache_creation_input_token_cost_above_272k_tokens = 5.500000e-6
 output_cost_per_token_above_272k_tokens = 1.650000e-5
+cache_creation_input_token_cost_above_272k_tokens_priority = 1.100000e-5
+cache_creation_input_token_cost_priority = 5.500000e-6
+cache_read_input_token_cost_above_272k_tokens_priority = 8.800000e-7
+cache_read_input_token_cost_priority = 4.400000e-7
+input_cost_per_token_above_272k_tokens_priority = 8.800000e-6
+input_cost_per_token_priority = 4.400000e-6
+output_cost_per_token_above_272k_tokens_priority = 3.300000e-5
+output_cost_per_token_priority = 2.200000e-5
 
 ["azure/us/gpt-chat-latest"]
 input_cost_per_token = 5.500000e-6
@@ -3792,22 +3865,27 @@ cache_read_input_token_cost = 1.000000e-8
 ["azure_ai/MAI-Image-2.5"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 4.700000e-5
+max_input_tokens = 32000
 
 ["azure_ai/MAI-Image-2.5-Flash"]
 input_cost_per_token = 1.750000e-6
 output_cost_per_token = 1.950000e-5
+max_input_tokens = 32000
 
 ["azure_ai/MAI-Image-2.5-Pro"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 1.060000e-4
+max_input_tokens = 32000
 
 ["azure_ai/MAI-Image-2.6"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 3.800000e-5
+max_input_tokens = 32000
 
 ["azure_ai/MAI-Image-2.6-Flash"]
 input_cost_per_token = 1.750000e-6
 output_cost_per_token = 1.900000e-5
+max_input_tokens = 32000
 
 ["azure_ai/MAI-Thinking-1"]
 input_cost_per_token = 2.000000e-6
@@ -3870,6 +3948,7 @@ cache_read_input_token_cost_above_272k_tokens = 2.000000e-6
 input_cost_per_token_above_272k_tokens = 2.000000e-5
 cache_creation_input_token_cost_above_272k_tokens = 2.500000e-5
 output_cost_per_token_above_272k_tokens = 7.500000e-5
+supports_prompt_cache_breakpoint = true
 
 ["azure_ai/gpt-6-luna"]
 input_cost_per_token = 1.000000e-7
@@ -3882,6 +3961,7 @@ cache_read_input_token_cost_above_272k_tokens = 2.000000e-8
 input_cost_per_token_above_272k_tokens = 2.000000e-7
 cache_creation_input_token_cost_above_272k_tokens = 2.500000e-7
 output_cost_per_token_above_272k_tokens = 7.500000e-7
+supports_prompt_cache_breakpoint = true
 
 ["azure_ai/gpt-6-sol"]
 input_cost_per_token = 2.000000e-6
@@ -3894,6 +3974,7 @@ cache_read_input_token_cost_above_272k_tokens = 4.000000e-7
 input_cost_per_token_above_272k_tokens = 4.000000e-6
 cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 1.500000e-5
+supports_prompt_cache_breakpoint = true
 
 ["azure_ai/gpt-chat-latest"]
 input_cost_per_token = 5.000000e-6
@@ -3932,7 +4013,7 @@ output_cost_per_token_above_200k_tokens = 5.000000e-6
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 
 ["azure_ai/grok-4.6"]
-input_cost_per_token = 1.250000e-6
+input_cost_per_token = 2.000000e-6
 output_cost_per_token = 6.000000e-6
 max_input_tokens = 200000
 max_output_tokens = 128000
@@ -4032,6 +4113,7 @@ cache_read_input_token_cost_above_272k_tokens = 2.000000e-6
 input_cost_per_token_above_272k_tokens = 2.000000e-5
 cache_creation_input_token_cost_above_272k_tokens = 2.500000e-5
 output_cost_per_token_above_272k_tokens = 7.500000e-5
+supports_prompt_cache_breakpoint = true
 
 ["gpt-6-luna"]
 input_cost_per_token = 1.000000e-7
@@ -4044,6 +4126,7 @@ cache_read_input_token_cost_above_272k_tokens = 2.000000e-8
 input_cost_per_token_above_272k_tokens = 2.000000e-7
 cache_creation_input_token_cost_above_272k_tokens = 2.500000e-7
 output_cost_per_token_above_272k_tokens = 7.500000e-7
+supports_prompt_cache_breakpoint = true
 
 ["gpt-6-sol"]
 input_cost_per_token = 2.000000e-6
@@ -4056,11 +4139,15 @@ cache_read_input_token_cost_above_272k_tokens = 4.000000e-7
 input_cost_per_token_above_272k_tokens = 4.000000e-6
 cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 1.500000e-5
+supports_prompt_cache_breakpoint = true
 
 ["gpt-image-2.5-flare"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 3.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_token_cost_batches = 6.250000e-7
+input_cost_per_image_token_batches = 4.000000e-6
+input_cost_per_token_batches = 2.500000e-6
 
 ["gpt-image-2.5-flare-2026-09-08"]
 input_cost_per_token = 5.000000e-6
@@ -4071,6 +4158,9 @@ cache_read_input_token_cost = 1.250000e-6
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 3.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_token_cost_batches = 6.250000e-7
+input_cost_per_image_token_batches = 4.000000e-6
+input_cost_per_token_batches = 2.500000e-6
 
 ["gpt-image-2.5-sunburst-2026-09-08"]
 input_cost_per_token = 5.000000e-6
@@ -4242,6 +4332,7 @@ output_cost_per_token_above_272k_tokens = 1.500000e-5
 cache_read_input_token_cost_above_272k_tokens = 2.000000e-7
 cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 source = "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/models"
+supports_prompt_cache_breakpoint = true
 
 ["azure/gpt-6.1-sol"]
 input_cost_per_token = 2.000000e-6
@@ -4281,3 +4372,75 @@ output_cost_per_token_above_272k_tokens = 1.500000e-5
 cache_read_input_token_cost_above_272k_tokens = 2.000000e-7
 cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 source = "https://developers.openai.com/api/docs/pricing"
+supports_prompt_cache_breakpoint = true
+
+["azure/apac/gpt-6.1-sol"]
+input_cost_per_token = 2.400000e-6
+output_cost_per_token = 1.200000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.200000e-7
+cache_creation_input_token_cost = 3.000000e-6
+mode = "chat"
+cache_creation_input_token_cost_above_272k_tokens = 6.000000e-6
+cache_read_input_token_cost_above_272k_tokens = 2.400000e-7
+input_cost_per_token_above_272k_tokens = 4.800000e-6
+output_cost_per_token_above_272k_tokens = 1.800000e-5
+
+["azure/eu/gpt-6.1-sol"]
+input_cost_per_token = 2.400000e-6
+output_cost_per_token = 1.200000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.200000e-7
+cache_creation_input_token_cost = 3.000000e-6
+mode = "chat"
+cache_creation_input_token_cost_above_272k_tokens = 6.000000e-6
+cache_read_input_token_cost_above_272k_tokens = 2.400000e-7
+input_cost_per_token_above_272k_tokens = 4.800000e-6
+output_cost_per_token_above_272k_tokens = 1.800000e-5
+
+["azure/model-router"]
+input_cost_per_token = 1.400000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 200000
+max_output_tokens = 32768
+mode = "chat"
+
+["azure/us/gpt-6.1-sol"]
+input_cost_per_token = 2.200000e-6
+output_cost_per_token = 1.100000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.100000e-7
+cache_creation_input_token_cost = 2.750000e-6
+mode = "chat"
+cache_creation_input_token_cost_above_272k_tokens = 5.500000e-6
+cache_read_input_token_cost_above_272k_tokens = 2.200000e-7
+input_cost_per_token_above_272k_tokens = 4.400000e-6
+output_cost_per_token_above_272k_tokens = 1.650000e-5
+
+["azure/whisper"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+mode = "audio_transcription"
+input_cost_per_second = 1.000000e-4
+output_cost_per_second = 1.000000e-4
+
+["azure_ai/grok-4.7"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 500000
+max_output_tokens = 500000
+cache_read_input_token_cost = 5.000000e-7
+mode = "chat"
+cache_read_input_token_cost_above_200k_tokens = 1.000000e-6
+input_cost_per_token_above_200k_tokens = 4.000000e-6
+output_cost_per_token_above_200k_tokens = 1.200000e-5
+
+["azure_ai/kimi-k2-thinking"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.500000e-6
+max_input_tokens = 262144
+max_output_tokens = 262144
+mode = "chat"

@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
-use crate::orchestration::unary::{UnarySuccess, execute_unary};
+use crate::orchestration::unary::{UnarySuccess, UnaryUpstreamResponse, execute_unary};
 use crate::pipeline::{
     CACHE_HIT_HEADER, EndpointPipeline, apply_cost_header, sanitize_timeout_secs, set_header,
     stamp_ratelimit_headers, stamp_request_id_header,
@@ -63,6 +63,7 @@ pub(crate) async fn embeddings_inner_with_headers(
         .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;
 
     crate::security::check_json_depth(&request_body, crate::security::MAX_JSON_DEPTH)?;
+    crate::orchestration::request_controls::validate(&request_body)?;
 
     let model = request_body
         .get("model")
@@ -118,10 +119,16 @@ pub(crate) async fn embeddings_inner_with_headers(
                 cached_provider,
             )
             .await;
-        let mut resp = Json(cached).into_response();
+        let mut public = cached;
+        crate::pipeline::normalize_client_response(
+            &mut public,
+            crate::pipeline::public_response_model(&pipeline.call_ctx),
+        );
+        let mut resp = Json(public).into_response();
         apply_cost_header(&mut resp, cost);
         set_header(&mut resp, CACHE_HIT_HEADER, "true");
         stamp_request_id_header(&mut resp, pipeline.request_id());
+        crate::orchestration::apply_router_headers(&mut resp, &pipeline.call_ctx);
         return Ok(resp);
     }
 
@@ -161,6 +168,7 @@ pub(crate) async fn embeddings_inner_with_headers(
             // No-op for master-key requests and cache hits (the latter never
             // reach this branch).
             stamp_ratelimit_headers(&mut resp, pipeline.state, &pipeline.call_ctx).await;
+            crate::orchestration::apply_router_headers(&mut resp, &pipeline.call_ctx);
             Ok(resp)
         }
         Err(err) => Err(err),
@@ -177,7 +185,7 @@ async fn call_upstream(
     state: &crate::state::AppState,
     deployment: &oxllm_core::Deployment,
     request_body: &Value,
-) -> Result<(Value, Option<UsageSummary>), ApiError> {
+) -> Result<UnaryUpstreamResponse, ApiError> {
     let provider = state
         .registry
         .resolve_for_deployment(deployment)
@@ -212,6 +220,7 @@ async fn call_upstream(
     // way), so map them to a 4xx status so the executor classifies them as
     // client errors and does not retry.
     let mut request = request_body.clone();
+    crate::orchestration::request_controls::strip_before_transform(&mut request);
     crate::orchestration::upstream::remove_additional_params(
         &mut request,
         deployment.oxllm_params.additional_drop_params.as_deref(),
@@ -273,14 +282,16 @@ async fn call_upstream(
         headers = header_pairs.into_iter().collect();
     }
 
-    let timeout_secs = deployment.oxllm_params.timeout.unwrap_or_else(|| {
-        state
-            .config
-            .oxllm_settings
-            .request_timeout
-            .map(|t| t as f64)
-            .unwrap_or(DEFAULT_TIMEOUT_SECS as f64)
-    });
+    let timeout_secs = crate::orchestration::request_controls::seconds(request_body, "timeout")
+        .or(deployment.oxllm_params.timeout)
+        .unwrap_or_else(|| {
+            state
+                .config
+                .oxllm_settings
+                .request_timeout
+                .map(|t| t as f64)
+                .unwrap_or(DEFAULT_TIMEOUT_SECS as f64)
+        });
 
     let mut req_builder = state
         .http_client
@@ -334,6 +345,8 @@ async fn call_upstream(
             .to_string();
         return Err(ApiError::upstream(status_u16, message).with_headers(Some(headers)));
     }
+
+    let response_headers = response.headers().clone();
 
     // Stream the success body into a buffer capped at `MAX_RESPONSE_BODY_BYTES`
     // (Content-Length pre-check + mid-stream abort), then deserialize. A
@@ -407,7 +420,7 @@ async fn call_upstream(
     }
 
     let usage = extract_embedding_usage(&transformed);
-    Ok((transformed, usage))
+    Ok((transformed, usage, response_headers))
 }
 
 /// Explicit bad requests remain terminal. Adapter/configuration failures may

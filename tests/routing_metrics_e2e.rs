@@ -318,7 +318,7 @@ async fn lowest_cost_strategy_picks_cheaper_model() {
     let mock_expensive = MockServer::start();
     let mock_cheap = MockServer::start();
 
-    mock_expensive.mock(|when, then| {
+    let expensive_wire = mock_expensive.mock(|when, then| {
         when.method(httpmock::Method::POST)
             .path("/chat/completions");
         then.status(200)
@@ -337,7 +337,7 @@ async fn lowest_cost_strategy_picks_cheaper_model() {
             }));
     });
 
-    mock_cheap.mock(|when, then| {
+    let cheap_wire = mock_cheap.mock(|when, then| {
         when.method(httpmock::Method::POST)
             .path("/chat/completions");
         then.status(200)
@@ -371,10 +371,13 @@ async fn lowest_cost_strategy_picks_cheaper_model() {
 
     assert!(resp.status().is_success());
     let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["model"], "gpt-4o");
     assert_eq!(
-        body["model"], "gpt-4o-mini",
-        "lowest_cost should pick the cheaper model (gpt-4o-mini)"
+        body["id"], "chatcmpl-cheap",
+        "lowest_cost must serve the cheaper upstream"
     );
+    cheap_wire.assert_hits(1);
+    expensive_wire.assert_hits(0);
 
     let _ = handle.shutdown_tx.send(());
 }
@@ -561,7 +564,7 @@ async fn lowest_latency_strategy_prefers_fast_provider() {
     let mock_fast = MockServer::start();
     let mock_slow = MockServer::start();
 
-    mock_fast.mock(|when, then| {
+    let fast_wire = mock_fast.mock(|when, then| {
         when.method(httpmock::Method::POST)
             .path("/chat/completions");
         then.status(200)
@@ -580,7 +583,7 @@ async fn lowest_latency_strategy_prefers_fast_provider() {
             }));
     });
 
-    mock_slow.mock(|when, then| {
+    let slow_wire = mock_slow.mock(|when, then| {
         when.method(httpmock::Method::POST)
             .path("/chat/completions");
         then.status(200)
@@ -657,6 +660,8 @@ async fn lowest_latency_strategy_prefers_fast_provider() {
             .expect("warmup request succeeds");
     }
 
+    let fast_before = fast_wire.hits();
+    let slow_before = slow_wire.hits();
     let mut fast_count = 0;
     for _ in 0..5 {
         let resp = client
@@ -666,7 +671,8 @@ async fn lowest_latency_strategy_prefers_fast_provider() {
             .await
             .expect("request succeeds");
         let result: Value = resp.json().await.expect("json body");
-        if result["model"] == "gpt-4o-fast" {
+        assert_eq!(result["model"], "gpt-4o");
+        if result["id"] == "chatcmpl-fast" {
             fast_count += 1;
         }
     }
@@ -677,6 +683,8 @@ async fn lowest_latency_strategy_prefers_fast_provider() {
         fast_count, 5,
         "after warmup, all requests should prefer the fast provider"
     );
+    assert_eq!(fast_wire.hits() - fast_before, 5);
+    assert_eq!(slow_wire.hits() - slow_before, 0);
 }
 
 #[tokio::test]

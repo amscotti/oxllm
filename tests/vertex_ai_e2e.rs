@@ -78,12 +78,12 @@ async fn vertex_gemini_forwards_to_openai_compat_endpoint_with_bearer_auth() {
     let (handle, _state) = start_oxllm(config).await.expect("server should start");
 
     // The Gemini branch should POST to the OpenAI-compat path with the model
-    // prefix stripped and the bearer token attached.
+    // publisher qualified and the bearer token attached.
     let upstream_mock = mock.mock(|when, then| {
         when.method(httpmock::Method::POST)
             .path("/v1beta1/projects/test-gcp-project/locations/us-central1/endpoints/openapi/chat/completions")
             .header("authorization", "Bearer ya29.test-vertex-token")
-            .json_body_partial(json!({"model": "gemini-1.5-pro"}).to_string());
+            .json_body_partial(json!({"model": "google/gemini-1.5-pro"}).to_string());
         then.status(200)
             .header("content-type", "application/json")
             .json_body(json!({
@@ -196,7 +196,7 @@ async fn vertex_wildcard_gemini_routes_request_to_openai_compat_endpoint() {
         when.method(httpmock::Method::POST)
             .path("/v1beta1/projects/test-gcp-project/locations/us-central1/endpoints/openapi/chat/completions")
             .header("authorization", "Bearer ya29.test-vertex-token")
-            .json_body_partial(json!({"model": "gemini-2.0-flash"}).to_string());
+            .json_body_partial(json!({"model": "google/gemini-2.0-flash"}).to_string());
         then.status(200)
             .header("content-type", "application/json")
             .json_body(json!({

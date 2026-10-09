@@ -427,7 +427,7 @@ async fn test_anthropic_non_streaming_chat() {
     let body: Value = resp.json().await.expect("json");
     assert_eq!(body["object"], "chat.completion");
     assert_eq!(body["id"], "msg_abc");
-    assert_eq!(body["model"], "claude-3-5-sonnet");
+    assert_eq!(body["model"], "claude");
     assert_eq!(body["choices"][0]["message"]["role"], "assistant");
     assert_eq!(body["choices"][0]["message"]["content"], "Bonjour!");
     assert_eq!(body["choices"][0]["finish_reason"], "stop");

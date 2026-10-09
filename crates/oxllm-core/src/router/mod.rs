@@ -1466,15 +1466,27 @@ impl Router {
     /// Same precedence as [`retries_for_status`](Self::retries_for_status)
     /// but consults the model's routing-group override first.
     pub fn retries_for_status_model(&self, status: u16, model: &str) -> u32 {
+        self.retry_policy_for_status_model(status, model)
+            .unwrap_or_else(|| {
+                self.config
+                    .routing_groups
+                    .get(model)
+                    .and_then(|group| group.num_retries)
+                    .unwrap_or(self.config.num_retries)
+            })
+    }
+
+    /// Explicit per-status policy, before request/deployment/default retry budgets.
+    pub fn retry_policy_for_status_model(&self, status: u16, model: &str) -> Option<u32> {
         let group = self.config.routing_groups.get(model);
         let key = status.to_string();
         if let Some(g) = group {
             if let Some(n) = g.retry_policy.get(&key) {
-                return *n;
+                return Some(*n);
             }
         }
         if let Some(n) = self.config.retry_policy.get(&key) {
-            return *n;
+            return Some(*n);
         }
         if let Some(count) = self
             .config
@@ -1482,11 +1494,9 @@ impl Router {
             .as_ref()
             .and_then(|policy| policy.limit_for_status(status))
         {
-            return count;
+            return Some(count);
         }
-        group
-            .and_then(|g| g.num_retries)
-            .unwrap_or(self.config.num_retries)
+        None
     }
 }
 

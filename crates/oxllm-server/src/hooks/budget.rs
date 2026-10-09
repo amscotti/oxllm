@@ -67,9 +67,10 @@ pub fn most_restrictive(a: Option<f64>, b: Option<f64>) -> Option<f64> {
 /// When `ctx.deployment_pricing` is already present (e.g. a path that
 /// re-runs estimate after pick), the reservation is sized on the override.
 /// Unknown models (no override and no table entry) reserve a nominal `0.01`
-/// floor.
+/// floor plus any known Model Router infrastructure fee.
 pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
-    let table = oxllm_core::lookup_pricing(ctx.pricing_model.as_deref().unwrap_or(&ctx.model));
+    let pricing_model = ctx.pricing_model.as_deref().unwrap_or(&ctx.model);
+    let table = oxllm_core::lookup_pricing(pricing_model);
     let duration_ms = ctx
         .upstream_duration_estimate
         .unwrap_or(Duration::from_secs(600))
@@ -92,6 +93,15 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
             est
         }
     };
+    let model_router_fee = ctx
+        .model_router_input_rate
+        .filter(|_| ctx.deployment_pricing.is_none())
+        .map(|rate| prompt_estimate as f64 * rate);
+    if crate::pipeline::is_model_router_fee_entry(pricing_model)
+        && let Some(fee) = model_router_fee
+    {
+        return fee;
+    }
     const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;
     let requested_output = ["max_completion_tokens", "max_tokens", "max_output_tokens"]
         .iter()
@@ -195,12 +205,13 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
                         rates.search_query * search_uses as f64,
                     )
                 }
-                None => return 0.01,
+                None => return 0.01 + model_router_fee.unwrap_or(0.0),
             },
         };
     prompt_estimate as f64 * prompt_estimate_cost
         + output_estimate as f64 * output_estimate_cost
         + search_estimate_cost
+        + model_router_fee.unwrap_or(0.0)
 }
 
 /// A hook that enforces budget ceilings per API key, team, and user.
@@ -1197,6 +1208,126 @@ mod tests {
             body: None,
             provider: "openai".to_string(),
         }
+    }
+
+    #[tokio::test]
+    async fn model_router_unpriced_deployment_tops_up_nominal_budget_and_settles_fee() {
+        let config = serde_json::from_value(serde_json::json!({"model_list":[]})).unwrap();
+        let state =
+            crate::state::AppState::with_registry(config, oxllm_providers::default_registry())
+                .unwrap();
+        let hook = BudgetHook::new(state.cache.clone(), None, "1h");
+        let mut ctx = CallContext::for_test("public-router");
+        ctx.max_budget = Some(1.0);
+        ctx.token_estimate.set(100_000).unwrap();
+        ctx.request_body = Arc::new(serde_json::json!({"model":"public-router","max_tokens":20}));
+        assert!(matches!(
+            hook.pre_call(&mut ctx).await.unwrap(),
+            HookAction::Continue
+        ));
+        assert_eq!(ctx.budget_estimate, Some(0.01));
+
+        let deployment = serde_json::from_value(serde_json::json!({
+            "model_name":"public-router",
+            "oxllm_params":{"model":"azure_ai/model_router/private-deployment"}
+        }))
+        .unwrap();
+        let request = ctx.request_body.clone();
+        crate::pipeline::prepare_deployment_pricing(&state, &mut ctx, &deployment, &request)
+            .await
+            .unwrap();
+        assert!(oxllm_core::lookup_pricing(ctx.pricing_model.as_deref().unwrap()).is_none());
+        let rate = oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token;
+        let expected_reservation = 0.01 + 100_000.0 * rate;
+        assert!(
+            (ctx.budget_estimate.unwrap() - expected_reservation).abs() < 1e-12,
+            "an unpriced router deployment must reserve its fee on top of the nominal floor"
+        );
+        assert!(
+            (state.cache.counter_value("spend:abc").await.unwrap() - expected_reservation).abs()
+                < 1e-12
+        );
+
+        let mut response = make_response("unpriced-selected-model", 60_000, 20);
+        response.provider = "azure_ai".into();
+        response.usage.as_mut().unwrap().cache_read_input_tokens = Some(30_000);
+        hook.post_success(&ctx, &response).await;
+        let expected_actual = 60_000.0 * rate;
+        assert!(
+            (state.cache.counter_value("spend:abc").await.unwrap() - expected_actual).abs() < 1e-12
+        );
+    }
+
+    #[tokio::test]
+    async fn model_router_fee_can_exceed_the_nominal_unknown_model_budget() {
+        let cache = Arc::new(InMemoryCache::default());
+        let rate = oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token;
+        let hook = BudgetHook::new(cache.clone(), Some(0.01 + 50_000.0 * rate), "1h");
+        let mut ctx = CallContext::for_test("unpriced-router-deployment");
+        ctx.model_router_input_rate = Some(rate);
+        ctx.token_estimate.set(100_000).unwrap();
+        assert!(matches!(
+            hook.pre_call(&mut ctx).await.unwrap(),
+            HookAction::Reject(Error::BudgetExceeded(_))
+        ));
+        assert_eq!(cache.counter_value("spend:abc").await.unwrap_or(0.0), 0.0);
+    }
+
+    #[tokio::test]
+    async fn model_router_fee_only_estimate_and_settlement_honor_rate_overrides_once() {
+        let catalog_rate =
+            oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token;
+        for (provider, model) in [
+            ("azure", "azure/model-router"),
+            ("azure_ai", "azure_ai/model-router"),
+            ("azure_ai", "azure_ai/model_router"),
+        ] {
+            for rate in [catalog_rate, catalog_rate * 2.0, 0.0] {
+                let cache = Arc::new(InMemoryCache::default());
+                let hook = BudgetHook::new(cache.clone(), Some(1.0), "1h");
+                let mut ctx = CallContext::for_test("public-router");
+                ctx.pricing_model = Some(model.into());
+                ctx.model_router_input_rate = Some(rate);
+                ctx.token_estimate.set(1_000).unwrap();
+                assert!(matches!(
+                    hook.pre_call(&mut ctx).await.unwrap(),
+                    HookAction::Continue
+                ));
+                let expected_estimate = 1_000.0 * rate;
+                assert!(
+                    (ctx.budget_estimate.unwrap() - expected_estimate).abs() < 1e-12,
+                    "{model}/{rate}: the canonical row must reserve the effective fee once"
+                );
+                let mut response = make_response("model-router", 800, 20);
+                response.provider = provider.into();
+                response.usage.as_mut().unwrap().cache_read_input_tokens = Some(400);
+                hook.post_success(&ctx, &response).await;
+                assert!(
+                    (cache.counter_value("spend:abc").await.unwrap() - 800.0 * rate).abs() < 1e-12,
+                    "{model}/{rate}: cached-read tokens must still incur exactly one fee"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn model_router_cache_hit_releases_nominal_and_fee_reservations() {
+        let cache = Arc::new(InMemoryCache::default());
+        let hook = BudgetHook::new(cache.clone(), Some(1.0), "1h");
+        let mut ctx = CallContext::for_test("unpriced-router-deployment");
+        let rate = oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token;
+        ctx.model_router_input_rate = Some(rate);
+        ctx.token_estimate.set(100_000).unwrap();
+        assert!(matches!(
+            hook.pre_call(&mut ctx).await.unwrap(),
+            HookAction::Continue
+        ));
+        assert!((ctx.budget_estimate.unwrap() - (0.01 + 100_000.0 * rate)).abs() < 1e-12);
+        ctx.cache_hit = true;
+        let mut response = make_response("gpt-6.1-sol", 100_000, 20);
+        response.cost = Some(1.0);
+        hook.post_success(&ctx, &response).await;
+        assert_eq!(cache.counter_value("spend:abc").await.unwrap_or(0.0), 0.0);
     }
 
     #[tokio::test]

@@ -93,10 +93,7 @@ async fn fireworks_non_streaming_chat() {
         body["choices"][0]["message"]["content"],
         "Hello from Fireworks!"
     );
-    assert_eq!(
-        body["model"],
-        "accounts/fireworks/models/llama-v3p1-70b-instruct"
-    );
+    assert_eq!(body["model"], "fireworks-llama");
 
     upstream.assert_hits(1);
     handle.shutdown();

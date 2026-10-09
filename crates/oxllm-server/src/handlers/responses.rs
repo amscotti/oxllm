@@ -58,6 +58,7 @@ pub async fn responses(
         .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;
 
     crate::security::check_json_depth(&request_body, crate::security::MAX_JSON_DEPTH)?;
+    crate::orchestration::request_controls::validate(&request_body)?;
 
     let model = request_body
         .get("model")

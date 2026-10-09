@@ -204,7 +204,7 @@ async fn anthropic_non_streaming_chat() {
         body["choices"][0]["message"]["content"],
         "Hello from Anthropic!"
     );
-    assert_eq!(body["model"], "claude-3-5-sonnet");
+    assert_eq!(body["model"], "claude");
     assert_eq!(body["choices"][0]["finish_reason"], "stop");
     assert_eq!(body["usage"]["prompt_tokens"], 10);
     assert_eq!(body["usage"]["completion_tokens"], 5);
@@ -1287,6 +1287,8 @@ async fn anthropic_stream_error_event_propagates() {
 
     let sse_body = anthropic_sse(vec![
         sse_message_start(),
+        sse_text_block_start(0),
+        sse_text_delta(0, "partial response"),
         sse_error_event("overloaded_error", "Our servers are overloaded"),
     ]);
 

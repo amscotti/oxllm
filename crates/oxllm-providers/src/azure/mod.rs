@@ -103,6 +103,13 @@ const QUERY_VALUE: &AsciiSet = &CONTROLS
 pub struct AzureProvider;
 
 impl AzureProvider {
+    fn requires_completion_token_limit(model: &str) -> bool {
+        let model = model.to_ascii_lowercase();
+        model.contains("gpt-5")
+            || model.contains("gpt-6")
+            || model.contains("gpt5_series")
+            || crate::openai::has_known_reasoning_family(&model)
+    }
     fn api_version(deployment: &Deployment) -> String {
         deployment
             .oxllm_params
@@ -120,7 +127,12 @@ impl AzureProvider {
         let model = &deployment.oxllm_params.model;
         if let Some(("azure", rest)) = model.split_once('/') {
             if !rest.is_empty() && !rest.contains('*') {
-                return Some(rest.to_string());
+                return Some(
+                    rest.strip_prefix("model_router/")
+                        .or_else(|| rest.strip_prefix("model-router/"))
+                        .unwrap_or(rest)
+                        .to_string(),
+                );
             }
         }
         if let Some(Value::String(name)) = deployment.oxllm_params.extra.get("azure_deployment") {
@@ -539,7 +551,15 @@ impl ChatProvider for AzureProvider {
         Self::rewrite_v1_model(&mut out, deployment)?;
         if let Some(model) = Self::capability_model(request, deployment) {
             crate::openai::apply_openai_reasoning_limits(&mut out, &model);
+            if Self::requires_completion_token_limit(&model) {
+                crate::openai::apply_openai_token_limit_alias(&mut out);
+            }
+        } else if let Some(name) = Self::deployment_name(deployment)
+            && Self::requires_completion_token_limit(&name)
+        {
+            crate::openai::apply_openai_token_limit_alias(&mut out);
         }
+        crate::prompt_cache::apply(&mut out, request, deployment);
         Ok(out)
     }
 

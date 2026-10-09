@@ -27,6 +27,19 @@ const COMPAT: OpenAiCompatProvider = OpenAiCompatProvider::new(
 pub struct AzureAiProvider;
 
 impl AzureAiProvider {
+    /// Foundry's native Anthropic Count Tokens endpoint.
+    pub fn count_tokens_url(deployment: &Deployment) -> Result<String> {
+        if !Self::is_anthropic(deployment) {
+            return Err(Error::BadRequest(
+                "Foundry token counting requires a Claude deployment".into(),
+            ));
+        }
+        Ok(crate::util::foundry_endpoint_url(
+            deployment,
+            "messages/count_tokens",
+            true,
+        ))
+    }
     fn resolved(request: &Value, deployment: &Deployment) -> Result<Deployment> {
         if deployment
             .oxllm_params
@@ -54,6 +67,10 @@ impl AzureAiProvider {
         } else {
             configured
         };
+        let model = model
+            .strip_prefix("model_router/")
+            .or_else(|| model.strip_prefix("model-router/"))
+            .unwrap_or(model);
         if model.is_empty() || model.contains('*') {
             return Err(Error::BadRequest(
                 "azure_ai requires a concrete deployment/model name".into(),
@@ -129,12 +146,13 @@ impl AzureAiProvider {
         if let Some(token) = creds.best_effort_bearer() {
             if matches!(creds, ResolvedCredentials::AzureAd { .. }) {
                 headers.insert("authorization".into(), format!("Bearer {token}"));
-            } else if Self::is_anthropic(deployment)
-                || deployment
-                    .oxllm_params
-                    .api_base
-                    .as_deref()
-                    .is_some_and(crate::util::is_foundry_base)
+            } else if Self::is_anthropic(deployment) {
+                headers.insert("x-api-key".into(), token.to_string());
+            } else if deployment
+                .oxllm_params
+                .api_base
+                .as_deref()
+                .is_some_and(crate::util::is_foundry_base)
             {
                 headers.insert("api-key".into(), token.to_string());
             } else {
@@ -190,8 +208,10 @@ impl ChatProvider for AzureAiProvider {
         if Self::is_anthropic(&resolved) {
             AnthropicProvider.transform_request(request, &Self::anthropic_deployment(&resolved))
         } else {
-            let mut body = ChatProvider::transform_request(&COMPAT, request, &resolved)?;
-            if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+            // Sanitize before the compat transform places native cache marks,
+            // so incompatible controls cannot consume its breakpoint budget.
+            let mut sanitized = request.clone();
+            if let Some(messages) = sanitized.get_mut("messages").and_then(Value::as_array_mut) {
                 for message in messages {
                     if let Some(object) = message.as_object_mut() {
                         for field in [
@@ -202,10 +222,22 @@ impl ChatProvider for AzureAiProvider {
                         ] {
                             object.remove(field);
                         }
+                        if let Some(content) =
+                            object.get_mut("content").and_then(Value::as_array_mut)
+                        {
+                            for block in content {
+                                if let Some(block) = block.as_object_mut() {
+                                    block.remove("cache_control");
+                                }
+                            }
+                        }
                         if let Some(content) = object.get("content").and_then(Value::as_array)
                             && !content.is_empty()
                             && content.iter().all(|block| {
                                 block.get("type").and_then(Value::as_str) == Some("text")
+                                    && block
+                                        .get("prompt_cache_breakpoint")
+                                        .is_none_or(Value::is_null)
                             })
                         {
                             let text = content
@@ -218,7 +250,19 @@ impl ChatProvider for AzureAiProvider {
                     }
                 }
             }
-            Ok(body)
+            if let Some(tools) = sanitized.get_mut("tools").and_then(Value::as_array_mut) {
+                for tool in tools {
+                    if let Some(tool) = tool.as_object_mut() {
+                        tool.remove("cache_control");
+                        if let Some(function) =
+                            tool.get_mut("function").and_then(Value::as_object_mut)
+                        {
+                            function.remove("cache_control");
+                        }
+                    }
+                }
+            }
+            ChatProvider::transform_request(&COMPAT, &sanitized, &resolved)
         }
     }
 

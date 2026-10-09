@@ -50,6 +50,7 @@ pub(crate) fn resolve_cost(
                 provider,
                 tier,
             )
+            .map(|cost| (cost, *model))
         })
     });
     let reported_cost = || {
@@ -65,8 +66,20 @@ pub(crate) fn resolve_cost(
             return Some(cost);
         }
     }
-    if table_cost.is_some() {
-        return table_cost;
+    if let Some((cost, priced_model)) = table_cost {
+        if crate::pipeline::is_model_router_fee_entry(priced_model)
+            && let Some((usage, rate)) = usage.zip(ctx.model_router_input_rate)
+        {
+            return Some(usage.prompt_tokens as f64 * rate);
+        }
+        let fee = usage
+            .zip(ctx.model_router_input_rate)
+            .filter(|_| !crate::pipeline::is_model_router_fee_entry(priced_model))
+            .map_or(0.0, |(usage, rate)| usage.prompt_tokens as f64 * rate);
+        return Some(cost + fee);
+    }
+    if let Some((usage, rate)) = usage.zip(ctx.model_router_input_rate) {
+        return Some(usage.prompt_tokens as f64 * rate);
     }
     let duration_override = ctx
         .deployment_pricing
@@ -302,6 +315,242 @@ mod tests {
             provider: "openai".to_string(),
         };
         assert!(fallback_cost(&ctx, &resp).is_none());
+    }
+
+    #[test]
+    fn model_router_fee_is_added_once_to_served_model_cost_and_canonical_fee_rows() {
+        let rate = oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token;
+        let tokens = UsageSummary {
+            cache_read_input_tokens: Some(40),
+            ..usage(100, 20)
+        };
+        for provider in ["azure", "azure_ai"] {
+            let mut ctx = CallContext::for_test("public-router");
+            ctx.deployment_model = Some(format!("{provider}/model_router/production"));
+            ctx.pricing_model = Some(format!("{provider}/model-router"));
+            ctx.model_router_input_rate = Some(rate);
+            let base =
+                oxllm_core::calculate_cost_with_provider("gpt-6.1-sol", &tokens, provider).unwrap();
+            let cost =
+                resolve_cost(&ctx, "gpt-6.1-sol", Some(&tokens), None, None, provider).unwrap();
+            assert!((cost - (base + 100.0 * rate)).abs() < 1e-12);
+            let cost =
+                resolve_cost(&ctx, "model-router", Some(&tokens), None, None, provider).unwrap();
+            assert!(
+                (cost - 100.0 * rate).abs() < 1e-12,
+                "fee-only entries must not lose cached tokens or double charge"
+            );
+            ctx.cost_override = Some(0.0);
+            assert_eq!(
+                resolve_cost(&ctx, "gpt-6.1-sol", Some(&tokens), None, None, provider),
+                Some(0.0)
+            );
+        }
+    }
+
+    #[test]
+    fn model_router_detection_requires_explicit_selector_identity() {
+        for model in [
+            "model-router",
+            "model_router",
+            "model_router/production",
+            "model-router/production",
+            "azure-model-router",
+            "azure_model_router",
+            "azure/model-router",
+            "azure_ai/model_router/production",
+            "AZURE_AI/MODEL-ROUTER/production",
+        ] {
+            assert!(crate::pipeline::is_model_router_name(model), "{model}");
+        }
+        for model in [
+            "not-model-router",
+            "ordinary-model-router-wrapper",
+            "ordinary_model_router_wrapper",
+            "model-routerish",
+            "model_router_backup",
+            "model-router/",
+            "azure_ai/custom/model-router",
+            "openai/model-router",
+        ] {
+            assert!(!crate::pipeline::is_model_router_name(model), "{model}");
+        }
+        for model in [
+            "model-router",
+            "model_router",
+            "azure/model-router",
+            "azure_ai/model_router",
+            "AZURE_AI/MODEL-ROUTER",
+        ] {
+            assert!(crate::pipeline::is_model_router_fee_entry(model), "{model}");
+        }
+        for model in [
+            "azure-model-router",
+            "model_router/production",
+            "ordinary-model-router-wrapper",
+        ] {
+            assert!(
+                !crate::pipeline::is_model_router_fee_entry(model),
+                "{model}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn model_router_fee_follows_deployment_identity_and_base_model_hints() {
+        let config = serde_json::from_value(serde_json::json!({"model_list":[]})).unwrap();
+        let state =
+            crate::state::AppState::with_registry(config, oxllm_providers::default_registry())
+                .unwrap();
+        let rate = oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token;
+        let tokens = UsageSummary {
+            cache_read_input_tokens: Some(40),
+            ..usage(100, 20)
+        };
+        for provider in ["azure", "azure_ai", "openai"] {
+            let base =
+                oxllm_core::calculate_cost_with_provider("gpt-6.1-sol", &tokens, provider).unwrap();
+            for (native, base_model, router) in [
+                ("model-router", None, true),
+                ("model_router", None, true),
+                ("model_router/production", None, true),
+                ("model-router/production", None, true),
+                ("azure-model-router", None, true),
+                ("azure_model_router", None, true),
+                ("ordinary-model-router-wrapper", None, false),
+                ("ordinary_model_router_wrapper", None, false),
+                ("not-model-router", None, false),
+                ("gpt-6.1-sol", None, false),
+                ("opaque-deployment", Some("model-router"), true),
+                ("my-model-router-deployment", Some("model-router"), true),
+                ("prod-model_router", Some("model-router"), true),
+                ("opaque-deployment", Some("gpt-6.1-sol"), false),
+            ] {
+                let deployment = serde_json::from_value(serde_json::json!({
+                    "model_name":"public-model-router-alias",
+                    "oxllm_params":{"model":format!("{provider}/{native}")},
+                    "model_info":{"base_model":base_model}
+                }))
+                .unwrap();
+                let mut ctx = CallContext::for_test("public-model-router-alias");
+                // A later ordinary deployment must also clear a prior attempt's fee.
+                ctx.model_router_input_rate = Some(rate);
+                crate::pipeline::prepare_deployment_pricing(
+                    &state,
+                    &mut ctx,
+                    &deployment,
+                    &serde_json::json!({"model":"public-model-router-alias"}),
+                )
+                .await
+                .unwrap();
+                let routed = router && matches!(provider, "azure" | "azure_ai");
+                assert_eq!(
+                    ctx.model_router_input_rate,
+                    routed.then_some(rate),
+                    "{provider}/{native}"
+                );
+                let cost =
+                    resolve_cost(&ctx, "gpt-6.1-sol", Some(&tokens), None, None, provider).unwrap();
+                let expected = base + if routed { 100.0 * rate } else { 0.0 };
+                assert!(
+                    (cost - expected).abs() < 1e-12,
+                    "{provider}/{native}: got {cost}, expected {expected}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn model_router_explicit_deployment_pricing_is_an_all_in_override() {
+        let config = serde_json::from_value(serde_json::json!({"model_list":[]})).unwrap();
+        let state =
+            crate::state::AppState::with_registry(config, oxllm_providers::default_registry())
+                .unwrap();
+        let tokens = UsageSummary {
+            cache_read_input_tokens: Some(40),
+            ..usage(100, 20)
+        };
+        for provider in ["azure", "azure_ai"] {
+            for input in [2e-6, 0.0] {
+                let deployment = serde_json::from_value(serde_json::json!({
+                    "model_name":"public-router",
+                    "oxllm_params":{
+                        "model":format!("{provider}/model_router/production"),
+                        "input_cost_per_token":input,
+                        "output_cost_per_token":input * 1.5,
+                        "cache_read_input_token_cost":input * 0.5,
+                        "cache_creation_input_token_cost":0.0
+                    }
+                }))
+                .unwrap();
+                let mut ctx = CallContext::for_test("public-router");
+                ctx.model_router_input_rate = Some(
+                    oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token,
+                );
+                crate::pipeline::prepare_deployment_pricing(
+                    &state,
+                    &mut ctx,
+                    &deployment,
+                    &serde_json::json!({"model":"public-router"}),
+                )
+                .await
+                .unwrap();
+                assert!(ctx.deployment_pricing.is_some());
+                assert_eq!(ctx.model_router_input_rate, None);
+                let estimate = crate::hooks::budget::estimate_max_request_cost(&ctx).await;
+                let prompt = *ctx.token_estimate.get().unwrap() as f64;
+                let expected_estimate = prompt * input + 16_384.0 * input * 1.5;
+                assert!((estimate - expected_estimate).abs() < 1e-12);
+                for served_model in ["gpt-6.1-sol", "model-router"] {
+                    let cost =
+                        resolve_cost(&ctx, served_model, Some(&tokens), None, None, provider)
+                            .unwrap();
+                    let expected = 60.0 * input + 40.0 * input * 0.5 + 20.0 * input * 1.5;
+                    assert!(
+                        (cost - expected).abs() < 1e-12,
+                        "explicit deployment rates must cover the complete charge"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn model_router_fee_overrides_include_cached_tokens_and_cache_hits_are_free() {
+        let catalog_rate =
+            oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token;
+        let tokens = UsageSummary {
+            cache_read_input_tokens: Some(40),
+            ..usage(100, 20)
+        };
+        for rate in [catalog_rate * 2.0, 0.0] {
+            let mut ctx = CallContext::for_test("public-router");
+            ctx.pricing_model = Some("azure_ai/model-router".into());
+            ctx.model_router_input_rate = Some(rate);
+            for model in ["gpt-6.1-sol", "model-router", "model_router"] {
+                let mut response = ResponseSummary {
+                    model: model.into(),
+                    cost: None,
+                    usage: Some(tokens.clone()),
+                    body: None,
+                    provider: "azure_ai".into(),
+                };
+                let base = if model == "gpt-6.1-sol" {
+                    oxllm_core::calculate_cost_with_provider(model, &tokens, "azure_ai").unwrap()
+                } else {
+                    0.0
+                };
+                let expected = base + 100.0 * rate;
+                let cost = fallback_cost(&ctx, &response).unwrap();
+                assert!((cost - expected).abs() < 1e-12, "{model}/{rate}");
+                ctx.cache_hit = true;
+                assert_eq!(fallback_cost(&ctx, &response), None);
+                response.cost = Some(expected);
+                assert_eq!(fallback_cost(&ctx, &response), None);
+                ctx.cache_hit = false;
+                assert_eq!(fallback_cost(&ctx, &response), Some(expected));
+            }
+        }
     }
 
     #[test]

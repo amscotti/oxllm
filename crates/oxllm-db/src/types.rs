@@ -169,6 +169,16 @@ pub struct SpendLog {
     pub request_id: Option<String>,
     pub model: String,
     pub provider: String,
+    /// Public deployment identity used to distinguish regions and credentials
+    /// without changing the serving-model key used by historical reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_id: Option<String>,
+    /// Original client-requested model alias, including when a fallback serves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_model: Option<String>,
+    /// Public model group that served the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_group: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -256,6 +266,12 @@ pub struct SpendFilter {
     pub team_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_group: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

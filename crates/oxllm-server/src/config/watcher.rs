@@ -48,6 +48,19 @@ pub fn spawn_watcher(config_path: PathBuf, shared: Arc<ArcSwap<AppState>>, rebui
     });
 }
 
+fn enqueue_watch_event(
+    tx: &tokio::sync::mpsc::Sender<notify::Result<notify::Event>>,
+    rescan: &tokio::sync::Notify,
+    event: notify::Result<notify::Event>,
+) {
+    // Registration/restart can wait for the callback thread before the host
+    // drains this queue. Never block that thread; retain one rescan permit so
+    // overflow cannot silently lose the last configuration change.
+    if let Err(tokio::sync::mpsc::error::TrySendError::Full(_)) = tx.try_send(event) {
+        rescan.notify_one();
+    }
+}
+
 async fn watch_loop(
     config_path: PathBuf,
     shared: Arc<ArcSwap<AppState>>,
@@ -65,10 +78,12 @@ async fn watch_loop(
     let config_path = absolute_path(config_path);
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(64);
+    let rescan = Arc::new(tokio::sync::Notify::new());
+    let callback_rescan = rescan.clone();
 
     let mut watcher =
         match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            let _ = tx.blocking_send(res);
+            enqueue_watch_event(&tx, &callback_rescan, res);
         }) {
             Ok(w) => w,
             Err(e) => {
@@ -95,13 +110,27 @@ async fn watch_loop(
     let debounce = Duration::from_millis(DEBOUNCE_MS);
 
     loop {
-        tokio::select! {
-        maybe_event = rx.recv() => {
-        match maybe_event {
-        Some(Ok(event)) => {
-        if is_relevant_to_any(&event, &files) {
-        // Real debounce: drain the channel for the full window so a
-        // burst of N events produces exactly one reload, not N.
+        let reload = tokio::select! {
+            maybe_event = rx.recv() => {
+                match maybe_event {
+                    Some(Ok(event)) => is_relevant_to_any(&event, &files),
+                    Some(Err(error)) => {
+                        tracing::warn!(%error, "config watcher event error");
+                        false
+                    }
+                    None => {
+                        tracing::warn!("config watcher channel closed, stopping");
+                        return;
+                    }
+                }
+            }
+            _ = rescan.notified() => true,
+        };
+        if !reload {
+            continue;
+        }
+        // Real debounce also coalesces overflow rescans. The current root and
+        // include contents, rather than a dropped event, drive the rebuild.
         drain_during(&mut rx, debounce, &files).await;
         // Snapshot the on-disk content BEFORE the rebuild: a write landing
         // after the rebuild closure reads the file (but before we regain
@@ -144,18 +173,6 @@ async fn watch_loop(
                 let _ = ensure_parents_watched(&mut watcher, &files, &mut watched_parents);
                 while rx.try_recv().is_ok() {}
             }
-        }
-        }
-        }
-        Some(Err(e)) => {
-        tracing::warn!(error = %e, "config watcher event error");
-        }
-        None => {
-        tracing::warn!("config watcher channel closed, stopping");
-        return;
-        }
-        }
-        }
         }
     }
 }
@@ -280,6 +297,9 @@ fn ensure_parents_watched<W: Watcher>(
     let mut watched_any = !watched_parents.is_empty();
     for file in files {
         let parent = file.parent().unwrap_or(file.as_path()).to_path_buf();
+        // Logical file paths remain in relevance checks, but directory aliases
+        // need only one OS registration (notably /var and /private/var).
+        let parent = parent.canonicalize().unwrap_or(parent);
         if !watched_parents.insert(parent.clone()) {
             watched_any = true;
             continue;
@@ -413,6 +433,66 @@ mod tests {
     use super::*;
     use crate::config::types::{ConfigModel, GeneralSettings, OxllmSettings, ProxyConfig};
     use oxllm_core::deployment::OxllmParams;
+
+    #[tokio::test]
+    async fn full_watch_queue_requests_a_rescan_without_blocking_registration() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        tx.try_send(Ok(
+            notify::Event::new(EventKind::Any).add_path("unrelated.yaml".into())
+        ))
+        .unwrap();
+        let rescan = Arc::new(tokio::sync::Notify::new());
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let callback_rescan = rescan.clone();
+        let callback_entered = entered.clone();
+        let mut callback = tokio::task::spawn_blocking(move || {
+            callback_entered.notify_one();
+            enqueue_watch_event(
+                &tx,
+                &callback_rescan,
+                Ok(notify::Event::new(EventKind::Any).add_path("config.yaml".into())),
+            );
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        let completed = tokio::time::timeout(Duration::from_secs(1), &mut callback).await;
+        if completed.is_err() {
+            rx.close();
+            callback.await.unwrap();
+        }
+        assert!(
+            completed.is_ok(),
+            "a full callback queue must not block watcher registration/restart"
+        );
+        assert_eq!(
+            rx.try_recv().unwrap().unwrap().paths,
+            [PathBuf::from("unrelated.yaml")]
+        );
+        assert!(rx.try_recv().is_err(), "event storage must remain bounded");
+        tokio::time::timeout(Duration::from_secs(1), rescan.notified())
+            .await
+            .expect("the lost config event must be recovered by a coalesced rescan");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_aliases_share_one_watch_registration() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        let alias = directory.path().join("alias");
+        std::os::unix::fs::symlink(&target, &alias).unwrap();
+        let mut watcher =
+            notify::recommended_watcher(|_: notify::Result<notify::Event>| {}).unwrap();
+        let mut parents = HashSet::new();
+        assert!(ensure_parents_watched(
+            &mut watcher,
+            &[alias.join("config.yaml"), target.join("config.yaml")],
+            &mut parents
+        ));
+        assert_eq!(parents, HashSet::from([target.canonicalize().unwrap()]));
+    }
 
     #[test]
     fn included_files_reload_and_new_include_directories_are_followed() {

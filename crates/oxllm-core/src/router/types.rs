@@ -230,7 +230,7 @@ pub struct RouterConfig {
 /// Structured retry policy keyed by exception category. Each field maps to
 /// representative HTTP statuses: `rate_limit_retries` → 429,
 /// `timeout_retries` → 408, `internal_server_error_retries` → 5xx
-/// (500/502/503/504), `content_policy_retries` → 400. A `None` field
+/// (500/502/503/504/529), `content_policy_retries` → 400. A `None` field
 /// inherits from the per-status map / `allowed_fails` / `num_retries` chain
 /// as usual.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -242,11 +242,10 @@ pub struct RetryPolicy {
     #[serde(alias = "TimeoutErrorRetries")]
     pub timeout_retries: Option<u32>,
     /// Max retries/failures tolerated for internal server errors
-    /// (HTTP 500/502/503/504). The reference splits these into separate
+    /// (HTTP 500/502/503/504/529). The reference splits these into separate
     /// `InternalServerErrorAllowedFails` / `BadGatewayErrorAllowedFails` /
     /// `ServiceUnavailableErrorAllowedFails` fields; oxllm's single 5xx
-    /// category covers all four (504 included) — the exact statuses 5xx
-    /// flapping produces behind load balancers.
+    /// category also covers gateway failures and provider overloads.
     #[serde(alias = "InternalServerErrorRetries")]
     pub internal_server_error_retries: Option<u32>,
     /// Max retries/failures tolerated for content-policy errors (HTTP 400).
@@ -268,7 +267,7 @@ impl RetryPolicy {
         match status {
             429 => self.rate_limit_retries,
             408 => self.timeout_retries,
-            500 | 502 | 503 | 504 => self.internal_server_error_retries,
+            500 | 502 | 503 | 504 | 529 => self.internal_server_error_retries,
             400 => self.content_policy_retries,
             _ => None,
         }

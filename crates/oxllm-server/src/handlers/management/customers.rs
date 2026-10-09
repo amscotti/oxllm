@@ -186,7 +186,7 @@ pub struct DeleteCustomerRequest {
 ///   the legacy single-id response shape (`status`, `end_user_id`). A
 ///   missing id is a 404.
 /// - If `user_ids` is provided (with or without `end_user_id`), the ids are
-///   deduped/trimmed/capped at [`SCOPE_LIST_LIMIT`] and the reference
+///   deduped/trimmed/capped at `SCOPE_LIST_LIMIT` and the reference
 ///   all-or-404 semantics apply: every requested id must already exist or
 ///   the request fails with a 404 listing the missing ids, and nothing is
 ///   deleted. On success returns the bulk response shape

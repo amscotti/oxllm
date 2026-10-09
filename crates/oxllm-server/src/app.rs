@@ -29,6 +29,12 @@ use oxllm_core::{Error, IncrResult};
 use crate::cache::InMemoryCache;
 use crate::config::ProxyConfig;
 use crate::orchestration::DEFAULT_TIMEOUT_SECS;
+#[cfg(any(
+    feature = "redis",
+    feature = "s3-cache",
+    feature = "gcs-cache",
+    feature = "azure-cache"
+))]
 use crate::security::sanitize_url;
 use crate::state::{AppState, CacheBackendKind, SharedState};
 
@@ -122,6 +128,11 @@ pub async fn build_cache_for_test(
         .expect("cache build failed")
 }
 
+#[cfg(feature = "redis")]
+type RedisCacheOpt = Option<oxllm_cache_redis::RedisCache>;
+#[cfg(not(feature = "redis"))]
+type RedisCacheOpt = Option<()>;
+
 /// Build the cache layer: `DualCache` (in-memory + Redis) when Redis is
 /// configured and the feature is enabled, otherwise plain `InMemoryCache`.
 /// Returns the `Arc<dyn Cache>` for `AppState`, the [`CacheBackendKind`] that
@@ -132,11 +143,7 @@ pub async fn build_cache_for_test(
 pub(crate) async fn build_cache(
     config: &ProxyConfig,
     memory: Arc<InMemoryCache>,
-) -> anyhow::Result<(
-    Arc<dyn CacheTrait>,
-    CacheBackendKind,
-    Option<oxllm_cache_redis::RedisCache>,
-)> {
+) -> anyhow::Result<(Arc<dyn CacheTrait>, CacheBackendKind, RedisCacheOpt)> {
     let Some(cache_cfg) = &config.oxllm_settings.cache else {
         return Ok((memory, CacheBackendKind::Memory, None));
     };
@@ -628,10 +635,16 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
     // a Redis-backed multi-replica deployment runs the per-process brake and
     // an attacker multiplies the failure budget by the replica count. Without
     // Redis the coordinator stays `None` and the brake degrades to per-process.
+    #[cfg(feature = "redis")]
     let coordinator = redis_cache.as_ref().map(|redis| {
         crate::coordination::Coordinator::new(Arc::new(redis.clone()) as Arc<dyn CacheTrait>)
             .with_distributed(true)
     });
+    #[cfg(not(feature = "redis"))]
+    let coordinator = {
+        let _ = redis_cache;
+        None
+    };
 
     // A configured `database_url` in a build without the `db` feature is a
     // silent no-op today (the field is unread): virtual keys, budgets, spend
@@ -687,6 +700,11 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
     initial_state.shutdown = shutdown_flag.clone();
 
     let shared: SharedState = Arc::new(ArcSwap::from_pointee(initial_state));
+    let (service_shutdown_tx, service_shutdown_rx) = tokio::sync::oneshot::channel();
+    let service_join = tokio::spawn(crate::hooks::service_health::run(
+        shared.clone(),
+        service_shutdown_rx,
+    ));
 
     #[cfg(feature = "db")]
     {
@@ -814,6 +832,7 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
     // - **Graceful shutdown.** A oneshot signal lets `run()`'s shutdown
     //   path abort the task cleanly so an in-flight refresh is cancelled
     //   (not abandoned mid-await by process exit), matching the scheduler.
+    #[cfg(feature = "redis")]
     let invalidation_shutdown: Option<(
         tokio::sync::oneshot::Sender<()>,
         tokio::task::JoinHandle<()>,
@@ -1034,6 +1053,8 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
     }
 
     // Shutdown the budget-reset scheduler.
+    let _ = service_shutdown_tx.send(());
+    let _ = tokio::time::timeout(Duration::from_secs(2), service_join).await;
     let _ = scheduler_shutdown_tx.send(());
     let _ = scheduler_join.await;
 
@@ -1049,6 +1070,7 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
     // `refresh_db_models` is cancelled cleanly rather than abandoned
     // mid-await by process exit. The task's `select!` is biased toward the
     // shutdown future, so it returns within one tick of the inner loop.
+    #[cfg(feature = "redis")]
     let invalidation_join = if let Some((tx, join)) = invalidation_shutdown {
         let _ = tx.send(());
         Some(join)
@@ -1059,6 +1081,7 @@ pub async fn run(config_path: &str, port: Option<u16>) -> anyhow::Result<()> {
     // cut short by runtime teardown. Bounded so a wedged DB cannot stall
     // process exit; the peer's model list self-heals via the 30s fallback
     // poll regardless.
+    #[cfg(feature = "redis")]
     if let Some(handle) = invalidation_join {
         let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
@@ -1153,6 +1176,7 @@ fn require_auth_guard(
 /// Redis pub/sub is unavailable") and is cheap when nothing changed: one
 /// `list_models_db` round-trip and a CAS that no-ops on an identical
 /// deployment Vec.
+#[cfg(feature = "redis")]
 const MODEL_LIST_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Debounce window for `__model_list__` events. A burst of management edits
@@ -1161,12 +1185,14 @@ const MODEL_LIST_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// peer. The CAS loop makes the work idempotent, so collapsing the burst into
 /// one refresh at the end of the window preserves correctness while bounding
 /// DB load.
+#[cfg(feature = "redis")]
 const MODEL_LIST_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Backoff before re-subscribing after the Redis pub/sub stream ends. The
 /// previous code looped straight from `stream.end` into `redis.subscribe()`,
 /// which is a tight CPU loop if Redis accepts SUBSCRIBE but drops the
 /// connection immediately (max-clients throttling, OOM kill-and-restart).
+#[cfg(feature = "redis")]
 const INVALIDATION_RESUBSCRIBE_BACKOFF: Duration = Duration::from_secs(1);
 
 /// The cross-replica invalidation subscriber loop. Subscribes to the
@@ -1179,6 +1205,7 @@ const INVALIDATION_RESUBSCRIBE_BACKOFF: Duration = Duration::from_secs(1);
 /// `run()` call site reads as configuration. Exposed (`pub`) so integration
 /// tests under `tests/` can boot two in-process replicas sharing a Redis and
 /// assert cross-replica model-config propagation end-to-end.
+#[cfg(feature = "redis")]
 pub async fn invalidation_subscriber_loop(
     redis_cache: oxllm_cache_redis::RedisCache,
     memory: Arc<InMemoryCache>,
@@ -1295,7 +1322,7 @@ pub async fn invalidation_subscriber_loop(
 /// gate and logs/swallows errors so callers (the invalidation subscriber
 /// loop) do not need their own `#[cfg]` plumbing — keeping the `select!`
 /// branches cfg-free, which the tokio macro requires.
-#[cfg(feature = "db")]
+#[cfg(all(feature = "redis", feature = "db"))]
 async fn refresh_models_best_effort(shared: &SharedState) {
     match crate::state::refresh_db_models(shared).await {
         Ok(()) => tracing::debug!("cross-replica model-list refresh completed"),
@@ -1303,7 +1330,7 @@ async fn refresh_models_best_effort(shared: &SharedState) {
     }
 }
 
-#[cfg(not(feature = "db"))]
+#[cfg(all(feature = "redis", not(feature = "db")))]
 async fn refresh_models_best_effort() {}
 
 /// Severity level for the SQLite multi-instance startup guard, extracted so
@@ -1557,6 +1584,7 @@ fn spend_prune_cutoff_at(now: jiff::Timestamp, retention_days: u64) -> String {
 /// database index) takes precedence over the bare `host`/`port` pair, which
 /// cannot express any of those. Extracted as a pure function so the URL
 /// construction (including auth/TLS/db) is unit-testable without connecting.
+#[cfg(any(feature = "redis", test))]
 fn redis_url_from_config(cache_cfg: &crate::config::types::CacheConfig) -> String {
     if let Some(url) = &cache_cfg.redis_url {
         return url.clone();

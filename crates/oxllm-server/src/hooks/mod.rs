@@ -24,6 +24,7 @@ pub mod rate_limit;
 pub mod redact;
 pub mod runner;
 pub mod s3_log;
+pub(crate) mod service_health;
 pub mod slack_alert;
 pub mod spend_keys;
 pub mod wandb;

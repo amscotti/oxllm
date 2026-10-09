@@ -80,6 +80,9 @@ const SPEND_INDEXES: &[SpendIndex] = &[
 ];
 
 const SPEND_COLUMNS: &[(&str, &str)] = &[
+    ("deployment_id", "TEXT"),
+    ("requested_model", "TEXT"),
+    ("model_group", "TEXT"),
     ("end_user_id", "TEXT"),
     ("tag_name", "TEXT"),
     ("tags", "TEXT"),

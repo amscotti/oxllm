@@ -783,6 +783,9 @@ async fn azure_transcription_and_edit_rewrite_only_model_and_preserve_binary_mul
 
 fn seeded_log(timestamp: &str, model: &str, provider: &str, cost: f64) -> SpendLog {
     SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: timestamp.into(),
         request_id: None,
@@ -1894,7 +1897,7 @@ async fn assert_alias_routes_to_owner(
         &json!({"model": alias, "messages": [{"role": "user", "content": "Who owns this alias?"}]}),
     )
     .await;
-    assert_eq!(body["model"], format!("review-native-{owner}"));
+    assert_eq!(body["model"], alias);
     assert_eq!(
         body["choices"][0]["message"]["content"],
         format!("owner-{owner}")

@@ -280,6 +280,9 @@ pub struct OxllmParams {
     /// like `timeout: 0.5` parse (Bug #49).
     #[serde(default)]
     pub timeout: Option<f64>,
+    /// Retry budget used when no status policy or request override applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_retries: Option<u32>,
     /// Stream idle timeout in seconds.
     #[serde(default)]
     pub stream_timeout: Option<u64>,
@@ -433,6 +436,7 @@ impl std::fmt::Debug for OxllmParams {
             .field("aws_session_token", &redact(&self.aws_session_token))
             .field("api_base", &redact(&self.api_base))
             .field("timeout", &self.timeout)
+            .field("num_retries", &self.num_retries)
             .field("stream_timeout", &self.stream_timeout)
             .field("rpm", &self.rpm)
             .field("tpm", &self.tpm)
@@ -649,6 +653,16 @@ pub fn is_known_oxllm_param_extra(key: &str) -> bool {
             | "vertex_project"
             | "vertex_credentials"
             | "vertex_location"
+            | "vertex_count_tokens_location"
+            | "supports_prompt_cache_breakpoint"
+            | "anthropic_disable_workload_identity_federation"
+            | "anthropic_identity_token_file"
+            | "anthropic_identity_token"
+            | "anthropic_identity_source"
+            | "anthropic_federation_rule_id"
+            | "anthropic_organization_id"
+            | "anthropic_service_account_id"
+            | "anthropic_federation_workspace_id"
             | "use_converse"
             | "use_converse_api"
             | "azure_deployment"

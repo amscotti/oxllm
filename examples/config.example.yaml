@@ -134,7 +134,7 @@ model_list:
   # Renewable mode acquires once, then renews in the background at half TTL.
   - model_name: vertex-gemini
     oxllm_params:
-      model: vertex_ai/gemini-1.5-pro
+      model: vertex_ai/gemini-3.8-flash
       api_key: os.environ/GCP_ACCESS_TOKEN
       vertex_project: os.environ/VERTEX_AI_PROJECT
       vertex_location: us-central1
@@ -142,13 +142,25 @@ model_list:
 
   - model_name: vertex-claude
     oxllm_params:
-      model: vertex_ai/claude-3-5-sonnet@20241022
+      model: vertex_ai/claude-haiku-5-5@default
       api_key: os.environ/GCP_ACCESS_TOKEN
       vertex_project: os.environ/VERTEX_AI_PROJECT
       vertex_location: us-central1
+      # vertex_count_tokens_location: us-east5  # independent counting region
       # cache_control_injection_points:
       #   - {location: message, role: system}
       #   - {location: message, index: -1}
+
+  # Mantle GPT deployments can use the OpenAI explicit cache dialect:
+  # - model_name: mantle-gpt
+  #   oxllm_params:
+  #     model: bedrock_mantle/openai.gpt-6.1-sol
+  #     api_key: os.environ/BEDROCK_API_KEY
+  #     cache_control_injection_points:
+  #       - {location: message, role: system}
+
+  # Anthropic federation instead of static keys:
+  # see config.anthropic-wif.yaml for OIDC file/environment references.
 
 oxllm_settings:
   drop_params: true            # strip unsupported params instead of erroring
@@ -160,8 +172,8 @@ oxllm_settings:
                                      # | latency_based | quality_router | tag_based
                                      # | least_busy | session_affinity
   # session_affinity: stick requests with the same x-oxllm-session-id header to
-  # the same deployment (consistent hash). Useful for multi-provider model
-  # groups so provider-side prompt caches stay warm across turns.
+  # the same deployment (stateless modulo hash). Group membership changes can
+  # remap sessions; stable groups keep provider-side prompt caches warm.
   fallbacks:                   # try alternate models on failure
     - gpt-4o: [azure-gpt4]     # target must be a defined `model_name` above
   context_window_fallbacks:    # swap to larger-context model if context overflows
@@ -183,6 +195,7 @@ oxllm_settings:
   #   BadRequestErrorRetries: 0
   #   AuthenticationErrorRetries: 0
   #   ContentPolicyViolationErrorRetries: 0
+  # A zero disables same-deployment retry; opted-in 4xx can still fail over.
   # quality_router: pick the deployment with the highest configured score
   # routing_strategy: quality_router
   # quality_scores:
@@ -193,6 +206,11 @@ oxllm_settings:
   #   type: redis
   #   host: redis
   #   port: 6379
+  # Datadog request/failure logs and optional dependency-health alerts:
+  # datadog_config:
+  #   api_key: os.environ/DD_API_KEY
+  #   service: oxllm
+  # service_callback: [datadog]  # 15s DB/cache checks; deduplicated outage logs
   # Langfuse observability — when set, a hook batches trace-create +
   # generation-create events and POSTs them to {host}/api/public/ingestion.
   # langfuse_config:
@@ -217,6 +235,8 @@ oxllm_settings:
 # Router settings include typed aliases, routing groups, and routing knobs.
 # Shared knobs here override their oxllm_settings counterparts.
 router_settings:
+  # optional_pre_call_checks: [session_affinity]
+  # The alias selects affinity when no global routing_strategy is explicit.
   # Map a client-facing model name to one or more concrete `model_name`
   # entries from `model_list`. The router expands the request across all
   # deployments in the alias group.

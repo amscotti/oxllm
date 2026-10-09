@@ -214,6 +214,8 @@ struct ModelPricingRow {
     /// deployment check (U34).
     #[serde(default)]
     prompt_cache_min_tokens: Option<u32>,
+    #[serde(default)]
+    supports_prompt_cache_breakpoint: Option<bool>,
 }
 
 /// One context-length pricing tier for a model, using the
@@ -290,6 +292,8 @@ pub struct ModelPricing {
     /// engage prompt caching for this model. `None` means "not modelled";
     /// the caller falls back to a deployment/global/default threshold.
     pub prompt_cache_min_tokens: Option<u32>,
+    /// Whether this exact hosted model accepts the OpenAI explicit cache dialect.
+    pub supports_prompt_cache_breakpoint: Option<bool>,
     /// Context-length pricing tiers, sorted by threshold descending
     /// (highest threshold first). Empty for flat-priced models.
     pub tiers: Vec<CostTier>,
@@ -327,6 +331,7 @@ impl ModelPricing {
             cost_per_second_rate: row.cost_per_second,
             mode: row.mode,
             prompt_cache_min_tokens: row.prompt_cache_min_tokens,
+            supports_prompt_cache_breakpoint: row.supports_prompt_cache_breakpoint,
             tiers,
             tier_threshold_is_inclusive: provider == "xai",
             service_tiers: HashMap::new(),
@@ -1952,6 +1957,76 @@ output_cost_per_token = 2e-6
         assert!(lookup_pricing("claude-sonnet-4-20250514").is_some());
         assert!(lookup_pricing("claude-haiku-4-5").is_some());
         assert!(lookup_pricing("claude-3-opus-20240229").is_some());
+    }
+
+    /// Haiku 5.5 ships across every routed provider with its over-100k tiers.
+    #[test]
+    fn haiku_5_5_models_are_priced_with_context_tiers() {
+        for model in [
+            "claude-haiku-5-5",
+            "vertex_ai/claude-haiku-5-5",
+            "vertex_ai/claude-haiku-5-5@default",
+            "bedrock/global.anthropic.claude-haiku-5-5",
+            "bedrock/us.anthropic.claude-haiku-5-5",
+            "bedrock/us-gov.anthropic.claude-haiku-5-5",
+            "bedrock_mantle/anthropic.claude-haiku-5-5",
+            "azure_ai/claude-haiku-5-5",
+            "openrouter/anthropic/claude-haiku-5.5",
+        ] {
+            let pricing = lookup_pricing(model).unwrap_or_else(|| panic!("{model} must be priced"));
+            assert!(
+                pricing
+                    .tiers
+                    .iter()
+                    .any(|tier| tier.threshold_tokens == 100_000),
+                "{model} must carry the 100k context tier"
+            );
+        }
+        // Perplexity's map entry carries base rates only.
+        let reseller =
+            lookup_pricing("perplexity/anthropic/claude-haiku-5-5").expect("perplexity haiku 5.5");
+        assert!((reseller.input_cost_per_token - 1e-7).abs() < 1e-15);
+        let pricing = lookup_pricing("claude-haiku-5-5").expect("anthropic haiku 5.5");
+        assert!((pricing.input_cost_per_token - 1e-7).abs() < 1e-15);
+        assert!((pricing.output_cost_per_token - 5e-7).abs() < 1e-15);
+        // Prompt sizes beyond 100k bill every bucket at the 100k tier rates.
+        let above = calculate_cost("claude-haiku-5-5", &usage(100_001, 10)).expect("tiered cost");
+        let expected = 100_001.0 * 5e-7 + 10.0 * 2.5e-6;
+        assert!(
+            (above - expected).abs() < 1e-6,
+            "got {above}, expected {expected}"
+        );
+        let below = calculate_cost("claude-haiku-5-5", &usage(99_999, 10)).expect("base cost");
+        let expected = 99_999.0 * 1e-7 + 10.0 * 5e-7;
+        assert!(
+            (below - expected).abs() < 1e-6,
+            "got {below}, expected {expected}"
+        );
+    }
+
+    /// Sonnet 5.5's corrected cache-read rates must match the refreshed upstream map.
+    #[test]
+    fn sonnet_5_5_cache_read_prices_use_corrected_rates() {
+        for (model, expected) in [
+            ("claude-sonnet-5-5", 1e-7),
+            ("vertex_ai/claude-sonnet-5-5", 1e-7),
+            ("vertex_ai/claude-sonnet-5-5@default", 1e-7),
+            ("bedrock/global.anthropic.claude-sonnet-5-5", 1e-7),
+            ("bedrock/us.anthropic.claude-sonnet-5-5", 1.1e-7),
+            ("bedrock/us-gov.anthropic.claude-sonnet-5-5", 1.2e-7),
+            ("bedrock_mantle/anthropic.claude-sonnet-5-5", 1.1e-7),
+            (
+                "bedrock_mantle/us-gov-west-1/anthropic.claude-sonnet-5-5",
+                1.2e-7,
+            ),
+        ] {
+            let pricing = lookup_pricing(model).unwrap_or_else(|| panic!("{model} must be priced"));
+            assert_eq!(
+                pricing.cache_read_input_token_cost,
+                Some(expected),
+                "{model} cache-read rate"
+            );
+        }
     }
 
     #[test]

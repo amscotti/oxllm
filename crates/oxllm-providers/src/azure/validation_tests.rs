@@ -16,6 +16,42 @@ fn deployment(model: &str, version: &str) -> Deployment {
 }
 
 #[test]
+fn azure_chat_family_token_limits_do_not_enable_reasoning_parameter_stripping() {
+    for version in ["2025-04-01-preview", "v1"] {
+        for model in [
+            "azure/gpt-5-chat-latest",
+            "azure/gpt-6-chat",
+            "azure/prod-gpt-5-chat",
+            "azure/gpt5_series/customer-deployment",
+        ] {
+            let mut deployment = deployment(model, version);
+            let request = json!({"model": "public-alias", "messages": [{"role": "system", "content": "rules"}], "max_tokens": 32, "temperature": 0.7, "top_p": 0.9});
+            let body =
+                ChatProvider::transform_request(&AzureProvider, &request, &deployment).unwrap();
+            assert_eq!(body["max_completion_tokens"], 32);
+            assert!(body.get("max_tokens").is_none());
+            assert_eq!(body["temperature"], 0.7);
+            assert_eq!(body["top_p"], 0.9);
+            assert_eq!(body["messages"][0]["role"], "system");
+            let mut modern = request.clone();
+            modern["max_completion_tokens"] = json!(64);
+            assert_eq!(
+                ChatProvider::transform_request(&AzureProvider, &modern, &deployment).unwrap()["max_completion_tokens"],
+                64
+            );
+            deployment.model_info = Some(oxllm_core::ModelInfo {
+                base_model: Some("openai/gpt-4o".into()),
+                ..Default::default()
+            });
+            let body =
+                ChatProvider::transform_request(&AzureProvider, &request, &deployment).unwrap();
+            assert_eq!(body["max_tokens"], 32);
+            assert!(body.get("max_completion_tokens").is_none());
+        }
+    }
+}
+
+#[test]
 fn validation_v1_chat_and_embeddings_rewrite_alias_to_deployment_name() {
     for version in ["v1", "preview", "latest"] {
         let deployment = deployment("azure/production-deployment", version);
@@ -155,9 +191,14 @@ fn validation_classic_deployment_aliases_need_explicit_model_capability_hints() 
         "azure/custom-reasoning",
     ] {
         let mut deployment = deployment(alias, "2024-10-21");
+        let mut expected = request.clone();
+        if alias != "azure/custom-reasoning" {
+            expected.as_object_mut().unwrap().remove("max_tokens");
+            expected["max_completion_tokens"] = json!(32);
+        }
         assert_eq!(
             ChatProvider::transform_request(&AzureProvider, &request, &deployment).unwrap(),
-            request
+            expected
         );
         deployment.model_info = Some(oxllm_core::deployment::ModelInfo {
             base_model: Some("openai/o3-mini".into()),
@@ -420,4 +461,45 @@ fn validation_prefixed_native_selector_disambiguates_a_bare_public_wildcard_alia
         AzureProvider::native_endpoint_url_for_model(&configured, Some("o3-mini"), "audio/speech"),
         Err(oxllm_core::Error::BadRequest(_))
     ));
+}
+
+#[test]
+fn validation_azure_reasoning_deployment_names_map_token_limits_without_capability_hints() {
+    for model in [
+        "azure/gpt-5.6-luna",
+        "azure/gpt5_series/gpt-6-luna",
+        "azure/o3-mini",
+    ] {
+        for version in ["2025-04-01-preview", "v1"] {
+            let configured = deployment(model, version);
+            for modern in [None, Some(96)] {
+                let mut request = json!({"model": "public-alias", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 32});
+                if let Some(limit) = modern {
+                    request["max_completion_tokens"] = json!(limit);
+                }
+                let body =
+                    ChatProvider::transform_request(&AzureProvider, &request, &configured).unwrap();
+                assert!(
+                    body.get("max_tokens").is_none(),
+                    "{model}/{version}: {body}"
+                );
+                assert_eq!(body["max_completion_tokens"], modern.unwrap_or(32));
+                assert!(
+                    AzureProvider
+                        .endpoint_url_for_request(&configured, &request)
+                        .contains("api-version=")
+                );
+            }
+        }
+    }
+    let mut configured = deployment("azure/gpt-5.6-luna", "2025-04-01-preview");
+    configured.model_info = Some(oxllm_core::deployment::ModelInfo {
+        base_model: Some("openai/gpt-4o".into()),
+        ..Default::default()
+    });
+    let request = json!({"messages": [], "max_tokens": 32});
+    assert_eq!(
+        ChatProvider::transform_request(&AzureProvider, &request, &configured).unwrap()["max_tokens"],
+        32
+    );
 }

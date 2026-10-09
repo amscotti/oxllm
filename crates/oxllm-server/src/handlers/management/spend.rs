@@ -27,6 +27,12 @@ const DEFAULT_LIMIT: i64 = 100;
 #[derive(Debug, Deserialize)]
 pub struct SpendLogsQuery {
     #[serde(default)]
+    pub requested_model: Option<String>,
+    #[serde(default)]
+    pub model_group: Option<String>,
+    #[serde(default)]
+    pub deployment_id: Option<String>,
+    #[serde(default)]
     pub start_date: Option<String>,
     #[serde(default)]
     pub end_date: Option<String>,
@@ -54,6 +60,9 @@ impl From<&SpendLogsQuery> for oxllm_db::SpendFilter {
             key_id: q.key_id.clone(),
             team_id: q.team_id.clone(),
             model: q.model.clone(),
+            deployment_id: q.deployment_id.clone(),
+            requested_model: q.requested_model.clone(),
+            model_group: q.model_group.clone(),
             tag_name: q.tag_name.clone(),
             limit: q.limit,
             offset: q.offset,
@@ -142,6 +151,12 @@ pub async fn spend_total(
 /// Query params for `GET /spend/logs/v2` (cursor pagination).
 #[derive(Debug, Deserialize, Default)]
 pub struct SpendLogsV2Query {
+    #[serde(default)]
+    pub requested_model: Option<String>,
+    #[serde(default)]
+    pub model_group: Option<String>,
+    #[serde(default)]
+    pub deployment_id: Option<String>,
     /// Cursor: only rows with `id < cursor` are returned. `None` starts at
     /// the most recent row. Ignored when `offset` is set (sorted pages).
     #[serde(default)]
@@ -178,6 +193,9 @@ impl From<&SpendLogsV2Query> for oxllm_db::SpendFilter {
             key_id: q.key_id.clone(),
             team_id: q.team_id.clone(),
             model: q.model.clone(),
+            deployment_id: q.deployment_id.clone(),
+            requested_model: q.requested_model.clone(),
+            model_group: q.model_group.clone(),
             tag_name: q.tag_name.clone(),
             limit: None,
             offset: q.offset,
@@ -1201,6 +1219,9 @@ mod tests {
         team_id: Option<&str>,
     ) -> oxllm_db::SpendLog {
         oxllm_db::SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: timestamp.to_string(),
             request_id: Some(format!("r-{timestamp}-{cost}")),
@@ -1230,6 +1251,9 @@ mod tests {
 
     fn logs_query(limit: Option<i64>, offset: Option<i64>) -> SpendLogsQuery {
         SpendLogsQuery {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             start_date: None,
             end_date: None,
             key_id: None,

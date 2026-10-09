@@ -87,7 +87,7 @@ async fn groq_non_streaming_chat() {
     assert_eq!(body["id"], "chatcmpl-groq-1");
     assert_eq!(body["object"], "chat.completion");
     assert_eq!(body["choices"][0]["message"]["content"], "Hello from Groq!");
-    assert_eq!(body["model"], "llama-3.3-70b-versatile");
+    assert_eq!(body["model"], "groq-llama");
 
     upstream.assert_hits(1);
     handle.shutdown();

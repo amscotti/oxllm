@@ -25,6 +25,9 @@ fn log(
     primary: Option<&str>,
 ) -> SpendLog {
     SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: ts.into(),
         request_id: Some(request_id.into()),
@@ -43,6 +46,104 @@ fn log(
         status: Some("success".into()),
         latency_ms: Some(42),
     }
+}
+
+async fn deployment_attribution_contract(db: &Database) {
+    // An older replica omits the additive attribution column.
+    sqlx::query("INSERT INTO spend_logs (timestamp, request_id, model, provider, cost) VALUES ('2026-08-01T00:00:00Z', 'old-style', 'gpt-4o', 'openai', 0.3)")
+        .execute(db.pool()).await.unwrap();
+    let rows: Vec<_> = [("leg-a", 0.1), ("leg-b", 0.2)]
+        .into_iter()
+        .map(|(id, cost)| {
+            let mut row = log("2026-08-01T00:00:00Z", id, Some(cost), None, None);
+            row.deployment_id = Some(id.into());
+            row
+        })
+        .collect();
+    db.insert_spend_logs_batch(&rows).await.unwrap();
+    let filter = SpendFilter {
+        deployment_id: Some("leg-b".into()),
+        ..Default::default()
+    };
+    let selected = db.query_spend(&filter).await.unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].deployment_id.as_deref(), Some("leg-b"));
+    assert_eq!(selected[0].model, "gpt-4o");
+    assert!((db.total_spend_filtered(&filter).await.unwrap() - 0.2).abs() < 1e-9);
+    assert_eq!(db.count_spend_filtered(&filter).await.unwrap(), 1);
+    assert!((db.total_spend(None, None).await.unwrap() - 0.6).abs() < 1e-9);
+    assert!(
+        db.query_spend_by_request_id("old-style")
+            .await
+            .unwrap()
+            .unwrap()
+            .deployment_id
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn deployment_spend_supports_older_writers_and_batch_attribution() {
+    deployment_attribution_contract(&*sqlite().await).await;
+}
+
+async fn model_group_upgrade_contract(db: &Database) {
+    // Freeze the pre-v16 shape independently of the new view/column generator.
+    sqlx::query("DROP VIEW spend_logs_read")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    for column in ["requested_model", "model_group"] {
+        sqlx::query(&format!("ALTER TABLE spend_logs DROP COLUMN {column}"))
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
+    sqlx::query("CREATE VIEW spend_logs_read AS SELECT id, timestamp, request_id, model, provider, prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, end_user_id, tag_name, tags, status, latency_ms, deployment_id FROM spend_logs")
+        .execute(db.pool()).await.unwrap();
+    sqlx::query("DELETE FROM _schema_version WHERE version > 15")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO spend_logs (timestamp, request_id, model, provider, cost, deployment_id) VALUES ('2026-08-01T00:00:00Z', 'before-v16', 'gpt-4o', 'openai', 0.3, 'original-leg')")
+        .execute(db.pool()).await.unwrap();
+    assert_eq!(db.get_schema_version().await.unwrap(), 15);
+    db.migrate().await.unwrap();
+    db.migrate().await.unwrap();
+    let historical = db
+        .query_spend_by_request_id("before-v16")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(historical.deployment_id.as_deref(), Some("original-leg"));
+    assert!(historical.requested_model.is_none() && historical.model_group.is_none());
+    let mut row = log("2026-08-01T00:00:00Z", "after-v16", Some(0.2), None, None);
+    row.requested_model = Some("requested-alias".into());
+    row.model_group = Some("fallback-alias".into());
+    db.insert_spend_log(&row).await.unwrap();
+    for filter in [
+        SpendFilter {
+            requested_model: Some("requested-alias".into()),
+            ..Default::default()
+        },
+        SpendFilter {
+            model_group: Some("fallback-alias".into()),
+            ..Default::default()
+        },
+    ] {
+        let rows = db.query_spend(&filter).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].requested_model.as_deref(), Some("requested-alias"));
+        assert_eq!(rows[0].model_group.as_deref(), Some("fallback-alias"));
+        assert_eq!(db.count_spend_filtered(&filter).await.unwrap(), 1);
+        assert!((db.total_spend_filtered(&filter).await.unwrap() - 0.2).abs() < 1e-9);
+    }
+    assert!((db.total_spend(None, None).await.unwrap() - 0.5).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn model_group_upgrade_preserves_v15_rows_and_filters_aliases() {
+    model_group_upgrade_contract(&*sqlite().await).await;
 }
 
 async fn customer(db: &Database, id: &str, spend: f64) {
@@ -652,6 +753,7 @@ async fn assert_v1_preserved(db: &Database) {
         (Some(10), Some(5), Some(15), Some(42))
     );
     assert!(whole.tags.is_none() && whole.end_user_id.is_none());
+    assert!(whole.deployment_id.is_none());
     let exact = SpendFilter {
         start_date: Some("2026-07-31T23:59:59.5000Z".into()),
         end_date: Some("2026-07-31T23:59:59.5Z".into()),
@@ -1368,14 +1470,14 @@ pub(crate) async fn postgres_release_validation() {
         url.starts_with("postgres://") || url.starts_with("postgresql://"),
         "OXLLM_TEST_POSTGRES_URL must select the disposable CI Postgres database"
     );
-    for scenario in 0..19 {
+    for scenario in 0..21 {
         let max_connections = if scenario == 17 { 1 } else { 4 };
         let fixture = PostgresFixture::new(&url, max_connections).await;
         let db = &fixture.db;
         if scenario == 6 {
             load_v1(db).await;
-            // A DDL lock failure must roll back the whole upgrade/version
-            // chain and leave it safely rerunnable after the holder exits.
+            // DDL lock failure must leave schema publication rerunnable.
+            // Online index preparation has a separate, longer budget.
             let mut holder = db.pool().begin().await.unwrap();
             sqlx::query("LOCK TABLE keys IN ACCESS EXCLUSIVE MODE")
                 .execute(&mut *holder)
@@ -1383,7 +1485,7 @@ pub(crate) async fn postgres_release_validation() {
                 .unwrap();
             let failed = tokio::time::timeout(
                 Duration::from_secs(5),
-                db.migrate_with_lock_timeout(Duration::from_millis(40)),
+                db.migrate_with_timeouts(Duration::from_millis(40), Duration::from_secs(4)),
             )
             .await
             .unwrap();
@@ -1436,6 +1538,8 @@ pub(crate) async fn postgres_release_validation() {
                 14 => crate::db_regression_tests::budget_chunks_contract(db)
                     .await
                     .expect("set-based budget deletes"),
+                19 => deployment_attribution_contract(db).await,
+                20 => model_group_upgrade_contract(db).await,
                 _ => unreachable!(),
             }
         }

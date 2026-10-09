@@ -39,6 +39,90 @@ use oxllm_core::router::{PreCallCheck, RouterConfig, normalize_check_name};
 
 use crate::config::ProxyConfig;
 
+pub(crate) fn session_affinity_requested(config: &ProxyConfig) -> bool {
+    config
+        .router_settings
+        .optional_pre_call_checks
+        .iter()
+        .flatten()
+        .any(|name| normalize_check_name(name) == "session_affinity")
+}
+
+fn canonical_check_name(name: &str) -> String {
+    match normalize_check_name(name).as_str() {
+        "router_budget_limiting" => budget_limiter::CHECK_NAME.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn filter_check_configured(name: &str, config: &ProxyConfig) -> bool {
+    match name {
+        prompt_caching::CHECK_NAME => config.oxllm_settings.prompt_caching_enabled == Some(true),
+        budget_limiter::CHECK_NAME => budget_limiter::BudgetLimiterCheck::is_configured(
+            config
+                .model_list
+                .iter()
+                .map(|model| model.oxllm_params.max_budget),
+            &config.router_settings.provider_budget_config,
+        ),
+        "health_check" => config.router_settings.enable_health_check_routing == Some(true),
+        _ => false,
+    }
+}
+
+/// Only configured candidate filters enter the core's check pipeline. Session
+/// affinity is handled by the routing strategy, not a second candidate filter.
+pub(crate) fn configured_filter_names(config: &ProxyConfig) -> Vec<String> {
+    let mut names = Vec::new();
+    for raw in config
+        .router_settings
+        .optional_pre_call_checks
+        .iter()
+        .flatten()
+    {
+        let name = canonical_check_name(raw);
+        if filter_check_configured(&name, config) && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Shared load/state diagnostics keep `validate` and `serve` consistent.
+pub(crate) fn warn_configured_checks(config: &ProxyConfig) {
+    let strategy = crate::config::types::RoutingKnobs::merge(
+        &config.oxllm_settings.routing,
+        &config.router_settings.routing,
+    )
+    .routing_strategy;
+    let mut seen = std::collections::HashSet::new();
+    for raw in config
+        .router_settings
+        .optional_pre_call_checks
+        .iter()
+        .flatten()
+    {
+        let name = canonical_check_name(raw);
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let reason = match name.as_str() {
+            "session_affinity" => strategy.as_deref()
+                .filter(|strategy| normalize_check_name(strategy) != "session_affinity")
+                .map(|_| "session_affinity is a routing-strategy alias; the explicit routing_strategy takes precedence"),
+            prompt_caching::CHECK_NAME if !filter_check_configured(&name, config) => Some("prompt_caching_enabled is not set"),
+            budget_limiter::CHECK_NAME if !filter_check_configured(&name, config) => Some("no router budgets are configured"),
+            "health_check" if !filter_check_configured(&name, config) => Some("enable_health_check_routing is not set"),
+            "enforce_model_rate_limits" => None,
+            prompt_caching::CHECK_NAME | budget_limiter::CHECK_NAME | "health_check" => None,
+            _ => Some("unknown pre-call check name"),
+        };
+        if let Some(reason) = reason {
+            tracing::warn!(check = %name, reason, "optional_pre_call_checks entry is skipped");
+        }
+    }
+}
+
 /// Append `prompt_caching` to the effective `optional_pre_call_checks`
 /// when `oxllm_settings.prompt_caching_enabled` is true and the check
 /// is not already listed (kebab-case spellings count as listed).
@@ -87,7 +171,7 @@ pub fn build_pre_call_checks(
 ) -> Vec<Arc<dyn PreCallCheck>> {
     let mut checks: Vec<Arc<dyn PreCallCheck>> = Vec::new();
     for name in &router_config.optional_pre_call_checks {
-        match normalize_check_name(name).as_str() {
+        match canonical_check_name(name).as_str() {
             prompt_caching::CHECK_NAME => {
                 if config.oxllm_settings.prompt_caching_enabled == Some(true) {
                     checks.push(Arc::new(prompt_caching::PromptCachingCheck::new(
@@ -143,6 +227,52 @@ mod tests {
     use crate::cache::InMemoryCache;
     use crate::config::types::{ConfigModel, OxllmSettings, RouterSettings};
     use oxllm_core::deployment::OxllmParams;
+
+    #[test]
+    fn load_and_state_build_share_unknown_check_diagnostics_without_session_noise() {
+        use std::sync::Mutex;
+        struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for LogBuffer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || LogBuffer(writer.clone()))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let config = crate::config::parse_config_str("model_list: []\nrouter_settings:\n  optional_pre_call_checks: [session_affinity, misspelled_check, misspelled_check]\n").unwrap();
+            let text = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+            assert_eq!(
+                text.matches("unknown pre-call check name").count(),
+                1,
+                "{text}"
+            );
+            assert!(!text.contains("session_affinity"), "{text}");
+            logs.lock().unwrap().clear();
+            let state = crate::state::AppState::new(config).unwrap();
+            assert_eq!(
+                state.router.config().routing_strategy,
+                oxllm_core::RoutingStrategyKind::SessionAffinity
+            );
+            let text = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+            assert_eq!(
+                text.matches("unknown pre-call check name").count(),
+                1,
+                "{text}"
+            );
+            assert!(!text.contains("silent no-op"), "{text}");
+        });
+    }
 
     fn cache() -> Arc<dyn Cache> {
         Arc::new(InMemoryCache::new(1_000))

@@ -87,7 +87,7 @@ async fn xai_non_streaming_chat() {
     assert_eq!(body["id"], "chatcmpl-xai-1");
     assert_eq!(body["object"], "chat.completion");
     assert_eq!(body["choices"][0]["message"]["content"], "Hello from xAI!");
-    assert_eq!(body["model"], "grok-4");
+    assert_eq!(body["model"], "xai-grok-4");
 
     upstream.assert_hits(1);
     handle.shutdown();

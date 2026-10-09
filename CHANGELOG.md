@@ -5,8 +5,70 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+### Gateway compatibility and observability
+
+- Qualify Vertex OpenAI-compatible Gemini selectors with `google/`, authenticate
+  Foundry native Claude with `x-api-key`, and translate legacy token limits for
+  identifiable Azure reasoning deployments.
+- Echo requested model names for direct calls and the public serving group for
+  fallbacks consistently across JSON/SSE/cache responses; normalize missing
+  reasoning-token details to zero.
+- Expose public deployment identities, retry/fallback counters, upstream throttle
+  headers and total/upstream/overhead timings under the primary `x-oxllm-*`
+  contract, with additive compatibility aliases and browser CORS exposure.
+- Record/filter deployment, requested-model and serving-group spend through
+  additive schema versions 15/16 while retaining serving-model pricing and
+  older-writer compatibility.
+- Recognize the session-affinity pre-call alias, share validation/startup
+  diagnostics, and add bounded Datadog dependency-health failure callbacks.
+- Deduplicate config-directory watch aliases and coalesce callback overflow
+  into a rescan without blocking watcher registration or losing changes.
+- Translate Azure GPT chat-family token limits without reasoning/sampling
+  mutations; accept routing-budget/model-rate-limit check aliases and expose
+  effective retry budgets and opt-in fallback status summaries.
+
 ### Models and provider compatibility
 
+- Sync the refreshed model catalog's token/cache prices, context/output limits,
+  service tiers and new model cards, including Azure regional GPT-6.1 Sol,
+  Grok 4.7, Cohere Embed v5, Mistral Large 4 and Voyage entries.
+- Stage stream metadata until content or a normal terminator arrives, allowing
+  pre-content disconnects/error frames to retry or fall back with the same
+  status-aware policy as failures before headers.
+- Accept validated request-scoped fallback chains, disable/cap controls, retry
+  budgets and fractional timeouts; strip gateway controls from provider bodies.
+- Bill Azure/Azure AI Model Router's selected model plus its input-token
+  infrastructure fee exactly once, including streaming spend settlement.
+- Inject the OpenAI explicit prompt-cache dialect on flagged Mantle/Foundry
+  deployments, preserving caller marks/options and the four-block limit.
+- Add Vertex/Foundry Claude token counting with system/tools forwarding,
+  counting-region overrides and optional utility-endpoint local fallback;
+  normalize image parts in native Count Tokens requests.
+- Remove foreign thinking-block signatures from Gemini history and use Vertex's
+  multi-region `us`/`eu` HTTP hosts.
+- Resolve Anthropic federation through cached OIDC file/environment grants,
+  fail closed on missing federation IDs, and preserve OAuth/client beta flags.
+- Keep caller W3C trace headers ahead of configured defaults across attempts.
+- Correct review regressions in Fireworks priority overlays and Claude 5.5 batch
+  cache/context rates; retain the nominal budget floor alongside Model Router fees.
+- Bound client retry overrides to 10, classify malformed stream preludes as
+  retryable 502s, honor overload-status policies, and release startup reservations
+  on cancellation without repeating partially completed refunds.
+- Validate gateway/federation controls before API conversion, strip standalone
+  controls and configured reintroductions from native/embedding/chat bodies,
+  and preserve opt-in fallback error headers through Messages/Responses bridges.
+- Keep deployment unary timeouts separate from stream idle budgets; include
+  thinking-signature repairs in retry-budget headers.
+- Prefer deployment-owned federation sources to fleet defaults, cap raw assertion
+  bytes before normalization, and deduplicate OAuth/client beta flags.
+- Prevent disabled utility token counting from falling back locally when native
+  counting is unsupported or unavailable.
+- Added Claude Haiku 5.5 pricing, context limits and cache rates for Anthropic,
+  Vertex AI, Bedrock regional aliases (including GovCloud), Bedrock Mantle,
+  Azure AI, OpenRouter and Perplexity. Published >100k-token tiers are included
+  where present; the Perplexity entry uses base rates only.
+- Corrected Claude Sonnet 5.5 cache-read rates from the refreshed reference
+  price map across Anthropic, Vertex AI, Bedrock, and Bedrock Mantle.
 - Added GPT-6.1 Sol pricing and context limits for OpenAI, Azure, OpenRouter,
   Bedrock regional aliases, and Bedrock Mantle, plus OpenRouter pro/batch aliases.
 - Added the Baseten chat backend and the accelerated DeepSeek-V4.1-Flash-Fast
@@ -26,7 +88,7 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 ### Session affinity routing
 
 - **`session_affinity` strategy** (`oxllm-core::router::session_affinity`):
-  sticky deployment selection via a consistent hash of
+  sticky deployment selection via a deterministic modulo hash of
   `RequestContext::session_id`. Clients send `x-oxllm-session-id` so multi-turn
   traffic on a multi-deployment model group stays on one provider (prompt-cache
   friendly). Falls back to `simple_shuffle` when the header is absent.

@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use oxllm_core::{CallContext, ResponseSummary};
+use oxllm_core::{CallContext, ResponseSummary, ServiceFailureEvent};
 use serde_json::{Value, json};
 
 use crate::config::types::DatadogConfig;
@@ -79,7 +79,28 @@ pub(crate) fn build_datadog_hook_opt(
         return None;
     }
     match build(cfg, allow_private, redact_secret_values) {
-        Ok(hook) => Some(Arc::new(hook)),
+        Ok(hook) => {
+            let hook = if config
+                .oxllm_settings
+                .service_callback
+                .iter()
+                .flatten()
+                .any(|slug| slug == "datadog")
+            {
+                let service = cfg
+                    .service
+                    .as_deref()
+                    .filter(|service| !service.is_empty())
+                    .unwrap_or(DEFAULT_SERVICE)
+                    .to_string();
+                hook.with_service_payload(move |event| {
+                    json!([datadog_service_failure_log(&service, event)])
+                })
+            } else {
+                hook
+            };
+            Some(Arc::new(hook))
+        }
         Err(e) => {
             tracing::warn!(error = %e, "failed to build datadog hook; skipping");
             None
@@ -115,6 +136,9 @@ fn datadog_log(service: &str, ctx: &CallContext, resp: &ResponseSummary) -> Valu
             "team_id": ctx.team_id,
             "user_id": ctx.user_id,
             "request_id": ctx.request_id,
+            "deployment_id": ctx.deployment_id,
+            "requested_model": ctx.model,
+            "model_group": ctx.serving_model_group,
         },
     })
 }
@@ -148,8 +172,50 @@ fn datadog_failure_log(service: &str, ctx: &CallContext, err: &oxllm_core::Error
             "team_id": ctx.team_id,
             "user_id": ctx.user_id,
             "request_id": ctx.request_id,
+            "deployment_id": ctx.deployment_id,
+            "requested_model": ctx.model,
+            "model_group": ctx.serving_model_group,
         },
     })
+}
+
+fn datadog_service_failure_log(service: &str, event: &ServiceFailureEvent) -> Value {
+    let mut message = Value::String(event.message.clone());
+    crate::hooks::redact::redact_secret_values_in_place(&mut message);
+    let message: String = message
+        .as_str()
+        .unwrap_or("dependency unavailable")
+        .chars()
+        .take(500)
+        .collect();
+    json!({
+        "ddsource": "oxllm", "service": service, "hostname": service,
+        "status": "error", "message": message,
+        "attributes": {"event": "service_failure", "dependency": event.service}
+    })
+}
+
+pub(crate) fn warn_service_callback_config(config: &crate::config::ProxyConfig) {
+    for slug in config
+        .oxllm_settings
+        .service_callback
+        .iter()
+        .flatten()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        if slug != "datadog" {
+            tracing::warn!(%slug, "unsupported service_callback backend; available backend: datadog");
+        } else if config
+            .oxllm_settings
+            .datadog_config
+            .as_ref()
+            .is_none_or(|settings| settings.api_key.trim().is_empty())
+        {
+            tracing::warn!(
+                "service_callback datadog requires oxllm_settings.datadog_config with a nonempty api_key; service logs are disabled"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

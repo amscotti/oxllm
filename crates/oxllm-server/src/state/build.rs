@@ -301,6 +301,46 @@ impl AppState {
     }
 }
 
+/// Keep public IDs attached to matching deployments across in-process reloads.
+/// Explicit configured IDs win; fresh deployments receive an opaque UUID.
+pub(super) fn assign_deployment_ids(
+    deployments: &mut [Deployment],
+    previous: Option<&[Deployment]>,
+) {
+    let mut prior = std::collections::HashMap::<String, std::collections::VecDeque<String>>::new();
+    for deployment in previous.into_iter().flatten() {
+        if let Some(id) = deployment
+            .model_info
+            .as_ref()
+            .and_then(|info| info.id.as_deref())
+            .filter(|id| !id.trim().is_empty())
+        {
+            prior
+                .entry(oxllm_core::router::stable_key(deployment))
+                .or_default()
+                .push_back(id.to_string());
+        }
+    }
+    for deployment in deployments {
+        if deployment
+            .model_info
+            .as_ref()
+            .and_then(|info| info.id.as_deref())
+            .is_some_and(|id| !id.trim().is_empty())
+        {
+            continue;
+        }
+        let id = prior
+            .get_mut(&oxllm_core::router::stable_key(deployment))
+            .and_then(std::collections::VecDeque::pop_front)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        deployment
+            .model_info
+            .get_or_insert_with(Default::default)
+            .id = Some(id);
+    }
+}
+
 /// The single construction path shared by startup and hot-reload.
 ///
 /// Always rebuilt from `config`: deployments, master-key hash, router config,
@@ -316,6 +356,7 @@ pub(crate) fn assemble(
 ) -> anyhow::Result<AppState> {
     crate::auth::validate_auth_config(&config.general_settings)?;
     crate::config::loader::filter_supported_environments(&mut config);
+    crate::pre_call_checks::warn_configured_checks(&config);
     let old = match policy {
         ReusePolicy::Fresh => None,
         ReusePolicy::Preserve(prev) => Some(prev),
@@ -326,11 +367,15 @@ pub(crate) fn assemble(
     // absorbs the ~12k-line TOML parse on the hot path.
     let _ = oxllm_core::cost::price_table();
 
-    let deployments: Vec<Deployment> = config
+    let mut deployments: Vec<Deployment> = config
         .model_list
         .iter()
         .map(|cm| cm.clone().into())
         .collect();
+    assign_deployment_ids(
+        &mut deployments,
+        old.map(|state| state.deployments.as_slice()),
+    );
 
     // Pre-register every operator-controlled model label with the metrics
     // layer so runtime counters can only use known labels (aliases accepted
@@ -922,6 +967,40 @@ mod http_client_tests;
 mod tests {
     use super::*;
     use crate::config::types::{OxllmSettings, RouterSettings};
+
+    #[test]
+    fn public_deployment_ids_distinguish_siblings_and_survive_reordered_reload() {
+        let config = crate::config::parse_config_str("model_list:\n  - model_name: alias\n    oxllm_params: {model: openai/gpt-4o, api_key: first}\n  - model_name: alias\n    oxllm_params: {model: openai/gpt-4o, api_key: second}\n").unwrap();
+        let first = AppState::new(config.clone()).unwrap();
+        let ids: Vec<_> = first
+            .deployments
+            .iter()
+            .map(|deployment| deployment.model_info.as_ref().unwrap().id.clone().unwrap())
+            .collect();
+        assert_ne!(ids[0], ids[1]);
+        assert!(ids.iter().all(|id| uuid::Uuid::parse_str(id).is_ok()));
+        let mut reordered = config;
+        reordered.model_list.reverse();
+        let next = first.reload_from_config(reordered).unwrap();
+        assert_eq!(
+            next.deployments[0]
+                .model_info
+                .as_ref()
+                .unwrap()
+                .id
+                .as_deref(),
+            Some(ids[1].as_str())
+        );
+        assert_eq!(
+            next.deployments[1]
+                .model_info
+                .as_ref()
+                .unwrap()
+                .id
+                .as_deref(),
+            Some(ids[0].as_str())
+        );
+    }
 
     fn proxy_with_general(general: crate::config::types::GeneralSettings) -> ProxyConfig {
         ProxyConfig {

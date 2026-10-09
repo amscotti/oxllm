@@ -135,7 +135,11 @@ aliases = ["azure_ai/gpt-5.5-2026-04-23", "azure_ai/gpt-5.5-2026-04-24"]
 priority = { cache_read_input_token_cost = 1e-6, cache_read_input_token_cost_above_272k_tokens = 2e-6, input_cost_per_token = 1e-5, input_cost_per_token_above_272k_tokens = 2e-5, output_cost_per_token = 6e-5, output_cost_per_token_above_272k_tokens = 9e-5 }
 
 ["fireworks_ai/deepseek-v4p1-flash"]
-aliases = ["fireworks_ai/deepseek-v4-flash-0731", "fireworks_ai/deepseek-v4-flash-vision-exp", "fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash", "fireworks_ai/accounts/fireworks/models/deepseek-v4-flash-0731", "fireworks_ai/accounts/fireworks/models/deepseek-v4-flash-vision-exp"]
+aliases = ["fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash"]
+priority = { cache_read_input_token_cost = 7.5e-9, input_cost_per_token = 3.75e-7, output_cost_per_token = 1.5e-6 }
+
+["fireworks_ai/deepseek-v4-flash-0731"]
+aliases = ["fireworks_ai/deepseek-v4-flash-vision-exp", "fireworks_ai/accounts/fireworks/models/deepseek-v4-flash-0731", "fireworks_ai/accounts/fireworks/models/deepseek-v4-flash-vision-exp"]
 priority = { cache_read_input_token_cost = 8.75e-9, input_cost_per_token = 2.75e-7, output_cost_per_token = 8.25e-7 }
 
 ["fireworks_ai/accounts/fireworks/models/minimax-m2p7"]

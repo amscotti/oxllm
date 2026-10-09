@@ -39,12 +39,6 @@ input_cost_per_token = 1.600000e-8
 output_cost_per_token = 0.0
 max_input_tokens = 512
 
-["fireworks_ai/accounts/fireworks/models/"]
-input_cost_per_token = 1.000000e-7
-output_cost_per_token = 0.0
-max_input_tokens = 40960
-max_output_tokens = 40960
-
 ["fireworks_ai/accounts/fireworks/models/SSD-1B"]
 input_cost_per_token = 1.300000e-10
 output_cost_per_token = 1.300000e-10
@@ -1834,17 +1828,23 @@ max_output_tokens = 131072
 cache_read_input_token_cost = 4.400000e-8
 
 ["fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash"]
-input_cost_per_token = 2.200000e-7
-output_cost_per_token = 6.600000e-7
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
 max_input_tokens = 1048576
 max_output_tokens = 393216
-cache_read_input_token_cost = 7.000000e-9
+cache_read_input_token_cost = 6.000000e-9
+cache_read_input_token_cost_priority = 7.500000e-9
+input_cost_per_token_priority = 3.750000e-7
+output_cost_per_token_priority = 1.500000e-6
 
 ["fireworks_ai/accounts/fireworks/models/ember-1"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
 max_input_tokens = 1048576
 cache_read_input_token_cost = 3.000000e-7
+cache_read_input_token_cost_priority = 3.750000e-7
+input_cost_per_token_priority = 3.750000e-6
+output_cost_per_token_priority = 1.875000e-5
 
 ["fireworks_ai/accounts/fireworks/models/glm-5p3"]
 input_cost_per_token = 1.400000e-6
@@ -1864,6 +1864,9 @@ input_cost_per_token = 1.000000e-6
 output_cost_per_token = 4.050000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 1.700000e-7
+cache_read_input_token_cost_priority = 1.700000e-7
+input_cost_per_token_priority = 1.000000e-6
+output_cost_per_token_priority = 4.050000e-6
 
 ["fireworks_ai/accounts/fireworks/models/kimi-k3"]
 input_cost_per_token = 3.000000e-6
@@ -1885,6 +1888,9 @@ output_cost_per_token = 2.400000e-6
 max_input_tokens = 262144
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.200000e-7
+cache_read_input_token_cost_priority = 1.500000e-7
+input_cost_per_token_priority = 7.500000e-7
+output_cost_per_token_priority = 3.000000e-6
 
 ["fireworks_ai/accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b"]
 input_cost_per_token = 5.000000e-8
@@ -1892,6 +1898,9 @@ output_cost_per_token = 2.000000e-7
 max_input_tokens = 262144
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.000000e-8
+cache_read_input_token_cost_priority = 1.250000e-8
+input_cost_per_token_priority = 6.250000e-8
+output_cost_per_token_priority = 2.500000e-7
 
 ["fireworks_ai/accounts/fireworks/models/qwen3-embedding-8b"]
 input_cost_per_token = 1.000000e-7
@@ -1937,6 +1946,9 @@ input_cost_per_token = 2.250000e-7
 output_cost_per_token = 7.500000e-7
 max_input_tokens = 1048576
 cache_read_input_token_cost = 4.500000e-8
+cache_read_input_token_cost_priority = 5.625000e-8
+input_cost_per_token_priority = 2.812500e-7
+output_cost_per_token_priority = 9.375000e-7
 
 ["fireworks_ai/accounts/fireworks/routers/glm-5p3-us"]
 input_cost_per_token = 2.100000e-6
@@ -1944,6 +1956,9 @@ output_cost_per_token = 6.600000e-6
 max_input_tokens = 1048576
 max_output_tokens = 128000
 cache_read_input_token_cost = 3.900000e-7
+cache_read_input_token_cost_priority = 4.875000e-7
+input_cost_per_token_priority = 2.625000e-6
+output_cost_per_token_priority = 8.250000e-6
 
 ["fireworks_ai/accounts/fireworks/routers/kimi-k3-fast"]
 input_cost_per_token = 4.500000e-6
@@ -1980,11 +1995,14 @@ max_output_tokens = 131072
 cache_read_input_token_cost = 4.400000e-8
 
 ["fireworks_ai/deepseek-v4p1-flash"]
-input_cost_per_token = 2.200000e-7
-output_cost_per_token = 6.600000e-7
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
 max_input_tokens = 1048576
 max_output_tokens = 393216
-cache_read_input_token_cost = 7.000000e-9
+cache_read_input_token_cost = 6.000000e-9
+cache_read_input_token_cost_priority = 7.500000e-9
+input_cost_per_token_priority = 3.750000e-7
+output_cost_per_token_priority = 1.500000e-6
 
 ["fireworks_ai/deepseek-v4p1-flash-us"]
 input_cost_per_token = 4.500000e-7
@@ -2031,6 +2049,9 @@ input_cost_per_token = 2.250000e-7
 output_cost_per_token = 7.500000e-7
 max_input_tokens = 1048576
 cache_read_input_token_cost = 4.500000e-8
+cache_read_input_token_cost_priority = 5.625000e-8
+input_cost_per_token_priority = 2.812500e-7
+output_cost_per_token_priority = 9.375000e-7
 
 ["fireworks_ai/glm-5p3-us"]
 input_cost_per_token = 2.100000e-6
@@ -2038,6 +2059,9 @@ output_cost_per_token = 6.600000e-6
 max_input_tokens = 1048576
 max_output_tokens = 128000
 cache_read_input_token_cost = 3.900000e-7
+cache_read_input_token_cost_priority = 4.875000e-7
+input_cost_per_token_priority = 2.625000e-6
+output_cost_per_token_priority = 8.250000e-6
 
 ["fireworks_ai/kimi-k3"]
 input_cost_per_token = 3.000000e-6
@@ -2073,6 +2097,9 @@ output_cost_per_token = 2.400000e-6
 max_input_tokens = 262144
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.200000e-7
+cache_read_input_token_cost_priority = 1.500000e-7
+input_cost_per_token_priority = 7.500000e-7
+output_cost_per_token_priority = 3.000000e-6
 
 ["fireworks_ai/nemotron-lightning-3p5-30b-a3b"]
 input_cost_per_token = 5.000000e-8
@@ -2080,6 +2107,9 @@ output_cost_per_token = 2.000000e-7
 max_input_tokens = 262144
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.000000e-8
+cache_read_input_token_cost_priority = 1.250000e-8
+input_cost_per_token_priority = 6.250000e-8
+output_cost_per_token_priority = 2.500000e-7
 
 ["fireworks_ai/qwen3p8-max"]
 input_cost_per_token = 2.000000e-6

@@ -8,6 +8,7 @@
 
 use std::time::Instant;
 
+use axum::http::HeaderMap;
 use oxllm_core::CallContext;
 use oxllm_core::UsageSummary;
 use oxllm_core::deployment::Deployment;
@@ -32,6 +33,8 @@ pub(crate) struct UnarySuccess {
     pub cost: Option<f64>,
 }
 
+pub(crate) type UnaryUpstreamResponse = (Value, Option<UsageSummary>, HeaderMap);
+
 /// Execute a unary (non-streaming) LLM request with chat-parity retry/failover.
 ///
 /// 1. Try the primary model with an outer pick loop and inner per-deployment
@@ -39,9 +42,9 @@ pub(crate) struct UnarySuccess {
 /// 2. On retryable exhaustion, walk `fallbacks` then (for unknown models)
 ///    `default_fallbacks`.
 /// 3. Client errors (4xx except 408/409/429) from the PRIMARY model abort
-///    immediately — except deployment-fault statuses (401/403/404), which
-///    walk the fallback chains like a retryable failure (reference
-///    `async_function_with_fallbacks` parity, chat parity). From a fallback
+///    immediately — except deployment faults (401/403/404) and statuses opted
+///    into failover by an explicit zero allowed-fails entry. Zero retries
+///    disable same-deployment retries, not configured fallback. From a fallback
 ///    leg the chain continues to the next leg and the last error surfaces
 ///    at exhaustion (chat parity: `try_fallback_chain`).
 ///
@@ -62,8 +65,9 @@ pub(crate) async fn execute_unary<F, Fut>(
 ) -> Result<UnarySuccess, ApiError>
 where
     F: Fn(&Deployment, &Value) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = Result<(Value, Option<UsageSummary>), ApiError>> + Send,
+    Fut: std::future::Future<Output = Result<UnaryUpstreamResponse, ApiError>> + Send,
 {
+    super::request_controls::validate(request_body)?;
     let mut last_err: Option<ApiError>;
     let mut primary_ctx = oxllm_core::RequestContext::new(model);
     primary_ctx.tag = tag;
@@ -121,14 +125,27 @@ where
         .router
         .deployments_for_model(&state.deployments, model)
         .is_empty();
-    let mut fbs = state.router.fallbacks_for(model);
-    if !primary_exists {
+    let mut fbs = super::request_controls::fallbacks(
+        request_body,
+        "fallbacks",
+        model,
+        state.router.fallbacks_for(model),
+    );
+    if !primary_exists
+        && request_body
+            .get("disable_fallbacks")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
         fbs.extend(state.router.default_fallbacks_for(model));
     }
     let mut attempted = std::collections::HashSet::from([model.to_string()]);
+    if let Some(error) = &last_err {
+        crate::pipeline::record_fallback_error(call_ctx, error);
+    }
     let mut fallbacks_tried = 0;
     for fb in fbs {
-        if fallbacks_tried >= state.router.config().max_fallbacks {
+        if fallbacks_tried >= super::request_controls::max_fallbacks(state, request_body) {
             break;
         }
         if !attempted.insert(fb.to_string()) {
@@ -144,6 +161,7 @@ where
             continue;
         }
         fallbacks_tried += 1;
+        call_ctx.attempted_fallbacks = call_ctx.attempted_fallbacks.saturating_add(1);
         match try_unary_model(
             state,
             call_ctx,
@@ -162,10 +180,14 @@ where
                 return Err(e);
             }
             Err(e) if is_client_error(&e) => {
+                crate::pipeline::record_fallback_error(call_ctx, &e);
                 last_err = Some(e);
                 continue;
             }
-            Err(e) => last_err = Some(e),
+            Err(e) => {
+                crate::pipeline::record_fallback_error(call_ctx, &e);
+                last_err = Some(e);
+            }
         }
     }
 
@@ -203,14 +225,14 @@ async fn try_unary_model<F, Fut>(
 ) -> Result<UnarySuccess, ApiError>
 where
     F: Fn(&Deployment, &Value) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = Result<(Value, Option<UsageSummary>), ApiError>> + Send,
+    Fut: std::future::Future<Output = Result<UnaryUpstreamResponse, ApiError>> + Send,
 {
     let mut ctx = oxllm_core::RequestContext::new(model);
     ctx.session_id = session_id;
     ctx.tag = tag.or_else(|| call_ctx.request_tags.first().cloned());
     ctx.tags = call_ctx.request_tags.clone();
 
-    let default_retries = state.router.retries_for_status_model(0, model);
+    let default_retries = super::request_controls::retries(state, model, None, request_body, 0);
     let mut last_err: Option<ApiError> = None;
     // Bound the outer pick loop so a misconfigured group cannot spin forever.
     let max_picks = state
@@ -290,11 +312,18 @@ where
         // Inner per-deployment retry loop (chat parity).
         let mut attempt: u32 = 0;
         loop {
+            if attempt > 0 {
+                call_ctx.attempted_retries = call_ctx.attempted_retries.saturating_add(1);
+            }
             let call_start = Instant::now();
             call_ctx.upstream_start_time = Some(call_start);
-            match make_upstream_call(deployment, request_body).await {
-                Ok((body, usage)) => {
+            call_ctx.upstream_end_time = None;
+            let result = make_upstream_call(deployment, request_body).await;
+            crate::pipeline::record_upstream_timing(call_ctx);
+            match result {
+                Ok((mut body, usage, headers)) => {
                     call_ctx.reached_upstream = true;
+                    crate::pipeline::capture_upstream_headers(call_ctx, &headers);
                     state.router.record_in_flight(&cooldown_key, -1);
                     // Router observability: feed the latency and usage stores
                     // so `lowest_latency` / `latency_based` and `usage_based`
@@ -335,6 +364,10 @@ where
                     // A healthy response resets the deployment's allowed-fails
                     // history (chat parity: `clear_failure_counts` on success).
                     state.router.clear_failure_counts(&cooldown_key);
+                    crate::pipeline::normalize_client_response(
+                        &mut body,
+                        crate::pipeline::public_response_model(call_ctx),
+                    );
                     return Ok(UnarySuccess { body, cost });
                 }
                 Err(err) => {
@@ -385,7 +418,14 @@ where
                         return Err(err);
                     }
                     let status = err.status.as_u16();
-                    let max_retries = state.router.retries_for_status_model(status, model);
+                    let max_retries = super::request_controls::retries(
+                        state,
+                        model,
+                        Some(deployment),
+                        request_body,
+                        status,
+                    );
+                    call_ctx.max_retries = Some(max_retries);
                     let cool_now =
                         match state
                             .router
@@ -492,7 +532,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
 
-    type UpstreamOutcome = Result<(Value, Option<UsageSummary>), ApiError>;
+    type UpstreamOutcome = Result<UnaryUpstreamResponse, ApiError>;
 
     fn open_auth() -> AuthUser {
         AuthUser::open()
@@ -619,6 +659,7 @@ mod tests {
                     web_search_requests: None,
                     cache_creation_1h_input_tokens: None,
                 }),
+                HeaderMap::new(),
             )))
         }
     }
@@ -651,6 +692,7 @@ mod tests {
                         web_search_requests: None,
                         cache_creation_1h_input_tokens: None,
                     }),
+                    HeaderMap::new(),
                 )))
             } else {
                 let _ = &primary;
@@ -741,7 +783,11 @@ mod tests {
                 }
                 "fb2" => {
                     f2.fetch_add(1, Ordering::SeqCst);
-                    std::future::ready(Ok((json!({"data": [], "model": "fb2"}), None)))
+                    std::future::ready(Ok((
+                        json!({"data": [], "model": "fb2"}),
+                        None,
+                        HeaderMap::new(),
+                    )))
                 }
                 _ => std::future::ready(Err(ApiError::upstream(500, "primary down"))),
             };
@@ -823,7 +869,11 @@ mod tests {
         let closure = move |deployment: &Deployment, _body: &Value| {
             if deployment.model_name == "rescue" {
                 r.fetch_add(1, Ordering::SeqCst);
-                std::future::ready(Ok((json!({"data": [], "model": "rescue"}), None)))
+                std::future::ready(Ok((
+                    json!({"data": [], "model": "rescue"}),
+                    None,
+                    HeaderMap::new(),
+                )))
             } else {
                 std::future::ready(Err(ApiError::upstream(401, "invalid api key")))
             }
@@ -861,7 +911,11 @@ mod tests {
         let closure = move |deployment: &Deployment, _body: &Value| {
             if deployment.model_name == "rescue" {
                 r.fetch_add(1, Ordering::SeqCst);
-                std::future::ready(Ok((json!({"data": [], "model": "rescue"}), None)))
+                std::future::ready(Ok((
+                    json!({"data": [], "model": "rescue"}),
+                    None,
+                    HeaderMap::new(),
+                )))
             } else {
                 std::future::ready(Err(ApiError::upstream(400, "bad input")))
             }

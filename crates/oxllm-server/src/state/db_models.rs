@@ -103,7 +103,7 @@ pub(crate) async fn merge_db_deployments(
 /// Publishing uses `ArcSwap::compare_and_swap` in an RCU retry loop: the new
 /// state is installed only if no concurrent writer (a config hot-reload, or
 /// another `refresh_db_models`) swapped the live `Arc` between our
-/// [`ArcSwap::load_full`] and the publish. A plain [`ArcSwap::store`] here
+/// [`arc_swap::ArcSwap::load_full`] and the publish. A plain [`arc_swap::ArcSwap::store`] here
 /// would let a management-API refresh silently revert a just-applied config
 /// reload — we would overwrite the fresh config/router/hooks with our clone of
 /// the pre-reload state, carrying only the new deployments Vec. On contention
@@ -186,10 +186,18 @@ pub(crate) fn db_record_to_deployment(
         crate::config::validate_api_base(api_base, allow_private_api_base)?;
     }
 
-    let model_info = match record.model_info.clone() {
+    let mut model_info: Option<oxllm_core::deployment::ModelInfo> = match record.model_info.clone()
+    {
         Some(v) => Some(crate::config::loader::deserialize_env_value(v)?),
         None => None,
     };
+    if model_info
+        .as_ref()
+        .and_then(|info| info.id.as_deref())
+        .is_none_or(|id| id.trim().is_empty())
+    {
+        model_info.get_or_insert_with(Default::default).id = Some(record.model_id.clone());
+    }
 
     Ok(Deployment {
         model_name: record.model_name.clone(),
@@ -280,6 +288,59 @@ fn decrypt_secrets_inner(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn refreshing_db_models_preserves_yaml_ids_and_uses_persisted_model_ids() {
+        let db = oxllm_db::Database::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        db.create_model(&oxllm_db::ModelConfigRecord {
+            model_id: "persisted-leg".into(),
+            model_name: "db-model".into(),
+            oxllm_params: json!({"model": "openai/gpt-4o", "api_key": "synthetic-key"}),
+            model_info: None,
+            created_at: oxllm_db::now_iso(),
+            updated_at: oxllm_db::now_iso(),
+        })
+        .await
+        .unwrap();
+        let config = crate::config::parse_config_str("model_list:\n  - model_name: yaml-model\n    oxllm_params: {model: openai/gpt-4o, api_key: synthetic-key}\n").unwrap();
+        let state = crate::state::StateBuilder::new(config)
+            .with_db(Some(db))
+            .build()
+            .unwrap();
+        let yaml_id = state.deployments[0]
+            .model_info
+            .as_ref()
+            .unwrap()
+            .id
+            .clone()
+            .unwrap();
+        let shared = Arc::new(arc_swap::ArcSwap::from_pointee(state));
+        for _ in 0..2 {
+            refresh_db_models(&shared).await.unwrap();
+            let state = shared.load_full();
+            assert_eq!(
+                state.deployments[0]
+                    .model_info
+                    .as_ref()
+                    .unwrap()
+                    .id
+                    .as_deref(),
+                Some(yaml_id.as_str())
+            );
+            let db_model = state
+                .deployments
+                .iter()
+                .find(|deployment| deployment.model_name == "db-model")
+                .unwrap();
+            assert_eq!(
+                db_model.model_info.as_ref().unwrap().id.as_deref(),
+                Some("persisted-leg")
+            );
+        }
+    }
 
     #[test]
     fn decrypt_stored_secrets_round_trip() {

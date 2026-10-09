@@ -388,7 +388,7 @@ pub struct UpdateKeyRequest {
     pub is_active: Option<bool>,
     /// Replacement expiry timestamp (ISO-8601). Pass an empty string `""` or
     /// `null` to clear the expiry (key never expires). Omit the field to leave
-    /// it unchanged. Validated via [`super::validate_expires`] when a
+    /// it unchanged. Validated via the internal `validate_expires` helper when a
     /// non-empty, non-`null` value is supplied. Mirrors the reference mutable
     /// `duration` field on `/key/update`.
     #[serde(default)]

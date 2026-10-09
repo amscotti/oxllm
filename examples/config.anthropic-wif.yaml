@@ -1,0 +1,21 @@
+# Anthropic OIDC federation. The token file must be under an allowed server root.
+# OXLLM_OIDC_ALLOWED_CREDENTIAL_DIRS defaults to /var/run/secrets and /run/secrets.
+# Use oidc/env/NAME as anthropic_identity_token for an environment reference.
+model_list:
+  - model_name: haiku
+    oxllm_params:
+      model: anthropic/claude-haiku-5-5
+      anthropic_identity_token_file: os.environ/ANTHROPIC_IDENTITY_TOKEN_FILE
+      anthropic_federation_rule_id: os.environ/ANTHROPIC_FEDERATION_RULE_ID
+      anthropic_organization_id: os.environ/ANTHROPIC_ORGANIZATION_ID
+      # anthropic_service_account_id: os.environ/ANTHROPIC_SERVICE_ACCOUNT_ID
+      # anthropic_federation_workspace_id: default
+      # A static api_key selects static authentication instead of federation.
+      timeout: 600
+      stream_timeout: 60
+
+router_settings:
+  num_retries: 1
+
+general_settings:
+  master_key: os.environ/OXLLM_MASTER_KEY

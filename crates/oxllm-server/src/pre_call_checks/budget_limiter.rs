@@ -144,7 +144,10 @@ impl PreCallCheck for BudgetLimiterCheck {
 /// Normalize a configured check name and compare it to [`CHECK_NAME`]
 /// (accepts kebab-case spellings).
 pub fn is_budget_limiter_name(name: &str) -> bool {
-    normalize_check_name(name) == CHECK_NAME
+    matches!(
+        normalize_check_name(name).as_str(),
+        CHECK_NAME | "router_budget_limiting"
+    )
 }
 
 #[cfg(test)]

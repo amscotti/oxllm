@@ -81,6 +81,12 @@ fn is_reasoning_model(model: &str) -> bool {
     is_o_series_lowered(&leaf) || is_gpt_reasoning_series(&leaf) || leaf.contains("-reasoning")
 }
 
+#[cfg(feature = "azure")]
+pub(crate) fn has_known_reasoning_family(model: &str) -> bool {
+    let leaf = model_leaf(model);
+    is_o_series_lowered(&leaf) || is_gpt_reasoning_series(&leaf)
+}
+
 /// Whether a model is an OpenAI o-series reasoning model (o1, o3, o4) — the
 /// strict subset that always rejects sampling/logprob params. GPT-5 only
 /// rejects them when `reasoning_effort` is set to a non-`none` value.
@@ -205,6 +211,11 @@ fn gpt_series_version(leaf: &str) -> Option<(u32, Option<u32>)> {
     Some((major, minor))
 }
 
+pub(crate) fn supports_explicit_prompt_cache(model: &str) -> bool {
+    gpt_series_version(&model_leaf(model))
+        .is_some_and(|(major, minor)| (major, minor.unwrap_or(0)) >= (5, 6))
+}
+
 fn effort_resolves_to_none(leaf: &str, body: &Value) -> bool {
     match effort_level(body) {
         Some(level) => level == "none",
@@ -250,16 +261,12 @@ pub(crate) fn apply_openai_reasoning_limits(body: &mut Value, model: &str) {
         && should_strip_temperature(model, body);
     let strip_sampling = should_strip_reasoning_unsupported(model, body);
     let drop_always = is_o_series_lowered(&leaf) || is_gpt_reasoning_series(&leaf);
+    apply_openai_token_limit_alias(body);
     let Some(obj) = body.as_object_mut() else {
         return;
     };
     if strip_temp {
         obj.remove("temperature");
-    }
-    if obj.contains_key("max_completion_tokens") {
-        obj.remove("max_tokens");
-    } else if let Some(max_tokens) = obj.remove("max_tokens") {
-        obj.insert("max_completion_tokens".to_string(), max_tokens);
     }
     if drop_always {
         for key in ALWAYS_DROPPED_ON_REASONING_SERIES {
@@ -285,6 +292,19 @@ pub(crate) fn apply_openai_reasoning_limits(body: &mut Value, model: &str) {
                 }
             }
         }
+    }
+}
+
+/// Map a token-limit alias after the caller has identified a compatible API.
+/// Token-limit support and reasoning/sampling capabilities are independent.
+pub(crate) fn apply_openai_token_limit_alias(body: &mut Value) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if object.contains_key("max_completion_tokens") {
+        object.remove("max_tokens");
+    } else if let Some(tokens) = object.remove("max_tokens") {
+        object.insert("max_completion_tokens".into(), tokens);
     }
 }
 
@@ -451,6 +471,7 @@ impl ChatProvider for OpenAiProvider {
             .unwrap_or("")
             .to_string();
         apply_openai_reasoning_limits(&mut out, &model);
+        crate::prompt_cache::apply(&mut out, request, deployment);
         Ok(out)
     }
 

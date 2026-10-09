@@ -8,6 +8,8 @@ model_list:
       model: azure_ai/claude-haiku-4-5
       api_base: os.environ/AZURE_AI_ANTHROPIC_API_BASE
       api_key: os.environ/AZURE_AI_ANTHROPIC_API_KEY
+    model_info:
+      id: foundry-claude-region-a  # public identity in headers and spend logs
 
   - model_name: foundry-grok
     oxllm_params:
@@ -25,7 +27,8 @@ model_list:
       # Native cohere/ deployments can instead set api_type: azure_ai.
 
 # For explicit Entra tokens, replace api_key with azure_ad_token. Shared keys
-# on unified Foundry resources use api-key automatically. Custom gateways can
+# use x-api-key for native Claude and api-key for compatible unified routes.
+# Custom gateways can
 # select auth_header: api-key and auth_scheme: raw on a deployment.
 # Configure your contract's input/output/cache pricing overrides when the
 # deployment name does not identify a published model rate card.

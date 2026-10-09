@@ -1007,8 +1007,7 @@ async fn perplexity_stream_in_body_error_propagates() {
     let config = make_proxy_config(&mock.base_url(), None);
     let (handle, _state) = start_oxllm(config).await.expect("server should start");
 
-    // Upstream opens a 200 SSE stream but immediately reports an in-body
-    // error; the stream pump must surface it to the client as an error event.
+    // A rate-limit frame before content uses the normal retry/error contract.
     let sse_body = concat!(
         "data: {\"error\": {\"message\": \"boom\", \"code\": 429}}\n\n",
         "data: [DONE]\n\n"
@@ -1035,12 +1034,12 @@ async fn perplexity_stream_in_body_error_propagates() {
         .await
         .expect("request should succeed");
 
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 429);
     let text = resp.text().await.expect("body");
 
     assert!(
         text.contains("\"error\""),
-        "should surface an error event: {text}"
+        "should surface an error envelope: {text}"
     );
     assert!(
         text.contains("boom"),
@@ -1051,6 +1050,6 @@ async fn perplexity_stream_in_body_error_propagates() {
         "should map numeric 429 to upstream_rate_limited code: {text}"
     );
 
-    upstream.assert_hits(1);
+    upstream.assert_hits(3);
     handle.shutdown();
 }

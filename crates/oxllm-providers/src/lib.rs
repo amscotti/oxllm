@@ -32,6 +32,9 @@ pub mod openai_compat;
 #[cfg(feature = "openai_compat")]
 pub mod openai;
 
+#[cfg(feature = "openai_compat")]
+mod prompt_cache;
+
 #[cfg(feature = "anthropic")]
 pub mod anthropic;
 

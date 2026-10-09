@@ -625,6 +625,16 @@ output_cost_per_token_above_200k_tokens = 5.000000e-6
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
 
+["xai/grok-imagine-video-1.5-lite"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+mode = "video_generation"
+input_cost_per_image = 1.000000e-2
+output_cost_per_second = 2.000000e-2
+output_cost_per_second_1080p = 1.400000e-1
+output_cost_per_second_480p = 2.000000e-2
+output_cost_per_second_720p = 3.000000e-2
+
 ["xai/grok-4.20-multi-agent-beta-latest"]
 input_cost_per_token = 1.250000e-6
 output_cost_per_token = 2.500000e-6

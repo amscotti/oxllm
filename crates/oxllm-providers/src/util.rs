@@ -1,11 +1,28 @@
 //! Small shared helpers used across provider modules.
 
+#[cfg(any(
+    test,
+    feature = "openai_compat",
+    feature = "voyage",
+    feature = "jina_ai"
+))]
 use std::collections::HashMap;
 
 #[cfg(any(feature = "cohere", feature = "azure_ai"))]
 use oxllm_core::Deployment;
+#[cfg(any(
+    test,
+    feature = "openai_compat",
+    feature = "voyage",
+    feature = "jina_ai"
+))]
 use oxllm_core::provider::ResolvedCredentials;
-use serde_json::{Map, Value, json};
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
+use serde_json::Map;
+#[cfg(any(test, feature = "anthropic", feature = "bedrock", feature = "cohere"))]
+use serde_json::Value;
+#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
+use serde_json::json;
 
 /// Insert an `Authorization: Bearer <token>` header from resolved credentials.
 ///
@@ -15,6 +32,12 @@ use serde_json::{Map, Value, json};
 /// can be derived the call degrades to "no auth header" rather than inserting
 /// a bogus value, matching the contract every bespoke provider already
 /// honours.
+#[cfg(any(
+    test,
+    feature = "openai_compat",
+    feature = "voyage",
+    feature = "jina_ai"
+))]
 pub(crate) fn apply_bearer_auth(
     creds: &ResolvedCredentials,
     headers: &mut HashMap<String, String>,
@@ -116,7 +139,13 @@ pub(crate) fn foundry_endpoint_url(
         .split_once('?')
         .map_or((base, None), |(base, query)| (base, Some(query)));
     let mut path = base.trim_end_matches('/').to_string();
-    for suffix in ["/chat/completions", "/embeddings", "/embed", "/messages"] {
+    for suffix in [
+        "/messages/count_tokens",
+        "/chat/completions",
+        "/embeddings",
+        "/embed",
+        "/messages",
+    ] {
         if let Some(root) = path.strip_suffix(suffix) {
             path = root.to_string();
             break;
@@ -189,8 +218,8 @@ fn path_ends_with_operation(path: &str, operation: &str) -> bool {
 /// untouched). The media type is forwarded verbatim and not validated as an
 /// image type; Anthropic rejects unsupported media types upstream.
 ///
-/// Shared by Anthropic and Bedrock transforms so neither feature depends on
-/// the other.
+/// Shared by Anthropic and Bedrock transforms to keep image conversion identical.
+#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn data_url_to_anthropic_image(url: &str) -> Option<Value> {
     let (media_type, data) = parse_base64_data_url(url)?;
     Some(json!({
@@ -205,6 +234,7 @@ pub(crate) fn data_url_to_anthropic_image(url: &str) -> Option<Value> {
 
 /// Borrow a data URL's media type and base64 payload. In particular, a
 /// percent-encoded data URL must never be labelled as base64 on the wire.
+#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn parse_base64_data_url(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix("data:")?;
     let (header, data) = rest.split_once(',')?;
@@ -221,6 +251,7 @@ pub(crate) fn parse_base64_data_url(url: &str) -> Option<(&str, &str)> {
 
 /// Extract all SSE data fields from one event, including lone-CR framing.
 /// Vendor dispatch must inspect the same joined payload as its final parser.
+#[cfg(any(feature = "anthropic", feature = "bedrock", feature = "cohere"))]
 pub(crate) fn extract_sse_data(raw: &str) -> Option<String> {
     let parts: Vec<&str> = raw
         .split(['\n', '\r'])
@@ -232,6 +263,7 @@ pub(crate) fn extract_sse_data(raw: &str) -> Option<String> {
 
 /// Accept the OpenAI schema wrapper and the historical direct-schema alias,
 /// but never mistake a wrapper with a missing schema for the schema itself.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn response_format_schema(
     format: &Map<String, Value>,
 ) -> oxllm_core::Result<Option<Value>> {
@@ -257,6 +289,7 @@ pub(crate) fn response_format_schema(
 
 /// A `thinking` block the API rejects: the text is missing or whitespace.
 /// `redacted_thinking` carries opaque data, not text, so it is never blank.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn is_blank_thinking_block(block: &Value) -> bool {
     block.get("type").and_then(Value::as_str) == Some("thinking")
         && block
@@ -272,6 +305,7 @@ pub(crate) fn is_blank_thinking_block(block: &Value) -> bool {
 /// A thinking block with no text is omitted. When there is exactly one such
 /// block, non-empty `reasoning_content` fills it; several blank blocks are
 /// not split. A non-blank block still needs its signature when required.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn thinking_blocks_for_replay(
     message: &Value,
     require_signature: bool,
@@ -351,16 +385,19 @@ pub(crate) fn thinking_blocks_for_replay(
 /// Maximum recursion depth for [`inject_additional_properties_false`].
 /// Matches serde_json's default 128-level recursion limit with headroom for
 /// the breadth of combiners walked per level.
+#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
 const SCHEMA_MAX_DEPTH: u32 = 64;
 
 /// Recursively inject `additionalProperties: false` on object nodes of a JSON
 /// Schema. Anthropic (native + Bedrock Converse) requires this annotation.
 ///
-/// Shared by Anthropic and Bedrock so neither feature depends on the other.
+/// Shared by Anthropic and Bedrock so both validate the same schema shape.
+#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn inject_additional_properties_false(schema: &mut Value) {
     inject_additional_properties_false_inner(schema, 0);
 }
 
+#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
 fn inject_additional_properties_false_inner(schema: &mut Value, depth: u32) {
     if depth >= SCHEMA_MAX_DEPTH {
         return;

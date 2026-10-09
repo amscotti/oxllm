@@ -48,6 +48,9 @@ impl From<&AuditLogsQuery> for oxllm_db::SpendFilter {
             key_id: q.key_id.clone(),
             team_id: q.team_id.clone(),
             model: None,
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             tag_name: None,
             limit: q.limit,
             offset: q.offset,
@@ -98,6 +101,9 @@ pub async fn list_audit_logs(
                 "details": {
                     "model": log.model,
                     "provider": log.provider,
+                    "deployment_id": log.deployment_id,
+                    "requested_model": log.requested_model,
+                    "model_group": log.model_group,
                     "cost": log.cost,
                     "prompt_tokens": log.prompt_tokens,
                     "completion_tokens": log.completion_tokens,
@@ -208,7 +214,10 @@ mod tests {
 
     fn spend_log(request_id: Option<&str>) -> oxllm_db::SpendLog {
         oxllm_db::SpendLog {
+            deployment_id: None,
             id: None,
+            requested_model: None,
+            model_group: None,
             timestamp: oxllm_db::now_iso(),
             request_id: request_id.map(str::to_string),
             model: "gpt-4o".to_string(),
@@ -371,7 +380,10 @@ mod tests {
 
     fn spend_log_for_team(request_id: &str, team_id: Option<&str>) -> oxllm_db::SpendLog {
         oxllm_db::SpendLog {
+            deployment_id: None,
             id: None,
+            requested_model: None,
+            model_group: None,
             timestamp: oxllm_db::now_iso(),
             request_id: Some(request_id.to_string()),
             model: "gpt-4o".to_string(),

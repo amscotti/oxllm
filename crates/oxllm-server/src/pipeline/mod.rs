@@ -32,10 +32,15 @@ use crate::state::AppState;
 pub(crate) mod guardrails;
 pub(crate) mod multipart;
 pub mod passthrough;
+mod response_metadata;
 pub(crate) mod routing;
 pub use passthrough::{
     PassthroughMode, PassthroughRequest, catch_all_upstream_base_url, default_base_for_provider,
     forward_with_mode, upstream_base_url, vetted_client_headers,
+};
+pub(crate) use response_metadata::{
+    capture_upstream_headers, normalize_client_response, public_response_model,
+    record_fallback_error, record_upstream_timing, stamp_deployment_headers,
 };
 
 /// Response header carrying the computed cost of the request.
@@ -218,6 +223,7 @@ tokio::task_local! {
     /// Gateway-generated correlation id scoped around the entire HTTP request,
     /// including middleware and extractor failures that precede a pipeline.
     pub(crate) static HTTP_REQUEST_ID: String;
+    pub(crate) static HTTP_REQUEST_START: std::time::Instant;
 }
 
 /// Reuse the HTTP request's correlation id when running under the router, or
@@ -259,6 +265,7 @@ pub(crate) fn preserved_response_headers(
         .filter(|(name, _)| {
             let s = name.as_str();
             s.starts_with("x-oxllm-")
+                || s.starts_with("x-litellm-")
                 || s.starts_with("x-ratelimit-")
                 || s == STANDARD_REQUEST_ID_HEADER
                 || s == "retry-after"
@@ -493,7 +500,11 @@ impl<'a> EndpointPipeline<'a> {
             project_id: auth.project_id.clone(),
             is_master: auth.is_master,
             allowed_cache_controls: auth.allowed_cache_controls.clone(),
-            start_time: Some(std::time::Instant::now()),
+            start_time: Some(
+                HTTP_REQUEST_START
+                    .try_with(|start| *start)
+                    .unwrap_or_else(|_| std::time::Instant::now()),
+            ),
             ..Default::default()
         };
         call_ctx.set_scope_limits(&auth.scope_limits());
@@ -643,6 +654,34 @@ pub(crate) async fn prepare_deployment_pricing(
     deployment: &Deployment,
     request: &Value,
 ) -> oxllm_core::Result<()> {
+    ctx.deployment_id = deployment
+        .model_info
+        .as_ref()
+        .and_then(|info| info.id.clone());
+    ctx.upstream_response_headers.clear();
+    ctx.serving_model_group = Some(
+        request
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or(&ctx.model)
+            .to_string(),
+    );
+    ctx.deployment_model = Some(if deployment.oxllm_params.model.contains('*') {
+        let prefix = format!("{}/", deployment.provider_slug());
+        let requested = request
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or(&ctx.model);
+        format!(
+            "{prefix}{}",
+            requested.strip_prefix(&prefix).unwrap_or(requested)
+        )
+    } else {
+        deployment.oxllm_params.model.clone()
+    });
+    ctx.max_retries = None;
+    ctx.upstream_start_time = None;
+    ctx.upstream_end_time = None;
     let pricing_model = deployment_pricing_model(
         deployment,
         request
@@ -653,11 +692,25 @@ pub(crate) async fn prepare_deployment_pricing(
     let mut pricing_params = deployment.oxllm_params.clone();
     pricing_params.model = pricing_model.clone();
     ctx.deployment_pricing = pricing_params.pricing_override();
+    ctx.model_router_input_rate = (matches!(deployment.provider_slug(), "azure" | "azure_ai")
+        && ctx.deployment_pricing.is_none()
+        && [
+            ctx.deployment_model.as_deref(),
+            Some(pricing_model.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .any(is_model_router_name))
+    .then(|| {
+        oxllm_core::cost::price_table()
+            .get("azure_ai/model-router")
+            .map(|pricing| pricing.input_cost_per_token)
+    })
+    .flatten();
     ctx.pricing_model = Some(pricing_model);
     ctx.upstream_duration_estimate = Some(sanitize_timeout_secs(
-        deployment
-            .oxllm_params
-            .timeout
+        crate::orchestration::request_controls::seconds(request, "timeout")
+            .or(deployment.oxllm_params.timeout)
             .unwrap_or_else(|| state.config.oxllm_settings.request_timeout.unwrap_or(600) as f64),
     ));
     let settings = &state.config.oxllm_settings;
@@ -670,6 +723,35 @@ pub(crate) async fn prepare_deployment_pricing(
         hook = hook.with_model_budget(budgets.clone());
     }
     hook.top_up_for_deployment_pricing(ctx).await
+}
+
+pub(crate) fn is_model_router_name(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    let model = model
+        .strip_prefix("azure/")
+        .or_else(|| model.strip_prefix("azure_ai/"))
+        .unwrap_or(&model);
+    matches!(
+        model,
+        "model-router" | "model_router" | "azure-model-router" | "azure_model_router"
+    ) || ["model-router/", "model_router/"]
+        .into_iter()
+        .any(|prefix| {
+            model
+                .strip_prefix(prefix)
+                .is_some_and(|deployment| !deployment.is_empty())
+        })
+}
+
+pub(crate) fn is_model_router_fee_entry(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    matches!(
+        model
+            .strip_prefix("azure/")
+            .or_else(|| model.strip_prefix("azure_ai/"))
+            .unwrap_or(&model),
+        "model-router" | "model_router"
+    )
 }
 
 /// Published serving-model prices win. An explicit underlying model can price

@@ -168,6 +168,60 @@ impl RouterBudgetReservation {
     }
 }
 
+/// Refund an acquired reservation if its request is cancelled before ownership
+/// reaches response settlement. Release runs independently of the awaiting task
+/// so cancellation during a multi-scope refund cannot repeat an applied debit.
+pub(super) struct RouterBudgetGuard {
+    cache: Arc<dyn Cache>,
+    reservation: RouterBudgetReservation,
+    runtime: Option<tokio::runtime::Handle>,
+}
+
+impl RouterBudgetGuard {
+    pub(super) fn new(cache: Arc<dyn Cache>, reservation: RouterBudgetReservation) -> Self {
+        Self {
+            cache,
+            reservation,
+            runtime: tokio::runtime::Handle::try_current().ok(),
+        }
+    }
+
+    pub(super) fn disarm(&mut self) {
+        self.reservation = RouterBudgetReservation::default();
+    }
+
+    fn into_reservation(mut self) -> RouterBudgetReservation {
+        std::mem::take(&mut self.reservation)
+    }
+
+    pub(super) async fn release(&mut self) {
+        if let Some(task) = self.dispatch() {
+            if let Err(error) = task.await {
+                tracing::warn!(%error, "router budget cleanup task failed");
+            }
+        }
+    }
+
+    fn dispatch(&mut self) -> Option<tokio::task::JoinHandle<()>> {
+        let reservation = std::mem::take(&mut self.reservation);
+        if reservation.entries.is_empty() {
+            return None;
+        }
+        let Some(runtime) = &self.runtime else {
+            tracing::warn!("no runtime available for router budget cleanup");
+            return None;
+        };
+        let cache = self.cache.clone();
+        Some(runtime.spawn(async move { reservation.release(&cache).await }))
+    }
+}
+
+impl Drop for RouterBudgetGuard {
+    fn drop(&mut self) {
+        let _task = self.dispatch();
+    }
+}
+
 /// Rejection from [`reserve_router_budgets`]: the 429 to surface plus the
 /// exceeded budget's window, so the caller cools the deployment for the
 /// rest of the budget window rather than the (much shorter) request-failure
@@ -326,7 +380,7 @@ pub async fn reserve_router_budgets(
         None => estimate_max_request_cost(call_ctx).await,
     };
 
-    let mut reservation = RouterBudgetReservation::default();
+    let mut guard = RouterBudgetGuard::new(state.cache.clone(), RouterBudgetReservation::default());
     if let Some(limit) = dep_limit {
         let check = RouterScopeCheck {
             key: deployment_spend_key(dep_key),
@@ -335,7 +389,7 @@ pub async fn reserve_router_budgets(
             limit,
             ttl: Some(deployment_budget_ttl(deployment)),
         };
-        reserve_router_scope(state, &mut reservation, check, estimate).await?;
+        reserve_router_scope(state, &mut guard.reservation, check, estimate).await?;
     }
     if let Some(provider_budget) = provider_budget {
         let check = RouterScopeCheck {
@@ -345,14 +399,15 @@ pub async fn reserve_router_budgets(
             limit: provider_budget.budget_limit,
             ttl: Some(parse_budget_duration(&provider_budget.time_period)),
         };
-        if let Err(err) = reserve_router_scope(state, &mut reservation, check, estimate).await {
+        if let Err(err) = reserve_router_scope(state, &mut guard.reservation, check, estimate).await
+        {
             // Roll back the deployment reservation made above (same
             // rollback pattern BudgetHook::pre_call uses for its scopes).
-            reservation.release(&state.cache).await;
+            guard.release().await;
             return Err(err);
         }
     }
-    Ok(reservation)
+    Ok(guard.into_reservation())
 }
 
 /// Snapshot the current router-level spend counters: one entry per
@@ -562,6 +617,104 @@ mod tests {
     }
 
     const DEP_KEY: &str = "gpt-4o:openai/gpt-4o";
+
+    #[tokio::test]
+    async fn cancelled_router_budget_refund_finishes_once_across_scopes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::sync::Notify;
+
+        #[derive(Default)]
+        struct PausedRefundCache {
+            inner: crate::cache::InMemoryCache,
+            entered: Notify,
+            resume: Notify,
+            decrements: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl Cache for PausedRefundCache {
+            async fn get(&self, key: &str) -> Option<String> {
+                self.inner.get(key).await
+            }
+            async fn set(&self, key: &str, value: String, ttl: Option<Duration>) {
+                self.inner.set(key, value, ttl).await;
+            }
+            async fn delete(&self, key: &str) {
+                self.inner.delete(key).await;
+            }
+            async fn incr(
+                &self,
+                key: &str,
+                by: f64,
+                ttl: Option<Duration>,
+            ) -> oxllm_core::Result<f64> {
+                self.inner.incr(key, by, ttl).await
+            }
+            async fn incr_if_below(
+                &self,
+                key: &str,
+                by: f64,
+                ceiling: f64,
+                ttl: Option<Duration>,
+            ) -> oxllm_core::Result<IncrResult> {
+                self.inner.incr_if_below(key, by, ceiling, ttl).await
+            }
+            async fn counter_value(&self, key: &str) -> Option<f64> {
+                self.inner.counter_value(key).await
+            }
+            async fn decr_if_exists(&self, key: &str, by: f64) -> oxllm_core::Result<bool> {
+                let result = self.inner.decr_if_exists(key, by).await?;
+                if self.decrements.fetch_add(1, Ordering::SeqCst) == 0 {
+                    self.entered.notify_one();
+                    self.resume.notified().await;
+                }
+                Ok(result)
+            }
+        }
+
+        let cache = Arc::new(PausedRefundCache::default());
+        let mut state = router_budget_state(Some(std::collections::HashMap::from([(
+            "openai".into(),
+            oxllm_core::router::ProviderBudgetConfig {
+                budget_limit: 10.0,
+                time_period: "1d".into(),
+            },
+        )])));
+        state.cache = cache.clone();
+        let deployment = deployment_with_budget(Some(10.0), None);
+        let keys = [deployment_spend_key(DEP_KEY), provider_spend_key("openai")];
+        for key in &keys {
+            state.cache.incr(key, 0.25, None).await.unwrap();
+        }
+        let mut ctx = make_ctx();
+        ctx.budget_estimate = Some(0.5);
+        let reservation = reserve_router_budgets(&state, &deployment, DEP_KEY, &ctx)
+            .await
+            .unwrap();
+        let mut guard = RouterBudgetGuard::new(state.cache.clone(), reservation);
+        let task = tokio::spawn(async move { guard.release().await });
+        tokio::time::timeout(Duration::from_secs(5), cache.entered.notified())
+            .await
+            .unwrap();
+        assert_eq!(state.cache.counter_value(&keys[0]).await, Some(0.25));
+        assert_eq!(state.cache.counter_value(&keys[1]).await, Some(0.75));
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        cache.resume.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while state.cache.counter_value(&keys[1]).await != Some(0.25) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(state.cache.counter_value(&keys[0]).await, Some(0.25));
+        assert_eq!(
+            cache.decrements.load(Ordering::SeqCst),
+            2,
+            "each acquired scope must be refunded once"
+        );
+    }
 
     #[tokio::test]
     async fn spend_snapshot_reads_all_scopes_with_bounded_concurrency() {

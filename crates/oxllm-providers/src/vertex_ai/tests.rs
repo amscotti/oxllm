@@ -1,4 +1,39 @@
 use super::*;
+
+#[test]
+fn multi_region_hosts_and_partner_counting_locations_are_resolved_consistently() {
+    for (location, host) in [
+        ("us", "aiplatform.us.rep.googleapis.com"),
+        ("eu", "aiplatform.eu.rep.googleapis.com"),
+        ("global", "aiplatform.googleapis.com"),
+        ("us-central1", "us-central1-aiplatform.googleapis.com"),
+    ] {
+        let deployment: Deployment = serde_json::from_value(json!({"model_name":"alias", "oxllm_params":{
+            "model":"vertex_ai/claude-haiku-5-5@default", "vertex_project":"project", "vertex_location":location
+        }})).unwrap();
+        assert!(
+            VertexProvider
+                .endpoint_url(&deployment)
+                .starts_with(&format!("https://{host}/"))
+        );
+        assert_eq!(
+            VertexProvider::count_tokens_url(&deployment, Some("alias")).unwrap(),
+            format!(
+                "https://{host}/v1/projects/project/locations/{location}/publishers/anthropic/models/count-tokens:rawPredict"
+            )
+        );
+    }
+    let mut deployment: Deployment = serde_json::from_value(json!({"model_name":"alias", "oxllm_params":{
+        "model":"vertex_ai/claude-haiku-5-5", "vertex_project":"project", "vertex_location":"../other"
+    }})).unwrap();
+    assert!(VertexProvider::count_tokens_url(&deployment, None).is_err());
+    deployment.oxllm_params.extra.remove("vertex_location");
+    assert!(
+        VertexProvider::count_tokens_url(&deployment, None)
+            .unwrap()
+            .contains("/locations/us-east5/")
+    );
+}
 use oxllm_core::Endpoint;
 use oxllm_core::deployment::{Deployment, OxllmParams};
 use oxllm_core::provider::{ChatProvider, Provider, ResolvedCredentials};
@@ -167,7 +202,7 @@ fn transform_request_gemini_strips_vertex_prefix() {
     "stream": false,
     });
     let out = ChatProvider::transform_request(&PROVIDER, &req, &dep).expect("ok");
-    assert_eq!(out["model"], "gemini-1.5-pro");
+    assert_eq!(out["model"], "google/gemini-1.5-pro");
     assert_eq!(out["temperature"], 0.5);
     assert_eq!(out["messages"][0]["content"], "Hi");
 }
@@ -212,7 +247,7 @@ fn transform_request_gemini_wildcard_uses_request_model() {
     "messages": [],
     });
     let out = ChatProvider::transform_request(&PROVIDER, &req, &dep).expect("ok");
-    assert_eq!(out["model"], "gemini-2.0-flash");
+    assert_eq!(out["model"], "google/gemini-2.0-flash");
 }
 
 // ---------------------------------------------------------------------------
@@ -497,7 +532,7 @@ fn embedding_transform_request_strips_vertex_prefix() {
     "dimensions": 768,
     });
     let out = EmbeddingProvider::transform_request(&PROVIDER, &req, &dep).expect("ok");
-    assert_eq!(out["model"], "text-embedding-005");
+    assert_eq!(out["model"], "google/text-embedding-005");
     assert_eq!(out["input"], "hello world");
     assert_eq!(out["dimensions"], 768);
 }
@@ -510,7 +545,7 @@ fn embedding_transform_request_wildcard_uses_request_model() {
     "input": ["a", "b"],
     });
     let out = EmbeddingProvider::transform_request(&PROVIDER, &req, &dep).expect("ok");
-    assert_eq!(out["model"], "text-multilingual-embedding-002");
+    assert_eq!(out["model"], "google/text-multilingual-embedding-002");
     assert_eq!(out["input"], json!(["a", "b"]));
 }
 

@@ -326,7 +326,7 @@ impl<'a> PassthroughRequest<'a> {
 /// `authorization`, `host`, `content-length`, `transfer-encoding`,
 /// `x-oxllm-*`, and `x-forwarded-*` are deliberately absent — those are
 /// either set by [`send_upstream`] itself or are proxy-internal.
-const FORWARDABLE_CLIENT_HEADERS: &[&str] = &["anthropic-beta", "accept"];
+const FORWARDABLE_CLIENT_HEADERS: &[&str] = &["anthropic-beta", "accept", "traceparent", "baggage"];
 
 /// Filter a client request's headers down to a vetted allowlist safe to
 /// forward upstream. Used by the native Anthropic passthrough (and any other
@@ -396,6 +396,7 @@ async fn hooked_raw(
     };
     if !request_body.is_null() {
         crate::security::check_json_depth(&request_body, crate::security::MAX_JSON_DEPTH)?;
+        crate::orchestration::request_controls::validate(&request_body)?;
     }
 
     require_inference_model(upstream_path, effective_model, &request_body)?;
@@ -569,6 +570,27 @@ async fn hooked_raw(
         req.body
     };
 
+    let body_to_send = if endpoint_path(upstream_path) == "messages/count_tokens" {
+        let input: Value = serde_json::from_slice(&body_to_send)
+            .map_err(|_| ApiError::bad_request("invalid token-counting body"))?;
+        let model = resolve_raw_model(&deployment, input.get("model").and_then(Value::as_str))?;
+        let model = if deployment.provider_slug() == "vertex_ai" {
+            model
+                .rsplit('/')
+                .next()
+                .unwrap_or(&model)
+                .split('@')
+                .next()
+                .unwrap_or(&model)
+        } else {
+            &model
+        };
+        let normalized = oxllm_providers::anthropic::count_tokens::normalize_request(&input, model)
+            .map_err(ApiError::from)?;
+        Bytes::from(normalized.to_string())
+    } else {
+        body_to_send
+    };
     let reservation = match crate::orchestration::budget::reserve_router_budgets(
         state,
         &deployment,
@@ -725,6 +747,7 @@ async fn raw_forward(
     };
     if !request_body.is_null() {
         crate::security::check_json_depth(&request_body, crate::security::MAX_JSON_DEPTH)?;
+        crate::orchestration::request_controls::validate(&request_body)?;
     }
     require_inference_model(upstream_path, req.model, &request_body)?;
     let resolved_model = resolve_model(state, req.model, &request_body, req.provider_hint)?;
@@ -893,7 +916,14 @@ pub(crate) fn validate_raw_endpoint(
 ) -> Result<(), ApiError> {
     let path = endpoint_path(path);
     let slug = deployment.provider_slug();
-    if (path == "messages" || path.starts_with("messages/")) && slug != "anthropic" {
+    let partner_count = path == "messages/count_tokens"
+        && (slug == "vertex_ai"
+            || (slug == "azure_ai"
+                && oxllm_providers::azure_ai::AzureAiProvider::is_anthropic(deployment)));
+    if (path == "messages" || path.starts_with("messages/"))
+        && slug != "anthropic"
+        && !partner_count
+    {
         return Err(ApiError::bad_request(
             "native Messages passthrough requires an Anthropic deployment; use /v1/messages for translation",
         ));
@@ -1082,12 +1112,24 @@ pub(crate) async fn send_upstream_tracked(
     ApiError,
 > {
     let params = &deployment.oxllm_params;
+    let control_request = ctx
+        .as_ref()
+        .map(|ctx| ctx.request_body.clone())
+        .unwrap_or_else(|| {
+            std::sync::Arc::new(if is_json_content_type(content_type) {
+                serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            })
+        });
+    crate::orchestration::request_controls::validate(&control_request)?;
     let body = if !body.is_empty()
         && is_json_content_type(content_type)
-        && (params
-            .extra_body
-            .as_ref()
-            .is_some_and(|extra| !extra.is_empty())
+        && (crate::orchestration::request_controls::contains(&control_request)
+            || params
+                .extra_body
+                .as_ref()
+                .is_some_and(|extra| !extra.is_empty())
             || params
                 .additional_drop_params
                 .as_ref()
@@ -1110,7 +1152,29 @@ pub(crate) async fn send_upstream_tracked(
     };
     let creds = resolve_credentials(state, deployment).await?;
     let provider = state.registry.resolve_for_deployment(deployment);
-    let auth_headers = provider_auth_headers(provider, deployment, &creds)?;
+    let mut auth_headers = provider_auth_headers(provider, deployment, &creds)?;
+    crate::orchestration::upstream::merge_extra_headers(&mut auth_headers, deployment);
+    for (name, value) in extra_headers {
+        if name == "anthropic-beta" {
+            let value = value
+                .to_str()
+                .map_err(|_| ApiError::bad_request("invalid anthropic-beta header"))?;
+            crate::orchestration::upstream::merge_anthropic_beta_headers(
+                &mut auth_headers,
+                vec![value.into()],
+            );
+        }
+    }
+    if deployment.provider_slug() == "anthropic"
+        && is_json_content_type(content_type)
+        && let Ok(request) = serde_json::from_slice::<Value>(&body)
+        && oxllm_providers::anthropic::uses_message_output_config(&request)
+    {
+        crate::orchestration::upstream::merge_anthropic_beta_headers(
+            &mut auth_headers,
+            vec![oxllm_providers::anthropic::BETA_MID_CONVERSATION_OUTPUT_CONFIG.into()],
+        );
+    }
     let mut headers = reqwest::header::HeaderMap::new();
     for (key, value) in &auth_headers {
         let name = reqwest::header::HeaderName::from_bytes(key.as_bytes())
@@ -1127,31 +1191,10 @@ pub(crate) async fn send_upstream_tracked(
     // proxy-specific headers (`x-oxllm-*`, `x-forwarded-*`) must never be
     // added by the filtering helper.
     for (name, value) in extra_headers {
-        headers.insert(name.clone(), value.clone());
-    }
-
-    if deployment.provider_slug() == "anthropic" && is_json_content_type(content_type) {
-        if let Ok(request) = serde_json::from_slice::<Value>(&body) {
-            if oxllm_providers::anthropic::uses_message_output_config(&request) {
-                let beta = oxllm_providers::anthropic::BETA_MID_CONVERSATION_OUTPUT_CONFIG;
-                let existing = headers
-                    .get("anthropic-beta")
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or("");
-                if !existing.split(',').any(|tag| tag.trim() == beta) {
-                    let combined = if existing.is_empty() {
-                        beta.to_string()
-                    } else {
-                        format!("{existing}, {beta}")
-                    };
-                    headers.insert(
-                        "anthropic-beta",
-                        reqwest::header::HeaderValue::from_str(&combined)
-                            .map_err(|_| ApiError::internal("invalid feature header"))?,
-                    );
-                }
-            }
+        if name == "anthropic-beta" {
+            continue;
         }
+        headers.insert(name.clone(), value.clone());
     }
 
     if let Some(ct) = content_type {
@@ -1160,9 +1203,8 @@ pub(crate) async fn send_upstream_tracked(
         }
     }
 
-    let timeout_secs = deployment
-        .oxllm_params
-        .timeout
+    let timeout_secs = crate::orchestration::request_controls::seconds(&control_request, "timeout")
+        .or(deployment.oxllm_params.timeout)
         .unwrap_or(DEFAULT_TIMEOUT_SECS as f64);
 
     let streaming = ctx.is_some()
@@ -1190,7 +1232,11 @@ pub(crate) async fn send_upstream_tracked(
     );
     let response = if streaming {
         tokio::time::timeout(
-            crate::orchestration::upstream::resolve_stream_idle_timeout(deployment, &state.config),
+            crate::orchestration::upstream::resolve_stream_idle_timeout_for_request(
+                deployment,
+                &state.config,
+                &control_request,
+            ),
             send,
         )
         .await
@@ -1237,8 +1283,11 @@ pub(crate) fn meter_native_stream(
     use crate::orchestration::stream::{StreamExit, finish_passthrough_stream};
     use futures_util::StreamExt;
     let state = state.clone();
-    let idle =
-        crate::orchestration::upstream::resolve_stream_idle_timeout(&deployment, &state.config);
+    let idle = crate::orchestration::upstream::resolve_stream_idle_timeout_for_request(
+        &deployment,
+        &state.config,
+        &ctx.request_body,
+    );
     let (parts, body) = response.into_parts();
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(16);
     state
@@ -1692,6 +1741,45 @@ pub(crate) fn build_native_upstream_url(
     requested_model: Option<&str>,
 ) -> Result<String, ApiError> {
     let endpoint = endpoint_path(upstream_path);
+    if endpoint == "messages/count_tokens" {
+        let url = match deployment.provider_slug() {
+            "anthropic" => {
+                let mut url = url::Url::parse(
+                    deployment
+                        .oxllm_params
+                        .api_base
+                        .as_deref()
+                        .unwrap_or("https://api.anthropic.com/v1"),
+                )
+                .map_err(|_| ApiError::internal("invalid Anthropic API base"))?;
+                let path = url.path().trim_end_matches('/');
+                let path = if path.ends_with("/messages/count_tokens") {
+                    path.to_string()
+                } else if path.ends_with("/messages") {
+                    format!("{path}/count_tokens")
+                } else {
+                    format!("{path}/messages/count_tokens")
+                };
+                url.set_path(&path);
+                Some(url.to_string())
+            }
+            "vertex_ai" => Some(
+                oxllm_providers::vertex_ai::VertexProvider::count_tokens_url(
+                    deployment,
+                    requested_model,
+                )
+                .map_err(ApiError::from)?,
+            ),
+            "azure_ai" => Some(
+                oxllm_providers::azure_ai::AzureAiProvider::count_tokens_url(deployment)
+                    .map_err(ApiError::from)?,
+            ),
+            _ => None,
+        };
+        if let Some(url) = url {
+            return merge_base_path_query(&url, "", query);
+        }
+    }
     if deployment.provider_slug() == "azure"
         && matches!(
             endpoint,

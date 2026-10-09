@@ -22,7 +22,7 @@ pub use types::{
 };
 
 /// Latest schema version applied by `Database::migrate`.
-pub const SCHEMA_VERSION: i64 = 14;
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// Maximum spend-log rows removed by one retention transaction.
 pub const SPEND_PRUNE_BATCH_SIZE: i64 = 1_000;

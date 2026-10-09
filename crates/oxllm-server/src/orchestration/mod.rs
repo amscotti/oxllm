@@ -16,8 +16,11 @@
 
 pub(crate) mod budget;
 pub(crate) mod chat;
+mod lifecycle;
 pub(crate) mod outcomes;
+pub(crate) mod request_controls;
 pub(crate) mod stream;
+mod stream_start;
 pub(crate) mod unary;
 pub(crate) mod upstream;
 pub(crate) mod usage;
@@ -83,6 +86,7 @@ pub(crate) const ROUTER_DECISION_HEADER: &str = "x-oxllm-router-decision";
 /// header absence as "no routing decision completed", never as a routing
 /// outcome in itself.
 pub(crate) fn apply_router_headers(response: &mut Response, ctx: &CallContext) {
+    crate::pipeline::stamp_deployment_headers(response, ctx);
     if let Some(strategy) = ctx.router_strategy {
         set_header(response, ROUTER_STRATEGY_HEADER, strategy.as_str());
     }
@@ -453,20 +457,26 @@ pub(crate) fn build_cache_hit_response(
     stream: bool,
     ctx: &CallContext,
 ) -> Response {
+    let mut public = cached.clone();
+    crate::pipeline::normalize_client_response(
+        &mut public,
+        crate::pipeline::public_response_model(ctx),
+    );
     let mut resp = if stream {
-        let body = format!("data: {cached}\n\ndata: [DONE]\n\n");
+        let body = format!("data: {public}\n\ndata: [DONE]\n\n");
         axum::response::Response::builder()
             .status(axum::http::StatusCode::OK)
             .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
             .body(axum::body::Body::from(body))
             .unwrap_or_else(|_| ApiError::internal("failed to build sse body").into_response())
     } else {
-        Json(cached.clone()).into_response()
+        Json(public).into_response()
     };
     set_cost_header(&mut resp, cached, default_model, ctx);
     set_header(&mut resp, CACHE_HIT_HEADER, "true");
     stamp_request_id_header(&mut resp, request_id);
     apply_ratelimit_headers(&mut resp, &ctx.ratelimit_info, ctx.is_master);
+    apply_router_headers(&mut resp, ctx);
     resp
 }
 

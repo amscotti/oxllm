@@ -391,10 +391,7 @@ async fn unpriced_reported_alias_keeps_the_known_serving_cost() {
         .parse()
         .unwrap();
     assert!((cost - 0.000075).abs() < 1e-12);
-    assert_eq!(
-        response.json::<Value>().await.unwrap()["model"],
-        "unpriced-reported-alias"
-    );
+    assert_eq!(response.json::<Value>().await.unwrap()["model"], "gpt-4o");
     upstream.assert_hits(1);
     let _ = handle.shutdown_tx.send(());
 }

@@ -81,7 +81,7 @@ pub struct ModelInfoQuery {
 /// client-facing `model_name`. YAML-configured rows carry no `model_id`, so
 /// clients can tell deletable (DB-backed) models from config-managed ones.
 ///
-/// The response is capped at [`super::SCOPE_LIST_LIMIT`] rows and carries a
+/// The response is capped at `SCOPE_LIST_LIMIT` rows and carries a
 /// top-level `truncated` boolean (the admin table reads it to warn that the
 /// list is incomplete), matching the scope list endpoints.
 pub async fn list_models(
@@ -237,7 +237,7 @@ pub struct AddModelRequest {
 /// rebuilt), not at write time. When `ENCRYPTION_KEY` is set, every secret
 /// field in `oxllm_params` (not just `api_key`) is encrypted (AES-256-GCM)
 /// before storage and decrypted again at load time — see
-/// [`encrypt_stored_secrets`].
+/// the internal `encrypt_stored_secrets` helper.
 ///
 /// **One deployment per `model_name` via this API (intentional).** Unlike
 /// the reference, which lets operators add multiple deployments under a shared

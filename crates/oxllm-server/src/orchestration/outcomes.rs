@@ -135,17 +135,17 @@ pub(crate) fn is_retryable_status(status: reqwest::StatusCode) -> bool {
 /// the primary fails — an operator's `fallbacks: [{primary: [secondary]}]`
 /// exists to rescue precisely this scenario.
 ///
-/// Deliberate divergence from the reference (which falls back on ANY primary
-/// exception, 400 included): request-content 4xx (400/413/422/…) do NOT
-/// become fallback-eligible here — an abusive client must not be able to
-/// fan one malformed request across every configured deployment. Only
-/// statuses that say something about the *deployment* fan out.
+/// Request-content 4xx (400/413/422/…) are terminal by default. An explicit
+/// zero allowed-fails entry, including the mapping from
+/// `BadRequestErrorRetries: 0`, opts that status into sibling/configured
+/// fallback. A zero retry count disables same-deployment retries, not failover.
 pub(crate) fn is_deployment_fault_status(status: u16) -> bool {
     matches!(status, 401 | 403 | 404)
 }
 
 /// An explicit zero allowed-fails entry opts a client status into immediate
-/// deployment failover. Other request-content errors remain terminal.
+/// deployment failover. Retry counts and fallback eligibility are independent;
+/// other request-content errors remain terminal.
 pub(crate) fn explicitly_allows_client_fallback(
     state: &crate::state::AppState,
     status: u16,

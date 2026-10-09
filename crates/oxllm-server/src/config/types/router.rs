@@ -171,7 +171,7 @@ impl RoutingKnobs {
     /// status is not already present, a status-map retry count:
     /// `TimeoutErrorRetries` is 408 only (504 is not a timeout),
     /// `RateLimitErrorRetries` is 429, `ContentPolicyViolationErrorRetries` is
-    /// 400, and `InternalServerErrorRetries` is 500/502/503/504.
+    /// 400, and `InternalServerErrorRetries` is 500/502/503/504/529.
     /// `BadRequestErrorRetries` and `AuthenticationErrorRetries` are accepted
     /// only at 0, which writes `allowed_fails_policy` for 400/422 and 401/403
     /// and a zero retry count when that status is still unset. Any other value
@@ -251,7 +251,7 @@ impl RoutingKnobs {
                     ));
                 }
                 "InternalServerErrorRetries" => {
-                    let resolved = ["500", "502", "503", "504"]
+                    let resolved = ["500", "502", "503", "504", "529"]
                         .into_iter()
                         .map(|code| self.insert_retry_status_if_absent(code, count))
                         .max()
@@ -259,7 +259,7 @@ impl RoutingKnobs {
                     exception.internal_server_error_retries = Some(resolved);
                     touched_exception = true;
                     notes.push(format!(
-                        "InternalServerErrorRetries={count} -> internal_server_error_retries and retry_policy 500, 502, 503, 504"
+                        "InternalServerErrorRetries={count} -> internal_server_error_retries and retry_policy 500, 502, 503, 504, 529"
                     ));
                 }
                 "BadRequestErrorRetries" => {
@@ -356,6 +356,8 @@ pub struct RouterSettings {
     /// feature is configured (`prompt_caching_enabled`, router budgets,
     /// `enable_health_check_routing` respectively). Unset means no optional
     /// checks (health routing, when enabled, always runs).
+    /// `session_affinity` is also accepted as a routing-strategy alias when no
+    /// explicit global routing strategy is set.
     #[serde(default)]
     pub optional_pre_call_checks: Option<Vec<String>>,
     /// Configuration for the `complexity_router` strategy: per-tier model

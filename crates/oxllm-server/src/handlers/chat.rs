@@ -90,6 +90,7 @@ pub(crate) async fn chat_completions_inner(
             "missing or empty required field: 'messages'",
         ));
     }
+    crate::orchestration::request_controls::validate(&request_body)?;
 
     crate::pipeline::check_model_acl(
         auth,
@@ -132,16 +133,19 @@ pub(crate) async fn chat_completions_inner(
     let orchestrator = ChatOrchestrator::new(&state, pipeline, auth);
     // The retry/fallback chain runs in this future, so transport-only beta
     // flags follow every attempt without adding them to the prompt JSON.
-    crate::orchestration::upstream::CLIENT_ANTHROPIC_BETAS
+    crate::orchestration::upstream::CLIENT_TRACE_HEADERS
         .scope(
-            crate::orchestration::upstream::client_anthropic_betas(headers),
-            orchestrator.run(
-                &model,
-                &request_body,
-                is_stream,
-                traceparent.as_deref(),
-                session_id,
-                tags.first().cloned(),
+            crate::orchestration::upstream::client_trace_headers(headers),
+            crate::orchestration::upstream::CLIENT_ANTHROPIC_BETAS.scope(
+                crate::orchestration::upstream::client_anthropic_betas(headers),
+                orchestrator.run(
+                    &model,
+                    &request_body,
+                    is_stream,
+                    traceparent.as_deref(),
+                    session_id,
+                    tags.first().cloned(),
+                ),
             ),
         )
         .await

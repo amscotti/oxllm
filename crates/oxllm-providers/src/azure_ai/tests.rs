@@ -59,7 +59,7 @@ fn foundry_urls_accept_roots_full_endpoints_and_existing_query_versions() {
 }
 
 #[test]
-fn claude_uses_native_shape_and_azure_auth_without_a_duplicate_native_key() {
+fn claude_uses_native_shape_and_anthropic_auth_without_a_duplicate_azure_key() {
     let provider = AzureAiProvider;
     for base in [
         "https://resource.services.ai.azure.com",
@@ -91,9 +91,9 @@ fn claude_uses_native_shape_and_azure_auth_without_a_duplicate_native_key() {
             &ResolvedCredentials::from_key("key"),
             &mut headers,
         );
-        assert_eq!(headers["api-key"], "key");
+        assert_eq!(headers["x-api-key"], "key");
         assert_eq!(headers["anthropic-version"], "2023-06-01");
-        assert!(!headers.contains_key("x-api-key"));
+        assert!(!headers.contains_key("api-key"));
         assert!(!headers.contains_key("authorization"));
     }
 }
@@ -135,6 +135,127 @@ fn compatible_messages_drop_native_extensions_without_mutating_fallback_input() 
     assert!(body["messages"][0].get("cache_control").is_none());
     assert!(body["messages"][1].get("thinking_blocks").is_none());
     assert!(request["messages"][1].get("thinking_blocks").is_some());
+}
+
+#[test]
+fn compatible_text_arrays_strip_anthropic_controls_before_collapsing() {
+    let request = json!({"messages":[
+        {"role":"user", "content":[
+            {"type":"text", "text":"one", "cache_control":{"type":"ephemeral", "ttl":"1h"}},
+            {"type":"text", "text":"two", "cache_control":null}
+        ]},
+        {"role":"user", "content":[{"type":"text", "text":"null marker", "prompt_cache_breakpoint":null}]},
+        {"role":"user", "content":[]}
+    ]});
+    let original = request.clone();
+    let body = ChatProvider::transform_request(
+        &AzureAiProvider,
+        &request,
+        &deployment("grok", "https://resource.services.ai.azure.com/models"),
+    )
+    .unwrap();
+    assert_eq!(body["messages"][0]["content"], "one\ntwo");
+    assert_eq!(body["messages"][1]["content"], "null marker");
+    assert_eq!(body["messages"][2]["content"], json!([]));
+    assert_eq!(request, original);
+}
+
+#[test]
+fn compatible_mixed_and_text_only_content_preserves_native_openai_marks() {
+    let marker = json!({"mode":"explicit", "ttl":"30m", "custom":"kept"});
+    let request = json!({"prompt_cache_options":{"mode":"explicit", "ttl":"30m"}, "messages":[
+        {"role":"user", "content":[
+            {"type":"text", "text":"look", "cache_control":{"type":"ephemeral"}, "prompt_cache_breakpoint":marker},
+            {"type":"image_url", "image_url":{"url":"https://example.test/image.png"}, "cache_control":{"type":"ephemeral"}}
+        ]},
+        {"role":"user", "content":[
+            {"type":"text", "text":"one", "cache_control":{"type":"ephemeral"}, "prompt_cache_breakpoint":marker},
+            {"type":"text", "text":"two", "cache_control":{"type":"ephemeral"}}
+        ]}
+    ]});
+    let original = request.clone();
+    let body = ChatProvider::transform_request(
+        &AzureAiProvider,
+        &request,
+        &deployment("gpt-6-sol", "https://resource.services.ai.azure.com/models"),
+    )
+    .unwrap();
+    for message in body["messages"].as_array().unwrap() {
+        let blocks = message["content"]
+            .as_array()
+            .expect("native markers require block content");
+        assert_eq!(blocks[0]["prompt_cache_breakpoint"], marker);
+        assert!(
+            blocks
+                .iter()
+                .all(|block| block.get("cache_control").is_none())
+        );
+    }
+    assert_eq!(
+        body["messages"][0]["content"][1]["image_url"],
+        request["messages"][0]["content"][1]["image_url"]
+    );
+    assert_eq!(
+        body["prompt_cache_options"],
+        request["prompt_cache_options"]
+    );
+    assert_eq!(request, original);
+}
+
+#[test]
+fn foundry_cache_injection_uses_the_sanitized_wire_census() {
+    let mut configured = deployment("gpt-6-sol", "https://resource.services.ai.azure.com/models");
+    configured.oxllm_params.cache_control_injection_points =
+        Some(vec![oxllm_core::deployment::CacheControlInjectionPoint {
+            location: "message".into(),
+            role: Some("user".into()),
+            index: None,
+        }]);
+    let messages = (0..5).map(|index| json!({"role":"user", "cache_control":{"type":"ephemeral"},
+        "content":[{"type":"text", "text":format!("message {index}"), "cache_control":{"type":"ephemeral", "ttl":"1h"}}]
+    })).collect::<Vec<_>>();
+    let request = json!({"messages":messages, "prompt_cache_options":null});
+    let original = request.clone();
+    let body = ChatProvider::transform_request(&AzureAiProvider, &request, &configured).unwrap();
+    for message in &body["messages"].as_array().unwrap()[..4] {
+        assert!(message.get("cache_control").is_none());
+        assert!(message["content"][0].get("cache_control").is_none());
+        assert_eq!(
+            message["content"][0]["prompt_cache_breakpoint"],
+            json!({"mode":"explicit"})
+        );
+    }
+    assert_eq!(body["messages"][4]["content"], "message 4");
+    assert_eq!(body["prompt_cache_options"], json!({"mode":"implicit"}));
+    assert_eq!(request, original);
+}
+
+#[test]
+fn compatible_tool_controls_are_stripped_without_touching_schema_properties() {
+    let request = json!({"messages":[{"role":"user", "content":"hello"}], "tools":[
+        {"type":"function", "cache_control":{"type":"ephemeral"}, "function":{
+            "name":"lookup", "cache_control":{"type":"ephemeral", "ttl":"1h"},
+            "parameters":{"type":"object", "properties":{
+                "cache_control":{"type":"string"}, "prompt_cache_breakpoint":{"type":"object"}
+            }}
+        }}
+    ]});
+    let original = request.clone();
+    for model in ["grok", "gpt-6-sol"] {
+        let body = ChatProvider::transform_request(
+            &AzureAiProvider,
+            &request,
+            &deployment(model, "https://resource.services.ai.azure.com/models"),
+        )
+        .unwrap();
+        assert!(body["tools"][0].get("cache_control").is_none());
+        assert!(body["tools"][0]["function"].get("cache_control").is_none());
+        assert_eq!(
+            body["tools"][0]["function"]["parameters"],
+            request["tools"][0]["function"]["parameters"]
+        );
+    }
+    assert_eq!(request, original);
 }
 
 #[test]

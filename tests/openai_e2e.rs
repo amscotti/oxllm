@@ -116,7 +116,7 @@ async fn openai_non_streaming_chat() {
         body["choices"][0]["message"]["content"],
         "Hello from OpenAI!"
     );
-    assert_eq!(body["model"], "gpt-4o");
+    assert_eq!(body["model"], "openai/gpt-4o");
 
     upstream.assert_hits(1);
     handle.shutdown();

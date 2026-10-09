@@ -6,8 +6,7 @@
 //!   endpoint at
 //!   `{base}/v1beta1/projects/{project}/locations/{location}/endpoints/openapi/chat/completions`.
 //!   The request and response are the OpenAI Chat Completions format verbatim,
-//!   so the Gemini transform is a near-identity (we only strip the `vertex_ai/`
-//!   model prefix).
+//!   with publisher-qualified `model` selectors such as `google/gemini-3-flash`.
 //!
 //! - **Anthropic Claude** — Vertex exposes a `:rawPredict` endpoint that takes
 //!   the *native* Anthropic Messages body shape. The endpoint is
@@ -87,7 +86,24 @@ pub fn strip_vertex_prefix(model: &str) -> &str {
 /// (`claude-3-7-sonnet@20250224`, etc.) route to `:rawPredict` without code
 /// changes.
 fn is_anthropic_model(model: &str) -> bool {
-    model.starts_with("claude") || model.starts_with("anthropic")
+    model.starts_with("claude")
+        || model.starts_with("anthropic")
+        || model.starts_with("publishers/anthropic/models/")
+}
+
+fn native_model_id(model: &str) -> &str {
+    model
+        .strip_prefix("publishers/anthropic/models/")
+        .or_else(|| model.strip_prefix("anthropic/"))
+        .unwrap_or(model)
+}
+
+fn openapi_model(model: &str) -> String {
+    if model.starts_with("google/") {
+        model.to_string()
+    } else {
+        format!("google/{model}")
+    }
 }
 
 impl VertexProvider {
@@ -115,7 +131,16 @@ impl VertexProvider {
     /// configuration error (a silent type-mismatch is a debugging trap).
     fn location(deployment: &Deployment) -> Result<String> {
         match deployment.oxllm_params.extra.get("vertex_location") {
-            Some(Value::String(l)) => Ok(l.clone()),
+            Some(Value::String(l))
+                if !l.is_empty()
+                    && l.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                    }) =>
+            {
+                Ok(l.clone())
+            }
+            Some(Value::String(_)) => Err(oxllm_core::Error::Config(
+                "vertex_location must be a non-empty lowercase region, multi-region, or global name".into())),
             Some(other) => Err(oxllm_core::Error::Config(format!(
                 "vertex_ai deployment `vertex_location` must be a string, got {}",
                 other_kind(other)
@@ -140,11 +165,48 @@ impl VertexProvider {
         }
         let location =
             Self::location(deployment).unwrap_or_else(|_| DEFAULT_VERTEX_LOCATION.into());
-        if location == "global" {
-            "https://aiplatform.googleapis.com".into()
-        } else {
-            format!("https://{location}-aiplatform.googleapis.com")
+        match location.as_str() {
+            "global" => "https://aiplatform.googleapis.com".into(),
+            "us" | "eu" => format!("https://aiplatform.{location}.rep.googleapis.com"),
+            _ => format!("https://{location}-aiplatform.googleapis.com"),
         }
+    }
+
+    /// Publisher-level Count Tokens URL for Claude, including its optional
+    /// dedicated counting region rather than the generation model's version.
+    pub fn count_tokens_url(
+        deployment: &Deployment,
+        requested_model: Option<&str>,
+    ) -> Result<String> {
+        let model = Self::resolved_model(&json!({"model":requested_model}), deployment)?;
+        if !is_anthropic_model(&model) {
+            return Err(oxllm_core::Error::BadRequest(
+                "Vertex partner token counting requires a Claude model".into(),
+            ));
+        }
+        let mut counting = deployment.clone();
+        if let Some(location) = deployment
+            .oxllm_params
+            .extra
+            .get("vertex_count_tokens_location")
+            .filter(|value| !value.is_null())
+        {
+            counting
+                .oxllm_params
+                .extra
+                .insert("vertex_location".into(), location.clone());
+        } else if !counting.oxllm_params.extra.contains_key("vertex_location") {
+            counting
+                .oxllm_params
+                .extra
+                .insert("vertex_location".into(), json!("us-east5"));
+        }
+        let project = Self::project(&counting)?;
+        let location = Self::location(&counting)?;
+        let base = Self::base_url(&counting);
+        Ok(format!(
+            "{base}/v1/projects/{project}/locations/{location}/publishers/anthropic/models/count-tokens:rawPredict"
+        ))
     }
 
     /// Resolve the prefix-stripped model id for the *configured* deployment,
@@ -174,6 +236,17 @@ impl VertexProvider {
         } else {
             configured.to_string()
         };
+        for (prefix, publisher) in [
+            ("publishers/google/models/", "google"),
+            ("google/", "google"),
+            ("publishers/anthropic/models/", "anthropic"),
+            ("anthropic/", "anthropic"),
+        ] {
+            if let Some(id) = resolved.strip_prefix(prefix) {
+                validate_model_segment(id)?;
+                return Ok(format!("{publisher}/{id}"));
+            }
+        }
         validate_model_segment(&resolved)?;
         Ok(resolved)
     }
@@ -219,6 +292,7 @@ impl ChatProvider for VertexProvider {
         let model = strip_vertex_prefix(&deployment.oxllm_params.model);
 
         if is_anthropic_model(model) {
+            let model = native_model_id(model);
             format!(
                 "{base}/v1/projects/{project}/locations/{location}/publishers/anthropic/models/{model}:rawPredict"
             )
@@ -276,7 +350,7 @@ impl ChatProvider for VertexProvider {
             // Request-aware endpoint selection resolves wildcard models before
             // constructing the URL; the native body never needs a model field.
             let mut stripped_deployment = deployment.clone();
-            stripped_deployment.oxllm_params.model = model.clone();
+            stripped_deployment.oxllm_params.model = native_model_id(&model).to_string();
             let mut body = AnthropicProvider.transform_request(request, &stripped_deployment)?;
             if let Some(obj) = body.as_object_mut() {
                 obj.remove("model");
@@ -303,9 +377,13 @@ impl ChatProvider for VertexProvider {
                 .copied()
                 .filter(|param| !matches!(*param, "metadata" | "store" | "logit_bias"))
                 .collect::<Vec<_>>();
-            let mut body =
-                crate::openai_compat::build_chat_request_with_params(request, &model, &params);
+            let mut body = crate::openai_compat::build_chat_request_with_params(
+                request,
+                &openapi_model(&model),
+                &params,
+            );
             crate::openai_compat::relax_gemini_unsupported_minimal_effort(&mut body, &model);
+            crate::openai_compat::drop_foreign_thinking_blocks(&mut body);
             Ok(body)
         }
     }
@@ -482,7 +560,7 @@ impl EmbeddingProvider for VertexProvider {
         // (honouring wildcards) and rewrite the `model` field.
         Self::validate_config(deployment)?;
         let model = Self::resolved_model(request, deployment)?;
-        Ok(build_embedding_request(request, &model))
+        Ok(build_embedding_request(request, &openapi_model(&model)))
     }
 
     fn transform_response(&self, body: &Value, _model: &str) -> Result<Value> {

@@ -64,13 +64,23 @@ pub(crate) async fn execute_request_chain(
     is_stream: bool,
     traceparent: Option<&str>,
 ) -> Result<Response, ApiError> {
+    super::request_controls::validate(request_body)?;
     let mut effective_ctx = ctx.clone();
     crate::pipeline::routing::apply_default_tag(state, &mut effective_ctx);
     let ctx = &effective_ctx;
     // `default_fallbacks` rerouting: resolve the effective model BEFORE the
     // retry loop so the whole chain (including the rerouted model's own
     // `fallbacks`) operates on it.
-    let rerouted = resolve_default_fallback(state, auth, primary_model).map(str::to_string);
+    let rerouted = if request_body
+        .get("disable_fallbacks")
+        .and_then(Value::as_bool)
+        == Some(true)
+        || super::request_controls::max_fallbacks(state, request_body) == 0
+    {
+        None
+    } else {
+        resolve_default_fallback(state, auth, primary_model).map(str::to_string)
+    };
     let df_ctx;
     let mut df_body;
     let (primary_model, ctx, request_body) = match &rerouted {
@@ -83,6 +93,7 @@ pub(crate) async fn execute_request_chain(
             // Router observability: the reroute outcome wins over per-pick
             // stamps (a later fallback-chain success re-stamps `fallback`).
             call_ctx.router_decision = Some("default_fallback".to_string());
+            call_ctx.attempted_fallbacks = call_ctx.attempted_fallbacks.saturating_add(1);
             df_ctx = RequestContext {
                 model: default_model.clone(),
                 ..ctx.clone()
@@ -116,13 +127,32 @@ pub(crate) async fn execute_request_chain(
     .await;
 
     let mut attempted_fallbacks: HashSet<String> = HashSet::new();
+    match &primary_outcome {
+        ModelOutcome::ContextWindow(error)
+        | ModelOutcome::ContentPolicy(error)
+        | ModelOutcome::Retryable(error)
+        | ModelOutcome::Client(error) => {
+            crate::pipeline::record_fallback_error(call_ctx, error);
+        }
+        ModelOutcome::Success(_) => {}
+    }
     attempted_fallbacks.insert(primary_model.to_string());
-    let max_fallbacks = state.router.config().max_fallbacks;
+    let max_fallbacks = super::request_controls::max_fallbacks(state, request_body);
     let result = match primary_outcome {
         ModelOutcome::Success(resp) => Ok(resp),
         ModelOutcome::ContextWindow(_) => {
-            let mut cwf = state.router.context_window_fallbacks_for(primary_model);
-            cwf.extend(state.router.fallbacks_for(primary_model));
+            let mut cwf = super::request_controls::fallbacks(
+                request_body,
+                "context_window_fallbacks",
+                primary_model,
+                state.router.context_window_fallbacks_for(primary_model),
+            );
+            cwf.extend(super::request_controls::fallbacks(
+                request_body,
+                "fallbacks",
+                primary_model,
+                state.router.fallbacks_for(primary_model),
+            ));
             if let Some(resp) = try_fallback_chain(
                 state,
                 call_ctx,
@@ -143,8 +173,18 @@ pub(crate) async fn execute_request_chain(
             }
         }
         ModelOutcome::ContentPolicy(_) => {
-            let mut cpf = state.router.content_policy_fallbacks_for(primary_model);
-            cpf.extend(state.router.fallbacks_for(primary_model));
+            let mut cpf = super::request_controls::fallbacks(
+                request_body,
+                "content_policy_fallbacks",
+                primary_model,
+                state.router.content_policy_fallbacks_for(primary_model),
+            );
+            cpf.extend(super::request_controls::fallbacks(
+                request_body,
+                "fallbacks",
+                primary_model,
+                state.router.fallbacks_for(primary_model),
+            ));
             if let Some(resp) = try_fallback_chain(
                 state,
                 call_ctx,
@@ -165,7 +205,12 @@ pub(crate) async fn execute_request_chain(
             }
         }
         ModelOutcome::Retryable(_) => {
-            let fbs = state.router.fallbacks_for(primary_model);
+            let fbs = super::request_controls::fallbacks(
+                request_body,
+                "fallbacks",
+                primary_model,
+                state.router.fallbacks_for(primary_model),
+            );
             if let Some(resp) = try_fallback_chain(
                 state,
                 call_ctx,
@@ -199,7 +244,12 @@ pub(crate) async fn execute_request_chain(
             if is_deployment_fault_status(e.status.as_u16())
                 || super::outcomes::explicitly_allows_client_fallback(state, e.status.as_u16()) =>
         {
-            let fbs = state.router.fallbacks_for(primary_model);
+            let fbs = super::request_controls::fallbacks(
+                request_body,
+                "fallbacks",
+                primary_model,
+                state.router.fallbacks_for(primary_model),
+            );
             if let Some(resp) = try_fallback_chain(
                 state,
                 call_ctx,
@@ -353,6 +403,7 @@ async fn try_fallback_chain(
         }
 
         fallbacks_tried += 1;
+        call_ctx.attempted_fallbacks = call_ctx.attempted_fallbacks.saturating_add(1);
         match try_model_with_retries(
             state,
             call_ctx,
@@ -374,6 +425,7 @@ async fn try_fallback_chain(
                 return Some(resp);
             }
             ModelOutcome::Client(e) => {
+                crate::pipeline::record_fallback_error(call_ctx, &e);
                 let selector_rejected = crate::pipeline::routing::is_routing_error(&e);
                 last_error = Some(e);
                 if selector_rejected {
@@ -384,7 +436,9 @@ async fn try_fallback_chain(
             outcome @ (ModelOutcome::ContextWindow(_)
             | ModelOutcome::ContentPolicy(_)
             | ModelOutcome::Retryable(_)) => {
-                last_error = Some(outcome.into_api_error());
+                let error = outcome.into_api_error();
+                crate::pipeline::record_fallback_error(call_ctx, &error);
+                last_error = Some(error);
             }
         }
     }
@@ -408,13 +462,7 @@ async fn try_fallback_chain(
 /// a deployment is it marked as cooling, allowing the outer loop to pick a
 /// different deployment.
 ///
-/// U18: the reference global `num_retries` was
-/// stamped onto exceptions, overwriting a request-level override. oxllm does
-/// NOT have this bug because it has **no per-request `num_retries` override
-/// mechanism** — the retry budget is resolved solely from the router config
-/// via `retries_for_status_model(status, model)`. There is nothing to
-/// overwrite. (A request-level override is a future feature; see TODO.) This
-/// is a missing-feature gap, not a correctness bug.
+/// Explicit status policies win over request, deployment and router retry budgets.
 ///
 /// Two routing features hook into this loop:
 ///
@@ -439,7 +487,7 @@ async fn try_model_with_retries(
     if let Err(error) = crate::pipeline::check_customer_model(state, call_ctx, model).await {
         return ModelOutcome::Client(error);
     }
-    let default_retries = state.router.retries_for_status_model(0, model);
+    let default_retries = super::request_controls::retries(state, model, None, request_body, 0);
     let mut last_outcome: Option<ModelOutcome> = None;
 
     // Bedrock image-URL inlining. Bedrock's Converse and InvokeModel APIs
@@ -566,7 +614,7 @@ async fn try_model_with_retries(
         .deployments
         .len()
         .max(1)
-        .saturating_mul((default_retries as usize + 1).max(1));
+        .saturating_mul((default_retries as usize).saturating_add(1));
     'deployments: for _ in 0..max_picks {
         let dep_idx = match crate::pipeline::routing::try_pick_deployment_index(state, &pick_ctx) {
             Ok(Some(index)) => index,
@@ -649,17 +697,13 @@ async fn try_model_with_retries(
         // ensure the counter is visible to the next `pick_deployment_index`
         // caller as soon as we commit to a deployment.
         //
-        // Every early-return path below performs the matching decrement. Inside
-        // the retry loop, the decrement runs after each attempt; a retry
-        // re-reserves the slot before the next attempt so the count stays
-        // balanced. The in-flight/latency/usage stores are keyed by the stable
-        // per-deployment key (`cooldown_key`), so sibling deployments sharing a
-        // model name + provider model get distinct counters (a fast primary and
-        // a slow fallback no longer share a least-busy/latency/usage bucket).
-        state.router.record_in_flight(&cooldown_key, 1);
+        // The owner releases synchronously on cancellation. Retries re-reserve
+        // the same slot; a prepared stream transfers it to the detached pump.
+        let mut in_flight =
+            super::lifecycle::InFlightGuard::new(state.router.clone(), &cooldown_key);
 
         if let Err(e) = check_deployment_limits(state, deployment, &dep_key).await {
-            state.router.record_in_flight(&cooldown_key, -1);
+            in_flight.release();
             tracing::info!(
             deployment = %dep_key,
             "deployment rate-limited; marking cooling and trying next"
@@ -684,7 +728,7 @@ async fn try_model_with_retries(
         {
             Ok(reservation) => reservation,
             Err(budget_err) => {
-                state.router.record_in_flight(&cooldown_key, -1);
+                in_flight.release();
                 tracing::info!(
                 deployment = %dep_key,
                 "deployment over budget; marking cooling and trying next"
@@ -713,14 +757,17 @@ async fn try_model_with_retries(
             }
         };
 
+        let mut budget_guard =
+            super::budget::RouterBudgetGuard::new(state.cache.clone(), budget_reservation.clone());
+
         let provider = match resolve_provider(state, deployment) {
             Ok(p) => p,
             Err(e) => {
                 // Registry miss / unknown provider is a deployment-level
                 // fault, not a client error for the whole model. Cool this
                 // deployment and try siblings (same as credential failure).
-                state.router.record_in_flight(&cooldown_key, -1);
-                budget_reservation.release(&state.cache).await;
+                in_flight.release();
+                budget_guard.release().await;
                 tracing::warn!(
                     deployment = %cooldown_key,
                     error = ?e,
@@ -737,11 +784,23 @@ async fn try_model_with_retries(
         };
 
         let mut attempt: u32 = 0;
-        let mut max_retries = default_retries;
+        let mut max_retries =
+            super::request_controls::retries(state, model, Some(deployment), request_body, 0);
         let mut exhausted = false;
         let mut thinking_stripped = false;
         let mut stripped_body: Option<Value> = None;
+        let mut upstream_attempts = 0_u32;
         while !exhausted {
+            if upstream_attempts > 0 {
+                call_ctx.attempted_retries = call_ctx.attempted_retries.saturating_add(1);
+            }
+            upstream_attempts = upstream_attempts.saturating_add(1);
+            if upstream_attempts > 1 {
+                call_ctx.max_retries =
+                    Some(max_retries.saturating_add(u32::from(thinking_stripped)));
+            }
+            call_ctx.upstream_start_time = None;
+            call_ctx.upstream_end_time = None;
             let start = Instant::now();
             let body = stripped_body.as_ref().unwrap_or(request_body);
             let upstream_result = super::upstream::attempt_upstream_with_context(
@@ -754,15 +813,38 @@ async fn try_model_with_retries(
                 Some(call_ctx),
             )
             .await;
-            // For a stream that got its 2xx headers, the in-flight slot stays
-            // RESERVED until the stream task drains: `LeastBusy` must count
-            // active streams, not just connect-time. `handle_stream_success`
-            // decrements on every exit path of the spawned task (mirroring the
-            // budget-reservation keep/release pattern). Non-streams — and
-            // streams that failed BEFORE any 2xx headers (the slot was never
-            // handed to a stream task) — release here as before.
+            let upstream_result = match upstream_result {
+                Ok(response) if is_stream => {
+                    if let Some(chat) = provider.chat() {
+                        super::stream_start::prepare(
+                            response,
+                            chat,
+                            provider.id() == "bedrock",
+                            &call_ctx.request_body,
+                            super::upstream::resolve_stream_idle_timeout_for_request(
+                                deployment,
+                                &state.config,
+                                &call_ctx.request_body,
+                            ),
+                        )
+                        .await
+                        .map(OpenedResponse::Stream)
+                    } else {
+                        Err(UpstreamError::Client {
+                            status: 500,
+                            message: "provider lost chat capability before stream startup".into(),
+                            headers: None,
+                        })
+                    }
+                }
+                Ok(response) => Ok(OpenedResponse::Json(response)),
+                Err(error) => Err(error),
+            };
+            crate::pipeline::record_upstream_timing(call_ctx);
+            // Prepared streams hand the in-flight slot to the pump. Failed
+            // startup attempts release it here before retrying or falling back.
             if !is_stream || upstream_result.is_err() {
-                state.router.record_in_flight(&cooldown_key, -1);
+                in_flight.release();
             }
 
             // Health-check routing: track connectivity per attempt. Only
@@ -799,33 +881,41 @@ async fn try_model_with_retries(
                     // Only record latency for successful attempts. A fast 500
                     // would otherwise look "healthier" than a slow 200 and skew
                     // the latency-based routing strategy (#24). For a stream
-                    // this is the TTFB (headers-arrived elapsed) — the p50/EWMA
+                    // this is the first-content elapsed time — the p50/EWMA
                     // stores must see streaming traffic, not just unary.
                     let elapsed = start.elapsed().as_millis() as u64;
                     state.router.record_latency(&cooldown_key, elapsed);
                     record_deployment_usage(state, &dep_key, &cooldown_key).await;
-                    let result = if is_stream {
-                        handle_stream_success(
-                            response,
-                            deployment.clone(),
-                            provider.clone(),
-                            state.clone(),
-                            call_ctx.clone(),
-                            budget_reservation.clone(),
-                            model.to_string(),
-                        )
-                        .await
-                        .map_err(NonStreamError::Deterministic)
-                    } else {
-                        handle_non_stream_success(
-                            response,
-                            deployment,
-                            &provider,
-                            state,
-                            call_ctx,
-                            &budget_reservation,
-                        )
-                        .await
+                    let result = match response {
+                        OpenedResponse::Stream(response) => {
+                            // This future spawns the pump before any await, so
+                            // both owners transfer in the same poll.
+                            in_flight.hand_off();
+                            budget_guard.disarm();
+                            handle_stream_success(
+                                response,
+                                deployment.clone(),
+                                provider.clone(),
+                                state.clone(),
+                                call_ctx.clone(),
+                                budget_reservation.clone(),
+                                model.to_string(),
+                            )
+                            .await
+                            .map_err(NonStreamError::Deterministic)
+                        }
+                        OpenedResponse::Json(response) => {
+                            handle_non_stream_success(
+                                response,
+                                deployment,
+                                &provider,
+                                state,
+                                call_ctx,
+                                &budget_reservation,
+                                &mut budget_guard,
+                            )
+                            .await
+                        }
                     };
                     match result {
                         Ok(resp) => {
@@ -868,7 +958,7 @@ async fn try_model_with_retries(
                             // post-2xx failures (oversize body, parse,
                             // transform) are not retryable: a sibling would
                             // reproduce them.
-                            budget_reservation.release(&state.cache).await;
+                            budget_guard.release().await;
                             return ModelOutcome::Client(e);
                         }
                         Err(NonStreamError::Transport(e)) => {
@@ -890,7 +980,7 @@ async fn try_model_with_retries(
                                 );
                                 retry_with_backoff(attempt, None).await;
                                 attempt += 1;
-                                state.router.record_in_flight(&cooldown_key, 1);
+                                in_flight.reserve();
                             } else {
                                 exhausted = true;
                             }
@@ -902,7 +992,7 @@ async fn try_model_with_retries(
                     message,
                     headers,
                 }) => {
-                    budget_reservation.release(&state.cache).await;
+                    budget_guard.release().await;
                     // A deployment persistently reporting context-window
                     // errors (e.g. a mis-declared max context) must be
                     // cooled down like any other deployment fault; without
@@ -945,7 +1035,7 @@ async fn try_model_with_retries(
                     message,
                     headers,
                 }) => {
-                    budget_reservation.release(&state.cache).await;
+                    budget_guard.release().await;
                     // Same rationale as ContextWindow: record the failure so
                     // a deployment persistently blocked by upstream policy
                     // is eventually cooled down.
@@ -997,7 +1087,7 @@ async fn try_model_with_retries(
                             "invalid thinking signature; retrying without thinking blocks"
                         );
                         crate::metrics::record_upstream_retry(model, deployment.provider_slug());
-                        state.router.record_in_flight(&cooldown_key, 1);
+                        in_flight.reserve();
                         continue;
                     }
                     // The allowed-fails policy can cool a deployment on
@@ -1032,7 +1122,7 @@ async fn try_model_with_retries(
                             .pre_call
                             .excluded_deployment_keys
                             .push(cooldown_key.clone());
-                        budget_reservation.release(&state.cache).await;
+                        budget_guard.release().await;
                         last_outcome = Some(ModelOutcome::Client(
                             ApiError::upstream(status, message).with_headers(headers),
                         ));
@@ -1046,7 +1136,7 @@ async fn try_model_with_retries(
                         // available again) — intentional, matching the reference.
                         state.router.mark_cooldown_for(&cooldown_key, model);
                     }
-                    budget_reservation.release(&state.cache).await;
+                    budget_guard.release().await;
                     return ModelOutcome::Client(
                         ApiError::upstream(status, message).with_headers(headers),
                     );
@@ -1056,7 +1146,13 @@ async fn try_model_with_retries(
                     message,
                     headers,
                 }) => {
-                    max_retries = state.router.retries_for_status_model(status, model);
+                    max_retries = super::request_controls::retries(
+                        state,
+                        model,
+                        Some(deployment),
+                        request_body,
+                        status,
+                    );
                     last_outcome = Some(ModelOutcome::Retryable(
                         ApiError::upstream(status, message).with_headers(headers.clone()),
                     ));
@@ -1068,7 +1164,7 @@ async fn try_model_with_retries(
                         retry_with_backoff(attempt, retry_after).await;
                         attempt += 1;
                         // Re-reserve the slot decremented above for the next attempt.
-                        state.router.record_in_flight(&cooldown_key, 1);
+                        in_flight.reserve();
                     } else {
                         exhausted = true;
                     }
@@ -1078,7 +1174,13 @@ async fn try_model_with_retries(
                     // retryable upstream 504 (same per-status retry count,
                     // same allowed-fails status bucket); only the health
                     // classification above differs.
-                    max_retries = state.router.retries_for_status_model(504, model);
+                    max_retries = super::request_controls::retries(
+                        state,
+                        model,
+                        Some(deployment),
+                        request_body,
+                        504,
+                    );
                     last_outcome = Some(ModelOutcome::Retryable(ApiError::upstream(504, message)));
                     let limit_reached =
                         allowed_fails_limit_reached(state, &cooldown_key, 504, model);
@@ -1086,7 +1188,7 @@ async fn try_model_with_retries(
                         crate::metrics::record_upstream_retry(model, deployment.provider_slug());
                         retry_with_backoff(attempt, None).await;
                         attempt += 1;
-                        state.router.record_in_flight(&cooldown_key, 1);
+                        in_flight.reserve();
                     } else {
                         exhausted = true;
                     }
@@ -1106,7 +1208,7 @@ async fn try_model_with_retries(
                         crate::metrics::record_upstream_retry(model, deployment.provider_slug());
                         retry_with_backoff(attempt, None).await;
                         attempt += 1;
-                        state.router.record_in_flight(&cooldown_key, 1);
+                        in_flight.reserve();
                     } else {
                         exhausted = true;
                     }
@@ -1117,7 +1219,7 @@ async fn try_model_with_retries(
         // Giving up on this deployment: release the router budget
         // reservation before cooling, so the next candidate picks up a
         // clean slate.
-        budget_reservation.release(&state.cache).await;
+        budget_guard.release().await;
         // U1: the cooldown is applied to
         // `cooldown_key` — the stable per-deployment key, unique per
         // deployment. This means a failed sub-call only cools
@@ -1286,6 +1388,11 @@ enum NonStreamError {
     Deterministic(ApiError),
 }
 
+enum OpenedResponse {
+    Json(reqwest::Response),
+    Stream(super::stream_start::ByteStream),
+}
+
 impl From<ApiError> for NonStreamError {
     fn from(e: ApiError) -> Self {
         NonStreamError::Deterministic(e)
@@ -1341,10 +1448,13 @@ async fn handle_non_stream_success(
     deployment: &Deployment,
     provider: &Arc<dyn oxllm_core::Provider>,
     state: &AppState,
-    call_ctx: &CallContext,
+    call_ctx: &mut CallContext,
     budget_reservation: &super::budget::RouterBudgetReservation,
+    budget_guard: &mut super::budget::RouterBudgetGuard,
 ) -> Result<Response, NonStreamError> {
-    let bytes = read_success_body(upstream_response).await?;
+    let body_result = read_success_body(upstream_response).await;
+    crate::pipeline::record_upstream_timing(call_ctx);
+    let bytes = body_result?;
     let response_body: Value = serde_json::from_slice(&bytes).map_err(|e| {
         tracing::error!(
             error.kind = "serialization",
@@ -1359,7 +1469,7 @@ async fn handle_non_stream_success(
     let chat = provider.chat().ok_or_else(|| {
         ApiError::internal("provider lost chat capability between request and response")
     })?;
-    let transformed = chat
+    let mut transformed = chat
         .transform_response_with_request(
             &response_body,
             &deployment.oxllm_params.model,
@@ -1378,6 +1488,9 @@ async fn handle_non_stream_success(
         record_deployment_tpm(state, &deployment_key(deployment), u.total_tokens).await;
     }
 
+    // Once billing begins, cancellation must not refund an already-settled
+    // scope. Startup cancellation ownership ends at this boundary.
+    budget_guard.disarm();
     let cost = post_success(
         state,
         call_ctx,
@@ -1402,6 +1515,10 @@ async fn handle_non_stream_success(
     )
     .await;
 
+    crate::pipeline::normalize_client_response(
+        &mut transformed,
+        crate::pipeline::public_response_model(call_ctx),
+    );
     let mut resp = Json(transformed).into_response();
     apply_cost_header(&mut resp, cost);
 
@@ -1414,6 +1531,188 @@ mod tests {
     use crate::config::types::{
         ConfigModel, GeneralSettings, OxllmSettings, ProxyConfig, RouterSettings, RoutingKnobs,
     };
+
+    #[tokio::test]
+    async fn cancelled_stream_start_releases_in_flight_and_router_budgets() {
+        use axum::body::{Body, Bytes};
+        use futures_util::stream;
+        use serde_json::json;
+
+        for after_headers in [false, true] {
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let upstream_entered = entered.clone();
+            let upstream = axum::Router::new().route(
+                "/chat/completions",
+                axum::routing::post(move || {
+                    let entered = upstream_entered.clone();
+                    async move {
+                        if !after_headers {
+                            entered.notify_one();
+                            return std::future::pending::<Response>().await;
+                        }
+                        let body = stream::once(async move {
+                            entered.notify_one();
+                            Ok::<_, std::io::Error>(Bytes::from_static(
+                                b"data: {\"id\":\"prelude\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",
+                            ))
+                        })
+                        .chain(stream::pending());
+                        Response::builder()
+                            .header("content-type", "text/event-stream")
+                            .body(Body::from_stream(body))
+                            .unwrap()
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server =
+                tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+            let config = serde_json::from_value(json!({
+                "model_list":[{"model_name":"gpt-4o", "oxllm_params":{
+                    "model":"openai/gpt-4o", "api_base":format!("http://{address}"),
+                    "api_key":"synthetic-key", "max_budget":10, "stream_timeout":30
+                }}],
+                "general_settings":{"allow_private_api_base":true},
+                "router_settings":{"num_retries":0, "provider_budget_config":{
+                    "openai":{"budget_limit":10, "time_period":"1d"}
+                }}
+            }))
+            .unwrap();
+            let state = Arc::new(
+                AppState::with_registry(config, oxllm_providers::default_registry()).unwrap(),
+            );
+            let key = state.router.cooldown_key(&state.deployments[0]);
+            let spend_keys = [
+                format!("spend:dep:{}", deployment_key(&state.deployments[0])),
+                "spend:provider:openai".to_string(),
+            ];
+            for key in &spend_keys {
+                state.cache.incr(key, 0.25, None).await.unwrap();
+            }
+            let task_state = state.clone();
+            let task = tokio::spawn(async move {
+                let body = json!({"model":"gpt-4o", "stream":true, "messages":[{"role":"user", "content":"hi"}]});
+                let mut call_ctx = CallContext::for_test("gpt-4o");
+                call_ctx.request_body = Arc::new(body.clone());
+                call_ctx.budget_estimate = Some(0.5);
+                execute_request_chain(
+                    &task_state,
+                    &mut call_ctx,
+                    &AuthUser::open(),
+                    "gpt-4o",
+                    &body,
+                    &RequestContext::new("gpt-4o"),
+                    true,
+                    None,
+                )
+                .await
+            });
+            tokio::time::timeout(Duration::from_secs(5), entered.notified())
+                .await
+                .unwrap();
+            assert_eq!(state.router.usage_store().in_flight(&key), 1);
+            for key in &spend_keys {
+                assert_eq!(state.cache.counter_value(key).await, Some(0.75));
+            }
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            assert_eq!(
+                state.router.usage_store().in_flight(&key),
+                0,
+                "after_headers={after_headers}"
+            );
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let mut released = true;
+                    for key in &spend_keys {
+                        released &= state.cache.counter_value(key).await == Some(0.25);
+                    }
+                    if released {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("cancelled startup must refund both router budget scopes once");
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_federation_deployments_fail_locally_and_only_use_authorized_recovery() {
+        use serde_json::json;
+        let bad = httpmock::MockServer::start_async().await;
+        let blocked_wire = bad
+            .mock_async(|when, then| {
+                when.method("POST");
+                then.status(500);
+            })
+            .await;
+        let healthy = httpmock::MockServer::start_async().await;
+        let healthy_wire = healthy
+            .mock_async(|when, then| {
+                when.method("POST").path("/chat/completions");
+                then.status(200)
+                    .json_body(json!({"id":"healthy", "model":"gpt-4o", "choices":[{
+                "index":0,"message":{"role":"assistant","content":"rescued"},"finish_reason":"stop"
+            }],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}));
+            })
+            .await;
+        for sibling in [true, false] {
+            let config = serde_json::from_value(json!({
+                "model_list":[
+                    {"model_name":"federated", "oxllm_params":{
+                        "model":"anthropic/claude-haiku-5-5", "api_base":bad.base_url(),
+                        "anthropic_identity_token":"oidc/env/invalid-name", "anthropic_federation_rule_id":"rule", "anthropic_organization_id":"org"
+                    }},
+                    {"model_name":if sibling {"federated"} else {"private-rescue"}, "oxllm_params":{
+                        "model":"openai/gpt-4o", "api_base":healthy.base_url(), "api_key":"synthetic-key"
+                    }}
+                ],
+                "general_settings":{"allow_private_api_base":true},
+                "router_settings":{"routing_strategy":"round_robin", "num_retries":0, "fallbacks":[{"federated":["private-rescue"]}]}
+            })).unwrap();
+            let state =
+                AppState::with_registry(config, oxllm_providers::default_registry()).unwrap();
+            let auth = AuthUser {
+                key_models: Some(vec!["federated".into()]),
+                ..AuthUser::open()
+            };
+            let body =
+                json!({"model":"federated", "messages":[{"role":"user", "content":"hello"}]});
+            let mut call_ctx = CallContext::for_test("federated");
+            call_ctx.request_body = Arc::new(body.clone());
+            let result = execute_request_chain(
+                &state,
+                &mut call_ctx,
+                &auth,
+                "federated",
+                &body,
+                &RequestContext::new("federated"),
+                false,
+                None,
+            )
+            .await;
+            if sibling {
+                assert_eq!(result.unwrap().status(), axum::http::StatusCode::OK);
+                assert!(
+                    state
+                        .router
+                        .cooldown_store()
+                        .is_cooling(&state.router.cooldown_key(&state.deployments[0]))
+                );
+            } else {
+                assert_eq!(
+                    result.unwrap_err().status,
+                    axum::http::StatusCode::UNAUTHORIZED
+                );
+            }
+        }
+        blocked_wire.assert_hits_async(0).await;
+        healthy_wire.assert_hits_async(1).await;
+    }
 
     /// AppState whose deployments are one per given model name, with the
     /// given `router_settings.default_fallbacks` knob.

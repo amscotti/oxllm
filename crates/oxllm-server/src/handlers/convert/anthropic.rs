@@ -78,15 +78,6 @@ pub(crate) fn anthropic_to_openai_request(req: &Value) -> Value {
         out.insert("stream_options".to_string(), json!({"include_usage": true}));
     }
 
-    // Pass the cache opt-in (`cache: {"insert": true}`) through so the chat
-    // pipeline's CacheHook can see it; dropping it would silently disable
-    // caching for Anthropic-shaped requests.
-    if let Some(cache) = req.get("cache") {
-        if !cache.is_null() {
-            out.insert("cache".to_string(), cache.clone());
-        }
-    }
-
     if let Some(tools) = req.get("tools").and_then(|v| v.as_array()) {
         let mapped: Vec<Value> = tools.iter().map(map_anthropic_tool_to_openai).collect();
         if !mapped.is_empty() {
@@ -110,6 +101,7 @@ pub(crate) fn anthropic_to_openai_request(req: &Value) -> Value {
         "output_config",
         "speed",
         "service_tier",
+        "prompt_cache_options",
     ] {
         if let Some(val) = req.get(*key) {
             if !val.is_null() {
@@ -118,6 +110,7 @@ pub(crate) fn anthropic_to_openai_request(req: &Value) -> Value {
         }
     }
 
+    crate::orchestration::request_controls::copy(req, &mut out);
     Value::Object(out)
 }
 

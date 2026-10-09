@@ -8,6 +8,7 @@ output_cost_per_token = 1.200000e-5
 max_input_tokens = 65536
 max_output_tokens = 32768
 cache_read_input_token_cost = 2.000000e-7
+mode = "chat"
 
 ["gemini-2.0-flash"]
 input_cost_per_token = 1.000000e-7
@@ -167,6 +168,9 @@ output_cost_per_token = 3.000000e-6
 max_input_tokens = 65536
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-8
+cache_read_input_token_cost_priority = 9.000000e-8
+input_cost_per_token_priority = 9.000000e-7
+output_cost_per_token_priority = 5.400000e-6
 
 ["gemini-3.1-flash-image-preview"]
 input_cost_per_token = 5.000000e-7
@@ -446,6 +450,42 @@ cache_creation_input_token_cost = 1.250000e-6
 cache_creation_input_token_cost_above_1hr = 2.000000e-6
 prompt_cache_min_tokens = 4096
 
+["vertex_ai/claude-haiku-5-5"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.000000e-8
+cache_creation_input_token_cost = 1.250000e-7
+cache_creation_input_token_cost_above_1hr = 2.000000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 2.500000e-7
+cache_read_input_token_cost_batches = 5.000000e-9
+cache_creation_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_above_100k_tokens = 5.000000e-7
+output_cost_per_token_above_100k_tokens = 2.500000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.000000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.250000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.000000e-6
+["vertex_ai/claude-haiku-5-5@default"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.000000e-8
+cache_creation_input_token_cost = 1.250000e-7
+cache_creation_input_token_cost_above_1hr = 2.000000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 2.500000e-7
+cache_read_input_token_cost_batches = 5.000000e-9
+cache_creation_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_above_100k_tokens = 5.000000e-7
+output_cost_per_token_above_100k_tokens = 2.500000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.000000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.250000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.000000e-6
 ["vertex_ai/claude-opus-4"]
 input_cost_per_token = 1.500000e-5
 output_cost_per_token = 7.500000e-5
@@ -708,6 +748,7 @@ output_cost_per_token = 1.200000e-5
 max_input_tokens = 65536
 max_output_tokens = 32768
 cache_read_input_token_cost = 2.000000e-7
+mode = "chat"
 
 ["vertex_ai/deepseek-ai/deepseek-ocr-maas"]
 input_cost_per_token = 3.000000e-7
@@ -786,6 +827,9 @@ output_cost_per_token = 3.000000e-6
 max_input_tokens = 65536
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-8
+cache_read_input_token_cost_priority = 9.000000e-8
+input_cost_per_token_priority = 9.000000e-7
+output_cost_per_token_priority = 5.400000e-6
 
 ["vertex_ai/gemini-3.1-flash-image-preview"]
 input_cost_per_token = 5.000000e-7
@@ -1167,6 +1211,9 @@ output_cost_per_token = 1.500000e-6
 max_input_tokens = 65536
 max_output_tokens = 4096
 cache_read_input_token_cost = 2.500000e-8
+cache_read_input_token_cost_priority = 4.500000e-8
+input_cost_per_token_priority = 4.500000e-7
+output_cost_per_token_priority = 2.700000e-6
 
 ["gemini-3.7-flash"]
 input_cost_per_token = 7.500000e-7
@@ -1265,6 +1312,9 @@ output_cost_per_token = 1.500000e-6
 max_input_tokens = 65536
 max_output_tokens = 4096
 cache_read_input_token_cost = 2.500000e-8
+cache_read_input_token_cost_priority = 4.500000e-8
+input_cost_per_token_priority = 4.500000e-7
+output_cost_per_token_priority = 2.700000e-6
 
 ["vertex_ai/gemini-3.1-flash-tts-preview"]
 input_cost_per_token = 1.000000e-6
@@ -1282,7 +1332,7 @@ mode = "audio_transcription"
 input_cost_per_token = 0.0
 output_cost_per_token = 2.100000e-5
 input_cost_per_audio_token = 3.500000e-6
-input_cost_per_second = 8.333333e-5
+input_cost_per_second = 8.750000e-5
 
 ["vertex_ai/gemini-3.5-transcribe-live-preview"]
 input_cost_per_token = 3.500000e-6
@@ -1397,6 +1447,7 @@ input_cost_per_audio_token = 3.000000e-6
 input_cost_per_token = 3.500000e-6
 output_cost_per_token = 2.100000e-5
 input_cost_per_audio_token = 3.500000e-6
+input_cost_per_second = 8.750000e-5
 
 ["vertex_ai/gemini-3.8-live"]
 input_cost_per_token = 7.500000e-7
@@ -1410,17 +1461,52 @@ input_cost_per_token = 2.000000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 512
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 5.000000e-6
+cache_read_input_token_cost_batches = 5.000000e-8
+cache_creation_input_token_cost_batches = 1.250000e-6
 
 ["vertex_ai/claude-sonnet-5-5@default"]
 input_cost_per_token = 2.000000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 512
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 5.000000e-6
+cache_read_input_token_cost_batches = 5.000000e-8
+cache_creation_input_token_cost_batches = 1.250000e-6
+
+["vertex_ai/gemini-3.8-flash-lite-tts"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 8192
+max_output_tokens = 16384
+mode = "audio_speech"
+output_cost_per_audio_token = 6.000000e-6
+
+["vertex_ai/gemini-3.8-flash-tts"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 9.000000e-6
+max_input_tokens = 8192
+max_output_tokens = 16384
+mode = "audio_speech"
+output_cost_per_audio_token = 9.000000e-6
+
+["vertex_ai/xai/grok-4.7"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 524288
+max_output_tokens = 524288
+cache_read_input_token_cost = 5.000000e-7
+mode = "chat"
+cache_read_input_token_cost_above_200k_tokens = 1.000000e-6
+input_cost_per_token_above_200k_tokens = 4.000000e-6
+output_cost_per_token_above_200k_tokens = 1.200000e-5

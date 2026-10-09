@@ -104,6 +104,143 @@ fn unpriced_anthropic_fast_mode_does_not_invent_premium_rates() {
 }
 
 #[test]
+fn fireworks_flash_priority_cost_uses_each_models_published_rates() {
+    // LiteLLM f824d11a22, model_prices_and_context_window.json (2026-10-08).
+    let usage = UsageSummary {
+        prompt_tokens: 1_000,
+        completion_tokens: 100,
+        cache_read_input_tokens: Some(400),
+        reasoning_tokens: Some(40),
+        ..Default::default()
+    };
+    for (native, input, output, cache_read) in [
+        ("deepseek-v4p1-flash", 3.75e-7, 1.5e-6, 7.5e-9),
+        ("deepseek-v4-flash-0731", 2.75e-7, 8.25e-7, 8.75e-9),
+        ("deepseek-v4-flash-vision-exp", 2.75e-7, 8.25e-7, 8.75e-9),
+    ] {
+        let expected = 600.0 * input + 400.0 * cache_read + 100.0 * output;
+        for prefix in ["fireworks_ai/", "fireworks_ai/accounts/fireworks/models/"] {
+            let model = format!("{prefix}{native}");
+            let cost = calculate_cost_for_service_tier(
+                &model,
+                &usage,
+                None,
+                "fireworks_ai",
+                Some("priority"),
+            )
+            .expect("published Fireworks priority cost");
+            assert!(
+                (cost - expected).abs() < 1e-12,
+                "{model}: got {cost}, expected {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sonnet_55_batch_cost_covers_every_published_bucket() {
+    // LiteLLM f824d11a22 publishes these four batch rates for all three rows.
+    // No batch 1h write rate is published, so that bucket retains its own rate.
+    let cases = [
+        (
+            UsageSummary {
+                prompt_tokens: 1_000,
+                ..Default::default()
+            },
+            1_000.0 * 1e-6,
+        ),
+        (
+            UsageSummary {
+                completion_tokens: 100,
+                reasoning_tokens: Some(40),
+                ..Default::default()
+            },
+            100.0 * 5e-6,
+        ),
+        (
+            UsageSummary {
+                prompt_tokens: 1_000,
+                cache_read_input_tokens: Some(1_000),
+                ..Default::default()
+            },
+            1_000.0 * 5e-8,
+        ),
+        (
+            UsageSummary {
+                cache_creation_input_tokens: Some(200),
+                cache_creation_1h_input_tokens: Some(50),
+                ..Default::default()
+            },
+            150.0 * 1.25e-6 + 50.0 * 4e-6,
+        ),
+    ];
+    for (provider, model) in [
+        ("anthropic", "claude-sonnet-5-5"),
+        ("vertex_ai", "vertex_ai/claude-sonnet-5-5"),
+        ("vertex_ai", "vertex_ai/claude-sonnet-5-5@default"),
+    ] {
+        for (usage, expected) in &cases {
+            let cost =
+                calculate_cost_for_service_tier(model, usage, None, provider, Some("batches"))
+                    .expect("published Sonnet batch cost");
+            assert!(
+                (cost - expected).abs() < 1e-12,
+                "{model}/{usage:?}: got {cost}, expected {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn haiku_55_batch_cost_uses_provider_specific_context_and_cache_prices() {
+    // LiteLLM f824d11a22: only Anthropic publishes >100k batch rates; Vertex
+    // publishes flat batch rates. Both retain standard 1h write context prices.
+    for (provider, models) in [
+        ("anthropic", &["claude-haiku-5-5"][..]),
+        (
+            "vertex_ai",
+            &[
+                "vertex_ai/claude-haiku-5-5",
+                "vertex_ai/claude-haiku-5-5@default",
+            ][..],
+        ),
+    ] {
+        for context in [1_000, 100_000, 100_001] {
+            let usage = UsageSummary {
+                prompt_tokens: context - 200,
+                completion_tokens: 100,
+                cache_read_input_tokens: Some(400),
+                cache_creation_input_tokens: Some(200),
+                cache_creation_1h_input_tokens: Some(50),
+                reasoning_tokens: Some(40),
+                ..Default::default()
+            };
+            let (input, output, cache_read, cache_write) =
+                if provider == "anthropic" && context > 100_000 {
+                    (2.5e-7, 1.25e-6, 2.5e-8, 3.125e-7)
+                } else {
+                    (5e-8, 2.5e-7, 5e-9, 6.25e-8)
+                };
+            let cache_write_1h = if context > 100_000 { 1e-6 } else { 2e-7 };
+            let expected = (context - 600) as f64 * input
+                + 400.0 * cache_read
+                + 150.0 * cache_write
+                + 50.0 * cache_write_1h
+                + 100.0 * output;
+            for model in models {
+                let cost =
+                    calculate_cost_for_service_tier(model, &usage, None, provider, Some("batches"))
+                        .expect("published Haiku batch cost");
+                assert!(
+                    (cost - expected).abs() < 1e-12,
+                    "{model}/{context}: got {cost}, expected {expected}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn batch_traffic_is_served_metadata_and_not_a_request_service_tier() {
     for requested in ["batch", "batches", "BATCH"] {
         let ctx = CallContext {

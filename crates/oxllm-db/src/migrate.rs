@@ -36,7 +36,7 @@ impl Database {
     /// `CREATE INDEX IF NOT EXISTS`) or tolerated on re-application
     /// (`ADD COLUMN` of an existing column → "duplicate column" /
     /// "already exists" error is swallowed in
-    /// [`Self::run_migration_batch`]), so the first such migrate marks
+    /// `run_migration_batch`), so the first such migrate marks
     /// the current version without disturbing the schema.
     pub async fn migrate(&self) -> Result<()> {
         self.migrate_with_timeouts(
@@ -218,6 +218,24 @@ impl Database {
             self.run_migration_batch(v14_statements_for(self.placeholder_style()), conn)
                 .await?;
             self.set_schema_version(14, &mut *conn).await?;
+        }
+        if current < 15 {
+            self.run_prepared_migration_batch(
+                crate::spend_metadata::deployment_attribution_statements(self.placeholder_style()),
+                conn,
+                prepared_spend,
+            )
+            .await?;
+            self.set_schema_version(15, &mut *conn).await?;
+        }
+        if current < 16 {
+            self.run_prepared_migration_batch(
+                crate::spend_metadata::model_group_attribution_statements(self.placeholder_style()),
+                conn,
+                prepared_spend,
+            )
+            .await?;
+            self.set_schema_version(16, &mut *conn).await?;
         }
         Ok(())
     }
@@ -1015,6 +1033,12 @@ fn migration_statements_for(style: PlaceholderStyle) -> Vec<String> {
     stmts.extend(crate::spend_metadata::statements_for(style));
     stmts.extend(v13_statements_for(style));
     stmts.extend(v14_statements_for(style));
+    stmts.extend(crate::spend_metadata::deployment_attribution_statements(
+        style,
+    ));
+    stmts.extend(crate::spend_metadata::model_group_attribution_statements(
+        style,
+    ));
     stmts
 }
 

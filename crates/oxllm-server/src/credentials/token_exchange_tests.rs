@@ -10,6 +10,158 @@ fn form() -> Result<Form, Error> {
     Ok(vec![("apikey", "fake-key".into())])
 }
 
+struct JsonAssertion {
+    assertion: Zeroizing<String>,
+    source_drops: Arc<std::sync::atomic::AtomicUsize>,
+    fail_serialization: bool,
+}
+
+impl Serialize for JsonAssertion {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut body = serializer.serialize_map(Some(1))?;
+        body.serialize_entry("assertion", self.assertion.as_str())?;
+        if self.fail_serialization {
+            return Err(serde::ser::Error::custom(
+                "secret-marker serialization detail",
+            ));
+        }
+        body.end()
+    }
+}
+
+impl Drop for JsonAssertion {
+    fn drop(&mut self) {
+        self.source_drops
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn json_assertion(
+    assertion: &str,
+    source_drops: &Arc<std::sync::atomic::AtomicUsize>,
+    fail_serialization: bool,
+) -> JsonAssertion {
+    JsonAssertion {
+        assertion: Zeroizing::new(assertion.into()),
+        source_drops: source_drops.clone(),
+        fail_serialization,
+    }
+}
+
+#[tokio::test]
+async fn json_grants_release_the_assertion_source_before_http_and_refresh_lazily() {
+    use axum::{Json, Router, http::HeaderMap, routing::post};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let source_drops = Arc::new(AtomicUsize::new(0));
+    let requests = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route(
+        "/token",
+        post({
+            let source_drops = source_drops.clone();
+            let requests = requests.clone();
+            move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+                let source_drops = source_drops.clone();
+                let requests = requests.clone();
+                async move {
+                    let number = requests.fetch_add(1, Ordering::SeqCst) + 1;
+                    assert_eq!(source_drops.load(Ordering::SeqCst), number);
+                    assert_eq!(headers["accept"], "application/json");
+                    assert_eq!(headers["content-type"], "application/json");
+                    let (assertion, token) = match number {
+                        1 => (r#"secret-marker"\assertion"#, "first"),
+                        2 => ("rotated-assertion", "second"),
+                        _ => panic!("unexpected credential exchange"),
+                    };
+                    assert_eq!(body, json!({"assertion":assertion}));
+                    Json(json!({"access_token":token, "expires_in":10}))
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let exchange = TokenExchange::for_test(endpoint, Duration::from_secs(2));
+    assert_eq!(
+        exchange
+            .token_json(b"identity", async {
+                Ok(json_assertion(
+                    r#"secret-marker"\assertion"#,
+                    &source_drops,
+                    false,
+                ))
+            })
+            .await
+            .unwrap(),
+        "first"
+    );
+    assert_eq!(
+        exchange
+            .token_json(b"identity", async {
+                Err::<serde_json::Value, _>(Error::Config(
+                    "cached grant must not read its source".into(),
+                ))
+            })
+            .await
+            .unwrap(),
+        "first"
+    );
+    assert_eq!(source_drops.load(Ordering::SeqCst), 1);
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(9)).await;
+    tokio::time::resume();
+    assert_eq!(
+        exchange
+            .token_json(b"identity", async {
+                Ok(json_assertion("rotated-assertion", &source_drops, false))
+            })
+            .await
+            .unwrap(),
+        "second"
+    );
+    assert_eq!(source_drops.load(Ordering::SeqCst), 2);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    server.abort();
+}
+
+#[tokio::test]
+async fn json_serialization_failure_releases_its_source_and_never_sends_partial_assertions() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let source_drops = Arc::new(AtomicUsize::new(0));
+    let server = MockServer::start_async().await;
+    let grant = server
+        .mock_async(|when, then| {
+            when.method(POST).path("/token");
+            then.status(200)
+                .json_body(json!({"access_token":"minted", "expires_in":3600}));
+        })
+        .await;
+    let exchange = exchange(&server);
+    let error = exchange
+        .token_json(b"identity", async {
+            Ok(json_assertion("secret-marker", &source_drops, true))
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::Upstream { status: 502, .. }));
+    assert!(!error.to_string().contains("secret-marker"));
+    assert_eq!(source_drops.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        exchange
+            .token_json(b"identity", async {
+                Err::<serde_json::Value, _>(Error::Config("backoff must not rebuild".into()))
+            })
+            .await,
+        Err(Error::Upstream { status: 401, .. })
+    ));
+    grant.assert_hits_async(0).await;
+}
+
 #[tokio::test]
 async fn tokens_refresh_before_expiry_without_extending_short_lifetimes() {
     let server = MockServer::start_async().await;
@@ -185,43 +337,57 @@ async fn chunked_body_is_size_capped_and_body_read_has_a_total_deadline() {
 async fn cancelled_refresh_leaves_backoff_instead_of_restarting_for_each_waiter() {
     use axum::{Router, routing::post};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let requests = Arc::new(AtomicUsize::new(0));
-    let app = Router::new().route(
-        "/token",
-        post({
-            let entered = entered.clone();
-            let requests = requests.clone();
-            move || {
+    for use_json in [false, true] {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = Router::new().route(
+            "/token",
+            post({
                 let entered = entered.clone();
                 let requests = requests.clone();
-                async move {
-                    requests.fetch_add(1, Ordering::SeqCst);
-                    entered.notify_one();
-                    std::future::pending::<&'static str>().await
+                move || {
+                    let entered = entered.clone();
+                    let requests = requests.clone();
+                    async move {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                        entered.notify_one();
+                        std::future::pending::<&'static str>().await
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let exchange = Arc::new(TokenExchange::for_test(endpoint, Duration::from_secs(2)));
+        let caller = tokio::spawn({
+            let exchange = exchange.clone();
+            async move {
+                if use_json {
+                    exchange
+                        .token_json(b"identity", async { Ok(json!({"assertion":"identity"})) })
+                        .await
+                } else {
+                    exchange.token(b"identity", form).await
                 }
             }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let exchange = Arc::new(TokenExchange::for_test(endpoint, Duration::from_secs(2)));
-    let caller = tokio::spawn({
-        let exchange = exchange.clone();
-        async move { exchange.token(b"identity", form).await }
-    });
-    tokio::time::timeout(Duration::from_secs(2), entered.notified())
-        .await
-        .unwrap();
-    caller.abort();
-    let _ = caller.await;
-    assert!(matches!(
-        exchange.token(b"identity", form).await,
-        Err(Error::Upstream { status: 503, .. })
-    ));
-    assert_eq!(requests.load(Ordering::SeqCst), 1);
-    server.abort();
+        });
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        caller.abort();
+        let _ = caller.await;
+        let result = if use_json {
+            exchange
+                .token_json(b"identity", async { Ok(json!({"assertion":"identity"})) })
+                .await
+        } else {
+            exchange.token(b"identity", form).await
+        };
+        assert!(matches!(result, Err(Error::Upstream { status: 503, .. })));
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
 }
 
 /// Once the refresh deadline (expiry minus skew) passes, a failed re-exchange

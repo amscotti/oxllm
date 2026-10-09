@@ -169,6 +169,8 @@ pub fn validate_proxy_config(config: &mut ProxyConfig) -> Result<()> {
     normalize_retry_aliases(config)?;
     crate::auth::validate_auth_config(&config.general_settings)?;
     filter_supported_environments(config);
+    crate::pre_call_checks::warn_configured_checks(config);
+    crate::hooks::datadog::warn_service_callback_config(config);
     for model in &config.model_list {
         model
             .oxllm_params
@@ -3209,6 +3211,7 @@ router_settings:
         assert_eq!(router.retry_policy.as_ref().unwrap().get("429"), Some(&1));
         assert_eq!(router.retry_policy.as_ref().unwrap().get("400"), Some(&0));
         assert_eq!(router.retry_policy.as_ref().unwrap().get("504"), Some(&2));
+        assert_eq!(router.retry_policy.as_ref().unwrap().get("529"), Some(&2));
         assert_eq!(router.retry_policy.as_ref().unwrap().get("422"), Some(&0));
         assert_eq!(router.retry_policy.as_ref().unwrap().get("401"), Some(&0));
         assert!(

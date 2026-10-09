@@ -1,4 +1,4 @@
-//! Bounded, expiry-aware token exchanges used by the Google and IBM resolvers.
+//! Bounded, expiry-aware token exchanges used by federation, OAuth and IAM resolvers.
 //! Endpoints are fixed by the resolver, never supplied by inference requests.
 
 use std::sync::{Arc, Weak};
@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moka::future::Cache;
 use oxllm_core::Error;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OnceCell};
 use tokio::time::Instant;
@@ -18,6 +18,19 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const FAILURE_BACKOFF: Duration = Duration::from_secs(2);
 const MAX_TOKEN_LIFETIME: Duration = Duration::from_secs(86_400);
 type Form = Vec<(&'static str, String)>;
+
+enum TokenBody {
+    Form(Form),
+    Json(JsonBody),
+}
+
+struct JsonBody(Zeroizing<Vec<u8>>);
+
+impl AsRef<[u8]> for JsonBody {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
 type TokenSlot = Arc<Mutex<Option<TokenEntry>>>;
 type FormBuilder = Arc<dyn Fn() -> Result<Form, Error> + Send + Sync>;
 
@@ -120,6 +133,13 @@ impl TokenExchange {
         }
     }
 
+    pub(super) fn at(endpoint: String) -> Self {
+        Self {
+            endpoint,
+            ..Self::new("https://unused.invalid/token")
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn for_test(endpoint: String, timeout: Duration) -> Self {
         let mut exchange = Self::new("https://unused.invalid/token");
@@ -131,6 +151,35 @@ impl TokenExchange {
     pub(super) async fn token<F>(&self, material: &[u8], build_form: F) -> Result<String, Error>
     where
         F: FnOnce() -> Result<Form, Error> + Send,
+    {
+        self.token_body(material, async move { build_form().map(TokenBody::Form) })
+            .await
+    }
+
+    pub(super) async fn token_json<F, B>(
+        &self,
+        material: &[u8],
+        build_json: F,
+    ) -> Result<String, Error>
+    where
+        F: std::future::Future<Output = Result<B, Error>> + Send,
+        B: Serialize + Send,
+    {
+        self.token_body(material, async move {
+            let body = build_json.await?;
+            let mut serialized = Zeroizing::new(Vec::new());
+            serde_json::to_writer(&mut *serialized, &body).map_err(|_| Error::Upstream {
+                status: 502,
+                message: "cannot serialize credential JSON grant".into(),
+            })?;
+            Ok(TokenBody::Json(JsonBody(serialized)))
+        })
+        .await
+    }
+
+    async fn token_body<F>(&self, material: &[u8], build: F) -> Result<String, Error>
+    where
+        F: std::future::Future<Output = Result<TokenBody, Error>> + Send,
     {
         if material.len() > MAX_CREDENTIAL_BYTES {
             return Err(Error::Config("credential material exceeds 64 KiB".into()));
@@ -151,14 +200,23 @@ impl TokenExchange {
             }
             _ => {}
         }
-        let form = build_form()?;
         // If the caller cancels this future during I/O, leave a short-lived
         // failure entry instead of making every queued caller restart it.
         *entry = Some(TokenEntry::Failed {
             failure: failure(503, "credential token refresh was interrupted"),
             retry_at: Instant::now() + self.timeout + FAILURE_BACKOFF,
         });
-        match self.fetch(form).await {
+        let body = match build.await {
+            Ok(body) => body,
+            Err(error) => {
+                *entry = Some(TokenEntry::Failed {
+                    failure: failure(401, "credential assertion source is unavailable"),
+                    retry_at: Instant::now() + FAILURE_BACKOFF,
+                });
+                return Err(error);
+            }
+        };
+        match self.fetch(body).await {
             Ok(grant) => {
                 let result = grant.token.to_string();
                 *entry = Some(TokenEntry::Ready {
@@ -226,7 +284,7 @@ impl TokenExchange {
             failure: failure(503, "credential token acquisition was interrupted"),
             retry_at: Instant::now() + self.timeout + FAILURE_BACKOFF,
         });
-        match self.fetch(form).await {
+        match self.fetch(TokenBody::Form(form)).await {
             Ok(grant) => {
                 let token = grant.token.to_string();
                 *entry = Some(RenewableEntry::Ready {
@@ -325,7 +383,7 @@ impl TokenExchange {
         }
     }
 
-    async fn fetch(&self, form: Form) -> Result<TokenGrant, TokenFailure> {
+    async fn fetch(&self, body: TokenBody) -> Result<TokenGrant, TokenFailure> {
         let client = self
             .client
             .get_or_try_init(|| async {
@@ -337,7 +395,7 @@ impl TokenExchange {
                     .map_err(|_| failure(502, "cannot initialize credential HTTP client"))
             })
             .await?;
-        Self::fetch_with_client(client, &self.endpoint, form).await
+        Self::fetch_body_with_client(client, &self.endpoint, body).await
     }
 
     async fn fetch_with_client(
@@ -345,17 +403,29 @@ impl TokenExchange {
         endpoint: &str,
         form: Form,
     ) -> Result<TokenGrant, TokenFailure> {
+        Self::fetch_body_with_client(client, endpoint, TokenBody::Form(form)).await
+    }
+
+    async fn fetch_body_with_client(
+        client: &reqwest::Client,
+        endpoint: &str,
+        body: TokenBody,
+    ) -> Result<TokenGrant, TokenFailure> {
         let started = Instant::now();
         let unix_started = unix_now()
             .map_err(|_| failure(502, "system clock is invalid for credential exchange"))?;
         // reqwest's total timeout includes reading the body, not just headers.
-        let mut response = client
-            .post(endpoint)
-            .header("accept", "application/json")
-            .form(&form)
-            .send()
-            .await
-            .map_err(transport_failure)?;
+        let request = client.post(endpoint).header("accept", "application/json");
+        let request = match body {
+            TokenBody::Form(form) => request.form(&form),
+            // The owner survives transport clones and wipes this serialized
+            // buffer when the final Bytes handle drops. Other HTTP/TLS copies
+            // remain outside our zeroization guarantee.
+            TokenBody::Json(body) => request
+                .header("content-type", "application/json")
+                .body(axum::body::Bytes::from_owner(body)),
+        };
+        let mut response = request.send().await.map_err(transport_failure)?;
         if !response.status().is_success() {
             // Never echo token-endpoint error bodies: they can contain secrets
             // or identifying details. Redirects are failures, never followed.

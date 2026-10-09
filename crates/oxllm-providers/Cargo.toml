@@ -13,10 +13,11 @@ thiserror.workspace = true
 tracing.workspace = true
 percent-encoding.workspace = true
 uuid.workspace = true
+url = { workspace = true, optional = true }
 
 [features]
 default = ["openai", "anthropic", "gemini", "ollama", "groq", "together_ai", "openrouter", "xai", "mistral", "cohere", "azure", "azure_ai", "bedrock", "vertex_ai", "databricks", "perplexity", "sambanova", "cloudflare", "deepseek", "cerebras", "ai21", "fireworks_ai", "deepinfra", "nvidia_nim", "voyage", "jina_ai", "watsonx", "huggingface", "deepgram", "elevenlabs", "dashscope", "bedrock_mantle", "replicate", "meta", "baseten"]
-openai_compat = []
+openai_compat = ["dep:url"]
 openai = ["openai_compat"]
 anthropic = []
 gemini = ["openai_compat"]
@@ -29,7 +30,7 @@ mistral = ["openai_compat"]
 cohere = ["openai_compat"]
 azure = ["openai_compat"]
 azure_ai = ["anthropic", "openai_compat"]
-bedrock = []
+bedrock = ["anthropic"]
 vertex_ai = ["anthropic", "openai_compat"]
 databricks = ["openai_compat"]
 perplexity = ["openai_compat"]

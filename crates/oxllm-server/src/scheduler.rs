@@ -512,6 +512,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "redis")]
     #[tokio::test]
     async fn scheduler_resets_spend_counter_in_redis_layer() {
         use crate::cache::{DualCache, InMemoryCache};

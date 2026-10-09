@@ -726,7 +726,7 @@ router_settings:
     .unwrap();
     let wire = upstream.mock_async(|when, then| {
         when.method(POST).path("/anthropic/v1/messages")
-            .header("api-key", "configured-key").header("anthropic-version", "2023-06-01")
+            .header("x-api-key", "configured-key").header("anthropic-version", "2023-06-01")
             .matches(|request| {
                 request.body.as_ref().and_then(|body| serde_json::from_slice::<Value>(body).ok())
                     .is_some_and(|body| body["stream"] == true && body.get("stream_options").is_none())

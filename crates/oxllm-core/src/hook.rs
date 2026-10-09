@@ -210,9 +210,20 @@ pub struct CallContext {
     /// Concrete serving model used when a provider reports a public alias or
     /// another model name without an embedded price entry.
     pub pricing_model: Option<String>,
+    /// Azure Model Router infrastructure rate, retained when its response selects
+    /// an underlying model and cleared when a different deployment serves a fallback.
+    pub model_router_input_rate: Option<f64>,
     /// Start of the current upstream attempt. Duration pricing excludes local
     /// admission work, retries and backoff before this attempt.
     pub upstream_start_time: Option<std::time::Instant>,
+    /// End of the serving upstream attempt; streams record first-content arrival.
+    /// Response timing excludes post-call hooks and spend settlement.
+    pub upstream_end_time: Option<std::time::Instant>,
+    /// Sum of upstream attempt time, including failed attempts but excluding
+    /// retry backoff and post-call hooks. Streams stop at first-content arrival.
+    pub upstream_total_duration: std::time::Duration,
+    /// Time spent looking up a response-cache hit.
+    pub cache_lookup_duration: std::time::Duration,
     /// Selected deployment's timeout used to reserve duration-priced spend.
     /// Streaming reservations remain estimates because idle timeouts do not
     /// bound the total length of a healthy stream.
@@ -226,6 +237,8 @@ pub struct CallContext {
     /// Cost of the original upstream response carried by a cache entry.
     /// Exposed for response metadata only; cache hits incur no new spend.
     pub cached_response_cost: Option<f64>,
+    /// Public response model retained by a cache entry, including fallback groups.
+    pub cached_response_model: Option<String>,
     /// Authoritative upstream cost, or a host-computed settlement snapshot.
     /// A supplied value wins over recomputation, including an explicit zero;
     /// this keeps every budget scope and spend exporter on the same amount.
@@ -268,6 +281,23 @@ pub struct CallContext {
     /// metrics/headers. `None` until the first pick. Follows the
     /// [`CallContext::deployment_pricing`] stash precedent.
     pub router_decision: Option<String>,
+    /// Public identity of the selected deployment, distinct from credential-
+    /// bearing internal routing fingerprints. Replaced on every serving pick.
+    pub deployment_id: Option<String>,
+    /// Public model group selected for the serving attempt.
+    pub serving_model_group: Option<String>,
+    /// Selected deployment's provider/model selector, independent of rate-card hints.
+    pub deployment_model: Option<String>,
+    /// Effective retry budget when the serving deployment needed a retry.
+    pub max_retries: Option<u32>,
+    /// Same-deployment retries actually attempted, including history repair.
+    pub attempted_retries: u32,
+    /// Configured cross-model fallback groups actually attempted.
+    pub attempted_fallbacks: u32,
+    /// Bounded, opt-in status summaries of failed fallback-chain attempts.
+    pub fallback_errors: Vec<Value>,
+    /// Vetted upstream throttle headers from the current serving attempt.
+    pub upstream_response_headers: std::collections::HashMap<String, String>,
     /// Rate-limit quota snapshot for the request, stashed by
     /// `RateLimitHook::pre_call` so the response pipeline can stamp
     /// `x-ratelimit-*` headers. Empty (`Default`) when no limits applied
@@ -544,6 +574,15 @@ fn merge_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
     }
 }
 
+/// A dependency-health failure emitted independently of an LLM request.
+#[derive(Debug, Clone)]
+pub struct ServiceFailureEvent {
+    /// Bounded dependency label, such as `db` or `redis`.
+    pub service: String,
+    /// Diagnostic description without credentials or request bodies.
+    pub message: String,
+}
+
 /// The hook trait — invoked before and after each request.
 ///
 /// Built-in impls ship early: `BudgetPreCheck`, `RateLimitPreCheck`,
@@ -579,6 +618,17 @@ pub trait Hook: Send + Sync {
     /// Called after a failed upstream response.
     async fn post_failure(&self, ctx: &CallContext, err: &crate::Error) {
         let _ = (ctx, err);
+    }
+
+    /// Observe a configured infrastructure dependency's health failure.
+    /// These events have no caller, budget reservation, or billable usage.
+    async fn post_service_failure(&self, event: &ServiceFailureEvent) {
+        let _ = event;
+    }
+
+    /// Whether the hook accepts infrastructure dependency failure events.
+    fn supports_service_events(&self) -> bool {
+        false
     }
 
     /// Release no-TTL concurrency slots without settling or refunding

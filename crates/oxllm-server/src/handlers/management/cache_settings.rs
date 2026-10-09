@@ -75,7 +75,7 @@ pub struct UpdateCacheSettingsRequest {
 /// `POST /cache/settings` — update in-memory cache config via hot-reload.
 ///
 /// Updates `oxllm_settings.cache` / `cache_ttl_secs` on the shared config
-/// and swaps state through [`AppState::reload_from_config`]. The live
+/// and swaps state through [`crate::state::AppState::reload_from_config`]. The live
 /// `Arc<dyn Cache>` handle is preserved across reload (same as file watcher
 /// reloads); switching Redis host/type takes full effect on process restart.
 /// Semantic-cache config changes that pass the equality check keep the

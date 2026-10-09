@@ -11,9 +11,17 @@ use crate::types::spend_tag_names;
 use crate::{Database, PlaceholderStyle, SPEND_METADATA_REPAIR_BATCH_SIZE, SpendMetadataRepair};
 
 /// Public spend columns in SELECT order, shared with the rolling-upgrade view.
-pub(crate) const SPEND_LOG_SELECT_COLS: &str = "id, timestamp, request_id, model, provider, \
+const LEGACY_SPEND_LOG_SELECT_COLS: &str = "id, timestamp, request_id, model, provider, \
  prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, \
  end_user_id, tag_name, tags, status, latency_ms";
+
+const DEPLOYMENT_SPEND_LOG_SELECT_COLS: &str = "id, timestamp, request_id, model, provider, \
+ prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, \
+ end_user_id, tag_name, tags, status, latency_ms, deployment_id";
+
+pub(crate) const SPEND_LOG_SELECT_COLS: &str = "id, timestamp, request_id, model, provider, \
+ prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, \
+ end_user_id, tag_name, tags, status, latency_ms, deployment_id, requested_model, model_group";
 
 const STARTUP_REPAIR_BATCHES: usize = 4;
 
@@ -183,8 +191,8 @@ impl Database {
     }
 }
 
-fn read_columns(timestamp: &str) -> String {
-    SPEND_LOG_SELECT_COLS
+fn read_columns(timestamp: &str, columns: &str) -> String {
+    columns
         .split(',')
         .map(str::trim)
         .map(|column| {
@@ -291,9 +299,9 @@ pub(crate) fn statements_for(style: PlaceholderStyle) -> Vec<String> {
                  EXECUTE FUNCTION oxllm_invalidate_spend_metadata()".to_string(),
                 format!(
                     "CREATE OR REPLACE VIEW spend_logs_read AS \
-                     SELECT {SPEND_LOG_SELECT_COLS} FROM spend_logs WHERE metadata_version = 1 \
+                      SELECT {LEGACY_SPEND_LOG_SELECT_COLS} FROM spend_logs WHERE metadata_version = 1 \
                      UNION ALL SELECT {} FROM spend_logs WHERE metadata_version <> 1",
-                    read_columns("oxllm_spend_timestamp(timestamp)")
+                    read_columns("oxllm_spend_timestamp(timestamp)", LEGACY_SPEND_LOG_SELECT_COLS)
                 ),
                 "CREATE OR REPLACE VIEW spend_log_tags_read AS \
                  SELECT st.spend_log_id, st.tag_name FROM spend_log_tags st \
@@ -311,7 +319,7 @@ pub(crate) fn statements_for(style: PlaceholderStyle) -> Vec<String> {
                       OR OLD.tag_name IS NOT NEW.tag_name \
                  BEGIN UPDATE spend_logs SET metadata_version = 0 WHERE id = NEW.id; END"
                     .to_string(),
-                sqlite_read_view(),
+                sqlite_read_view(LEGACY_SPEND_LOG_SELECT_COLS),
                 "CREATE VIEW IF NOT EXISTS spend_log_tags_read AS \
                  WITH legacy AS (SELECT id, tag_name, CASE WHEN json_valid(tags) THEN \
                    CASE WHEN json_type(tags) = 'array' AND NOT EXISTS \
@@ -336,7 +344,7 @@ pub(crate) fn statements_for(style: PlaceholderStyle) -> Vec<String> {
 /// SQLite's date functions also discard submilliseconds. Strip the fraction
 /// before UTC conversion and append its original digits padded to nine places.
 /// Offset arithmetic uses integral seconds, including offsets across UTC days.
-fn sqlite_read_view() -> String {
+fn sqlite_read_view(columns: &str) -> String {
     // Keep already-canonical historical rows cheap while their index marker
     // awaits repair. The expanded parser runs only for noncanonical timestamps.
     let timestamp = r#"CASE WHEN length(timestamp) = 30
@@ -394,8 +402,48 @@ fn sqlite_read_view() -> String {
              (CASE WHEN substr(zone_digits, 1, 1) = '-' THEN 1 ELSE -1 END) *
              (CAST(substr(zone_digits, 2, 2) AS INTEGER) * 3600 + CAST(substr(zone_digits, 4, 2) AS INTEGER) * 60 +
                CAST(substr(zone_digits, 6, 2) AS INTEGER)) END AS offset_seconds FROM digits)
-         SELECT {SPEND_LOG_SELECT_COLS} FROM spend_logs WHERE metadata_version = 1
+          SELECT {columns} FROM spend_logs WHERE metadata_version = 1
          UNION ALL SELECT {} FROM normalized"#,
-        read_columns(timestamp)
+        read_columns(timestamp, columns)
     )
+}
+
+pub(crate) fn deployment_attribution_statements(style: PlaceholderStyle) -> Vec<String> {
+    let add = match style {
+        PlaceholderStyle::Dollar => "ADD COLUMN IF NOT EXISTS",
+        PlaceholderStyle::Question => "ADD COLUMN",
+    };
+    let mut statements = vec![format!("ALTER TABLE spend_logs {add} deployment_id TEXT")];
+    statements.extend(read_view_statements(
+        style,
+        DEPLOYMENT_SPEND_LOG_SELECT_COLS,
+    ));
+    statements
+}
+
+pub(crate) fn model_group_attribution_statements(style: PlaceholderStyle) -> Vec<String> {
+    let add = match style {
+        PlaceholderStyle::Dollar => "ADD COLUMN IF NOT EXISTS",
+        PlaceholderStyle::Question => "ADD COLUMN",
+    };
+    let mut statements = vec![
+        format!("ALTER TABLE spend_logs {add} requested_model TEXT"),
+        format!("ALTER TABLE spend_logs {add} model_group TEXT"),
+    ];
+    statements.extend(read_view_statements(style, SPEND_LOG_SELECT_COLS));
+    statements
+}
+
+fn read_view_statements(style: PlaceholderStyle, columns: &str) -> Vec<String> {
+    match style {
+        PlaceholderStyle::Dollar => vec![format!(
+            "CREATE OR REPLACE VIEW spend_logs_read AS SELECT {columns} FROM spend_logs WHERE metadata_version = 1 \
+             UNION ALL SELECT {} FROM spend_logs WHERE metadata_version <> 1",
+            read_columns("oxllm_spend_timestamp(timestamp)", columns)
+        )],
+        PlaceholderStyle::Question => vec![
+            "DROP VIEW IF EXISTS spend_logs_read".into(),
+            sqlite_read_view(columns),
+        ],
+    }
 }

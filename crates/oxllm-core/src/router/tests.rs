@@ -4142,6 +4142,7 @@ fn structured_retry_aliases_control_retry_counts_and_explicit_statuses_win() {
     assert_eq!(router.retries_for_status(429), 7);
     assert_eq!(router.retries_for_status(408), 4);
     assert_eq!(router.retries_for_status(503), 5);
+    assert_eq!(router.retries_for_status(529), 5);
     assert_eq!(router.retries_for_status(401), 1);
     assert_eq!(router.retries_for_status(400), 0);
 }
@@ -4241,7 +4242,7 @@ fn exception_retry_policy_rate_limit_retries_in_record_failure() {
 }
 
 #[test]
-fn exception_retry_policy_internal_server_covers_502_503_504() {
+fn exception_retry_policy_internal_server_covers_gateway_failures_and_overloads() {
     // The reference allowed-fails vocabulary covers 500/502/503 via separate
     // `*AllowedFails` fields; oxllm's single 5xx category must cover
     // 502/503/504 so an operator who set `internal_server_error_retries: 5`
@@ -4256,7 +4257,7 @@ fn exception_retry_policy_internal_server_covers_502_503_504() {
         ..RouterConfig::default()
     };
     let router = Router::new(config);
-    for status in [500u16, 502, 503, 504] {
+    for status in [500u16, 502, 503, 504, 529] {
         assert_eq!(
             router.allowed_fails_limit_for(status),
             Some(5),

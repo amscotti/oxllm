@@ -179,7 +179,7 @@ impl Database {
     ///
     /// Hot-path cache: this method runs on every chat request when a DB is
     /// configured, so results are cached per model for
-    /// [`SKILLS_CACHE_TTL`] (see [`SkillsCache`]). The skills write methods
+    /// `SKILLS_CACHE_TTL` in the internal skills cache. The skills write methods
     /// invalidate the cache, so CRUD through this handle is visible
     /// immediately; only writes from other processes can be stale for up
     /// to the TTL.

@@ -203,15 +203,7 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
             out.insert("stream".to_string(), stream.clone());
         }
     }
-    // Pass the cache opt-in (`cache: {"insert": true}`) through so the chat
-    // pipeline's CacheHook can see it; dropping it would silently disable
-    // caching for Responses-shaped requests.
-    if let Some(cache) = req.get("cache") {
-        if !cache.is_null() {
-            out.insert("cache".to_string(), cache.clone());
-        }
-    }
-    for key in ["metadata", "user", "service_tier"] {
+    for key in ["metadata", "user", "service_tier", "prompt_cache_options"] {
         if let Some(value) = req.get(key).filter(|value| !value.is_null()) {
             out.insert(key.to_string(), value.clone());
         }
@@ -280,6 +272,7 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
         out.insert("stream_options".to_string(), json!({"include_usage": true}));
     }
 
+    crate::orchestration::request_controls::copy(req, &mut out);
     Value::Object(out)
 }
 

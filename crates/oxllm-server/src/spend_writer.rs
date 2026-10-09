@@ -24,6 +24,12 @@ pub struct SpendEntry {
     pub request_id: Option<String>,
     pub model: String,
     pub provider: String,
+    #[serde(default)]
+    pub deployment_id: Option<String>,
+    #[serde(default)]
+    pub requested_model: Option<String>,
+    #[serde(default)]
+    pub model_group: Option<String>,
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
@@ -125,7 +131,7 @@ pub fn spawn_with_capacity(
 }
 
 /// Owned handle to a spawned spend-writer task. Calling [`shutdown`](Self::shutdown)
-/// signals the background task to run a final [`drain`] of any buffered
+/// signals the background task to run a final `drain` of any buffered
 /// entries and then exit, and awaits its completion. This is the deterministic
 /// flush path used on graceful server shutdown so entries queued after the last
 /// ticker tick are not lost when the process exits.
@@ -253,6 +259,9 @@ async fn insert_batch(db: &std::sync::Arc<oxllm_db::Database>, batch: Vec<SpendE
             request_id: entry.request_id,
             model: entry.model,
             provider: entry.provider,
+            deployment_id: entry.deployment_id,
+            requested_model: entry.requested_model,
+            model_group: entry.model_group,
             prompt_tokens: entry.prompt_tokens,
             completion_tokens: entry.completion_tokens,
             total_tokens: entry.total_tokens,
@@ -364,6 +373,9 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<SpendEntry>(2);
         let writer = SpendWriter { tx };
         let entry = SpendEntry {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             timestamp: "t".to_string(),
             request_id: None,
             model: "gpt-4o".to_string(),
@@ -403,6 +415,9 @@ mod tests {
         let (tx, _rx) = mpsc::channel::<SpendEntry>(2);
         let writer = SpendWriter { tx };
         let entry = SpendEntry {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             timestamp: "t".to_string(),
             request_id: None,
             model: "overflow-probe".to_string(),
@@ -450,6 +465,9 @@ mod tests {
         drop(rx);
         let writer = SpendWriter { tx };
         let entry = SpendEntry {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             timestamp: "t".to_string(),
             request_id: None,
             model: "closed-probe".to_string(),
@@ -489,6 +507,9 @@ mod tests {
         for i in 0..3 {
             writer
                 .queue(SpendEntry {
+                    deployment_id: None,
+                    requested_model: None,
+                    model_group: None,
                     timestamp: oxllm_db::now_iso(),
                     request_id: Some(format!("r-{i}")),
                     model: "gpt-4o".to_string(),
@@ -585,6 +606,9 @@ mod tests {
         for i in 0..5 {
             writer
                 .queue(SpendEntry {
+                    deployment_id: None,
+                    requested_model: None,
+                    model_group: None,
                     timestamp: oxllm_db::now_iso(),
                     request_id: Some(format!("r-shutdown-{i}")),
                     model: "gpt-4o".to_string(),
@@ -746,6 +770,9 @@ mod tests {
         insert_batch(
             &db,
             vec![SpendEntry {
+                deployment_id: None,
+                requested_model: None,
+                model_group: None,
                 timestamp: oxllm_db::now_iso(),
                 request_id: Some("r-1".to_string()),
                 model: "gpt-4o".to_string(),
@@ -800,6 +827,9 @@ mod tests {
         // Insert one valid row first so we can distinguish "table has data"
         // from "table was just created".
         let valid = SpendEntry {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             timestamp: oxllm_db::now_iso(),
             request_id: Some("r-valid".to_string()),
             model: "gpt-4o".to_string(),
@@ -836,6 +866,9 @@ mod tests {
         // The middle row fails; either sibling could succeed if retried alone.
         let entries: Vec<SpendEntry> = (0..3)
             .map(|i| SpendEntry {
+                deployment_id: None,
+                requested_model: None,
+                model_group: None,
                 timestamp: oxllm_db::now_iso(),
                 request_id: Some(format!("r-retry-{i}")),
                 model: if i == 1 { "fail-sentinel" } else { "gpt-4o" }.to_string(),
@@ -912,6 +945,9 @@ mod tests {
         for i in 0..77 {
             let is_sentinel = i == 76;
             entries.push(SpendEntry {
+                deployment_id: None,
+                requested_model: None,
+                model_group: None,
                 timestamp: oxllm_db::now_iso(),
                 request_id: Some(format!("r-mid-{i}")),
                 model: if is_sentinel {

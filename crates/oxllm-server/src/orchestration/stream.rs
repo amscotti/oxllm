@@ -8,9 +8,10 @@
 //!
 //! # Safety invariant: no fallback after the first stream byte
 //!
+//! Stream startup buffers metadata until content or a normal terminator arrives.
 //! Once [`super::chat::execute_request_chain`] returns a streaming
-//! [`Response`] to the client, the retry/fallback machinery has already
-//! committed to this upstream. Any error that occurs **after** the first SSE
+//! [`Response`] to the client, the retry/fallback machinery has committed
+//! to this upstream. Any error that occurs **after** the first SSE
 //! event has been forwarded to the client is surfaced as a truncated stream
 //! (terminated with `[DONE]`); it is **never** retried against another model.
 
@@ -226,7 +227,7 @@ pub(crate) enum StreamExit {
 /// key ([`crate::router::Router::cooldown_key`]) for allowed-fails /
 /// percentage cooldown / health.
 pub(crate) async fn handle_stream_success(
-    upstream_response: reqwest::Response,
+    upstream_response: super::stream_start::ByteStream,
     deployment: Deployment,
     provider: Arc<dyn oxllm_core::Provider>,
     state: AppState,
@@ -234,12 +235,13 @@ pub(crate) async fn handle_stream_success(
     budget_reservation: super::budget::RouterBudgetReservation,
     model: String,
 ) -> Result<Response, ApiError> {
-    // The reference `_get_stream_timeout` precedence (`router.py`): the
-    // deployment's `stream_timeout`, then `request_timeout`, then the 60s
-    // default — the same budget that bounded the upstream header wait (see
-    // `attempt_upstream`), applied here per-chunk (idle) with no total
-    // stream deadline.
-    let stream_timeout = super::upstream::resolve_stream_idle_timeout(&deployment, &state.config);
+    // Reuse the request/deployment idle budget that bounded the header wait,
+    // now applied per chunk without a total stream deadline.
+    let stream_timeout = super::upstream::resolve_stream_idle_timeout_for_request(
+        &deployment,
+        &state.config,
+        &call_ctx.request_body,
+    );
     // The stable per-deployment key: the same identity the chat loop reserved
     // its in-flight slot under and that cooldown/health/failure accounting use.
     let cooldown_key = state.router.cooldown_key(&deployment);
@@ -263,7 +265,7 @@ pub(crate) async fn handle_stream_success(
             return;
         };
         let is_bedrock = provider.id() == "bedrock";
-        let mut byte_stream = upstream_response.bytes_stream();
+        let mut byte_stream = upstream_response;
         let mut framer = SseFramer::new();
         let mut buffer = String::new();
         let mut raw_buffer: Vec<u8> = Vec::new();
@@ -288,6 +290,7 @@ pub(crate) async fn handle_stream_success(
             .unwrap_or(false);
         let mut usage_injection = UsageInjection {
             include_usage,
+            public_model: Some(pipeline::public_response_model(&call_ctx).to_string()),
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -433,7 +436,7 @@ pub(crate) async fn handle_stream_success(
                 &mut stream_state,
                 &original_request,
             ) {
-                Ok(Some(value)) => {
+                Ok(Some(mut value)) => {
                     if let Some(u) = extract_usage(&value) {
                         merge_streaming_usage(&mut accumulated_usage, u);
                     }
@@ -442,6 +445,7 @@ pub(crate) async fn handle_stream_success(
                         response_model = m.to_string();
                     }
                     accumulate_completion_text(&mut completion_text, &value);
+                    normalize_stream_chunk(&mut value, &original_request, &usage_injection);
                     // The upstream's own usage-only chunk is forwarded only
                     // when the client asked for usage; when it is forwarded,
                     // `emitted` suppresses the synthesized duplicate.
@@ -472,10 +476,11 @@ pub(crate) async fn handle_stream_success(
                         // loop) to avoid a second emission here. This terminal
                         // block runs at most once, so it does not need to flip
                         // the flag back.
-                        if let Some(chunk) = build_usage_chunk_if_requested(
+                        if let Some(mut chunk) = build_usage_chunk_if_requested(
                             &usage_injection,
                             accumulated_usage.as_ref(),
                         ) {
+                            normalize_stream_chunk(&mut chunk, &original_request, &usage_injection);
                             usage_injection.emitted = true;
                             if matches!(
                                 send_event(&tx, Event::default().data(chunk.to_string())).await,
@@ -513,9 +518,10 @@ pub(crate) async fn handle_stream_success(
         // below this one cannot produce a duplicate — matching the pattern in
         // `process_buffer` and the post-loop `Ok(None)` drain.
         if matches!(&exit, StreamExit::Done) && !done_sent {
-            if let Some(chunk) =
+            if let Some(mut chunk) =
                 build_usage_chunk_if_requested(&usage_injection, accumulated_usage.as_ref())
             {
+                normalize_stream_chunk(&mut chunk, &original_request, &usage_injection);
                 if matches!(
                     send_event(&tx, Event::default().data(chunk.to_string())).await,
                     ClientSend::Sent
@@ -962,6 +968,9 @@ async fn record_partial_stream_spend(
             request_id: Some(call_ctx.request_id.clone()),
             model: response_model.to_string(),
             provider: deployment.provider_slug().to_string(),
+            deployment_id: call_ctx.deployment_id.clone(),
+            requested_model: Some(call_ctx.model.clone()),
+            model_group: call_ctx.serving_model_group.clone(),
             prompt_tokens: Some(
                 accumulated_usage
                     .map(|u| tokens(u.prompt_tokens))
@@ -1058,7 +1067,7 @@ fn bedrock_stream_close_error(events: u64, raw_leftover: bool) -> Option<oxllm_c
     None
 }
 
-fn append_and_decode_bedrock(
+pub(super) fn append_and_decode_bedrock(
     raw_buffer: &mut Vec<u8>,
     buffer: &mut String,
     incoming: &[u8],
@@ -1248,7 +1257,7 @@ async fn process_buffer(
         // with this tokio task across worker-thread migrations, instead of a
         // provider-side `thread_local!` that gets orphaned on reschedule.
         match chat.transform_stream_chunk_stateful(&event_str, stream_state, original_request) {
-            Ok(Some(value)) => {
+            Ok(Some(mut value)) => {
                 if let Some(u) = extract_usage(&value) {
                     merge_streaming_usage(accumulated_usage, u);
                 }
@@ -1257,6 +1266,7 @@ async fn process_buffer(
                     *response_model = m.to_string();
                 }
                 accumulate_completion_text(completion_text, &value);
+                normalize_stream_chunk(&mut value, original_request, usage_injection);
                 if is_usage_only_chunk(&value) {
                     if !usage_injection.include_usage {
                         // The client never asked for usage chunks; this one
@@ -1284,9 +1294,10 @@ async fn process_buffer(
             }
             Ok(None) => {
                 if extract_sse_data(&event_str) == Some("[DONE]") {
-                    if let Some(chunk) =
+                    if let Some(mut chunk) =
                         build_usage_chunk_if_requested(usage_injection, accumulated_usage.as_ref())
                     {
+                        normalize_stream_chunk(&mut chunk, original_request, usage_injection);
                         usage_injection.emitted = true;
                         match send_event(tx, Event::default().data(chunk.to_string())).await {
                             ClientSend::Sent => *bytes_sent_to_client = true,
@@ -1329,6 +1340,7 @@ async fn process_buffer(
 /// request body; `emitted` guards against emitting the synthesized chunk more
 /// than once (defensive — `[DONE]` normally appears exactly once).
 struct UsageInjection {
+    public_model: Option<String>,
     /// Whether the client requested `stream_options.include_usage: true`.
     include_usage: bool,
     /// Whether the synthesized usage chunk has already been emitted.
@@ -1338,6 +1350,20 @@ struct UsageInjection {
     reported_cost: Option<f64>,
     /// Last served-tier observation; independent of whether usage was sent.
     served_service_tier: Option<String>,
+}
+
+fn normalize_stream_chunk(
+    value: &mut serde_json::Value,
+    request: &serde_json::Value,
+    injection: &UsageInjection,
+) {
+    if let Some(model) = injection
+        .public_model
+        .as_deref()
+        .or_else(|| request.get("model").and_then(serde_json::Value::as_str))
+    {
+        pipeline::normalize_client_response(value, model);
+    }
 }
 
 /// Capture `usage.cost` from a transformed stream chunk. Later chunks
@@ -1411,9 +1437,8 @@ fn build_usage_chunk_if_requested(
         // streaming clients of reasoning models (o3 / o4-mini) see the same
         // breakdown as the non-streaming path. The field is a subset of
         // `completion_tokens` and is priced at the completion rate.
-        if let Some(rt) = u.reasoning_tokens {
-            usage["usage"]["completion_tokens_details"]["reasoning_tokens"] = serde_json::json!(rt);
-        }
+        usage["usage"]["completion_tokens_details"]["reasoning_tokens"] =
+            serde_json::json!(u.reasoning_tokens.unwrap_or(0));
         if let Some(value) = u.cache_creation_input_tokens {
             usage["usage"]["cache_creation_input_tokens"] = serde_json::json!(value);
         }
@@ -1614,6 +1639,7 @@ mod tests {
         let mut usage = None;
         let mut model = String::new();
         let mut injection = UsageInjection {
+            public_model: None,
             include_usage: false,
             emitted: false,
             reported_cost: None,
@@ -1718,7 +1744,7 @@ mod tests {
             .router
             .record_in_flight(&state.router.cooldown_key(&deployment), 1);
         let response = handle_stream_success(
-            upstream,
+            Box::pin(upstream.bytes_stream()),
             deployment,
             Arc::new(OpenAiProvider),
             state.clone(),
@@ -1817,7 +1843,7 @@ mod tests {
             .router
             .record_in_flight(&state.router.cooldown_key(&deployment), 1);
         let response = handle_stream_success(
-            upstream,
+            Box::pin(upstream.bytes_stream()),
             deployment,
             Arc::new(OpenAiProvider),
             state.clone(),
@@ -1933,6 +1959,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -1983,6 +2010,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -2042,6 +2070,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: true,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -2111,6 +2140,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -2159,6 +2189,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: true,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -2195,6 +2226,7 @@ mod tests {
     #[tokio::test]
     async fn build_usage_chunk_returns_none_without_usage() {
         let inj = UsageInjection {
+            public_model: None,
             include_usage: true,
             emitted: false,
             reported_cost: None,
@@ -2213,6 +2245,7 @@ mod tests {
             ..Default::default()
         };
         let inj = UsageInjection {
+            public_model: None,
             include_usage: true,
             emitted: true,
             reported_cost: None,
@@ -2232,6 +2265,7 @@ mod tests {
             ..Default::default()
         };
         let inj = UsageInjection {
+            public_model: None,
             include_usage: true,
             emitted: false,
             reported_cost: None,
@@ -2266,6 +2300,7 @@ mod tests {
             ..Default::default()
         };
         let inj = UsageInjection {
+            public_model: None,
             include_usage: true,
             emitted: false,
             reported_cost: None,
@@ -2281,12 +2316,10 @@ mod tests {
         assert_eq!(chunk["usage"]["total_tokens"], 180);
     }
 
-    /// H6: when the accumulated usage has NO reasoning_tokens (non-reasoning
-    /// model stream), the synthesized chunk must NOT carry an empty
-    /// `completion_tokens_details` object — clients expect the key to be
-    /// absent rather than null/empty.
+    /// Non-reasoning streams expose an explicit zero reasoning detail for
+    /// clients that consume a normalized usage shape.
     #[tokio::test]
-    async fn build_usage_chunk_omits_reasoning_details_when_absent() {
+    async fn build_usage_chunk_defaults_reasoning_details_when_absent() {
         let usage = oxllm_core::UsageSummary {
             prompt_tokens: 10,
             completion_tokens: 5,
@@ -2297,15 +2330,16 @@ mod tests {
             ..Default::default()
         };
         let inj = UsageInjection {
+            public_model: None,
             include_usage: true,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
         };
         let chunk = build_usage_chunk_if_requested(&inj, Some(&usage)).expect("some chunk");
-        assert!(
-            chunk["usage"].get("completion_tokens_details").is_none(),
-            "completion_tokens_details must be absent when reasoning_tokens is None: {chunk}"
+        assert_eq!(
+            chunk["usage"]["completion_tokens_details"]["reasoning_tokens"],
+            0
         );
     }
 
@@ -2323,6 +2357,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -2376,6 +2411,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -2427,6 +2463,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -2494,6 +2531,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -3057,6 +3095,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -3109,6 +3148,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: true,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
@@ -3161,6 +3201,7 @@ mod tests {
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
+            public_model: None,
             emitted: false,
             reported_cost: None,
             served_service_tier: None,

@@ -45,12 +45,13 @@ output_cost_per_token = 0.0
 max_input_tokens = 8172
 
 ["amazon.nova-2-pro-preview-20251202-v1:0"]
-input_cost_per_token = 2.187500e-6
-output_cost_per_token = 1.750000e-5
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 1.000000e-5
 max_input_tokens = 1000000
 max_output_tokens = 64000
-cache_read_input_token_cost = 5.468750e-7
-input_cost_per_audio_token = 2.187500e-6
+cache_read_input_token_cost = 3.125000e-7
+input_cost_per_audio_token = 1.250000e-6
+input_cost_per_image_token = 1.250000e-6
 
 ["amazon.nova-lite-v1:0"]
 input_cost_per_token = 6.000000e-8
@@ -220,6 +221,20 @@ cache_creation_input_token_cost = 1.250000e-6
 cache_creation_input_token_cost_above_1hr = 2.000000e-6
 prompt_cache_min_tokens = 4096
 
+["anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.000000e-8
+cache_creation_input_token_cost = 1.250000e-7
+cache_creation_input_token_cost_above_1hr = 2.000000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 5.000000e-7
+output_cost_per_token_above_100k_tokens = 2.500000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.000000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.250000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.000000e-6
 ["anthropic.claude-instant-v1"]
 input_cost_per_token = 8.000000e-7
 output_cost_per_token = 2.400000e-6
@@ -371,12 +386,13 @@ max_output_tokens = 64000
 cache_read_input_token_cost = 8.250000e-8
 
 ["apac.amazon.nova-2-pro-preview-20251202-v1:0"]
-input_cost_per_token = 2.187500e-6
-output_cost_per_token = 1.750000e-5
+input_cost_per_token = 1.375000e-6
+output_cost_per_token = 1.100000e-5
 max_input_tokens = 1000000
 max_output_tokens = 64000
-cache_read_input_token_cost = 5.468750e-7
-input_cost_per_audio_token = 2.187500e-6
+cache_read_input_token_cost = 3.437500e-7
+input_cost_per_audio_token = 1.375000e-6
+input_cost_per_image_token = 1.375000e-6
 
 ["apac.amazon.nova-lite-v1:0"]
 input_cost_per_token = 6.300000e-8
@@ -440,6 +456,20 @@ cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 1.375000e-6
 prompt_cache_min_tokens = 4096
 
+["apac.anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.100000e-7
+output_cost_per_token = 5.500000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.100000e-8
+cache_creation_input_token_cost = 1.375000e-7
+cache_creation_input_token_cost_above_1hr = 2.200000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 5.500000e-7
+output_cost_per_token_above_100k_tokens = 2.750000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
 ["apac.anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
@@ -463,6 +493,20 @@ cache_creation_input_token_cost = 1.375000e-6
 cache_creation_input_token_cost_above_1hr = 2.200000e-6
 prompt_cache_min_tokens = 4096
 
+["au.anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.100000e-7
+output_cost_per_token = 5.500000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.100000e-8
+cache_creation_input_token_cost = 1.375000e-7
+cache_creation_input_token_cost_above_1hr = 2.200000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 5.500000e-7
+output_cost_per_token_above_100k_tokens = 2.750000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
 ["au.anthropic.claude-opus-4-6-v1"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 2.750000e-5
@@ -590,7 +634,7 @@ max_output_tokens = 262144
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 1.440000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/ap-south-1/deepseek.v3.2"]
 input_cost_per_token = 7.400000e-7
@@ -638,7 +682,7 @@ max_output_tokens = 262144
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 1.440000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/ap-southeast-2/minimax.minimax-m2.5"]
 input_cost_per_token = 3.100000e-7
@@ -674,7 +718,7 @@ max_output_tokens = 262144
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 1.440000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/ca-central-1/meta.llama3-70b-instruct-v1:0"]
 input_cost_per_token = 3.050000e-6
@@ -722,7 +766,7 @@ max_output_tokens = 8192
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 1.440000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/eu-north-1/deepseek.v3.2"]
 input_cost_per_token = 7.400000e-7
@@ -764,7 +808,7 @@ max_output_tokens = 8192
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 1.440000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/eu-west-1/meta.llama3-70b-instruct-v1:0"]
 input_cost_per_token = 2.860000e-6
@@ -794,7 +838,7 @@ max_output_tokens = 8192
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 1.440000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/eu-west-2/meta.llama3-70b-instruct-v1:0"]
 input_cost_per_token = 3.450000e-6
@@ -824,7 +868,7 @@ max_output_tokens = 8192
 input_cost_per_token = 7.800000e-7
 output_cost_per_token = 1.860000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/eu-west-3/mistral.mistral-7b-instruct-v0:2"]
 input_cost_per_token = 2.000000e-7
@@ -910,7 +954,7 @@ max_output_tokens = 262144
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 1.440000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/us-east-1/anthropic.claude-instant-v1"]
 input_cost_per_token = 8.000000e-7
@@ -994,7 +1038,7 @@ max_output_tokens = 262144
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 1.200000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/us-east-1/zai.glm-5"]
 input_cost_per_token = 1.000000e-6
@@ -1036,7 +1080,7 @@ max_output_tokens = 262144
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 1.200000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/us-gov-east-1/amazon.nova-pro-v1:0"]
 input_cost_per_token = 9.600000e-7
@@ -1099,6 +1143,20 @@ cache_creation_input_token_cost = 1.500000e-6
 cache_creation_input_token_cost_above_1hr = 2.400000e-6
 prompt_cache_min_tokens = 4096
 
+["bedrock/us-gov-east-1/anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.200000e-8
+cache_creation_input_token_cost = 1.500000e-7
+cache_creation_input_token_cost_above_1hr = 2.400000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 6.000000e-7
+output_cost_per_token_above_100k_tokens = 3.000000e-6
+cache_read_input_token_cost_above_100k_tokens = 6.000000e-8
+cache_creation_input_token_cost_above_100k_tokens = 7.500000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.200000e-6
 ["bedrock/us-gov-east-1/anthropic.claude-sonnet-4-5-20250929-v1:0"]
 input_cost_per_token = 3.600000e-6
 output_cost_per_token = 1.800000e-5
@@ -1200,6 +1258,20 @@ cache_creation_input_token_cost = 1.500000e-6
 cache_creation_input_token_cost_above_1hr = 2.400000e-6
 prompt_cache_min_tokens = 4096
 
+["bedrock/us-gov-west-1/anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.200000e-8
+cache_creation_input_token_cost = 1.500000e-7
+cache_creation_input_token_cost_above_1hr = 2.400000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 6.000000e-7
+output_cost_per_token_above_100k_tokens = 3.000000e-6
+cache_read_input_token_cost_above_100k_tokens = 6.000000e-8
+cache_creation_input_token_cost_above_100k_tokens = 7.500000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.200000e-6
 ["bedrock/us-gov-west-1/anthropic.claude-sonnet-4-5-20250929-v1:0"]
 input_cost_per_token = 3.600000e-6
 output_cost_per_token = 1.800000e-5
@@ -1314,7 +1386,7 @@ max_output_tokens = 262144
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 1.200000e-6
 max_input_tokens = 262144
-max_output_tokens = 8192
+max_output_tokens = 16384
 
 ["bedrock/us-west-2/zai.glm-5"]
 input_cost_per_token = 1.000000e-6
@@ -1411,12 +1483,13 @@ max_output_tokens = 64000
 cache_read_input_token_cost = 8.250000e-8
 
 ["eu.amazon.nova-2-pro-preview-20251202-v1:0"]
-input_cost_per_token = 2.187500e-6
-output_cost_per_token = 1.750000e-5
+input_cost_per_token = 1.375000e-6
+output_cost_per_token = 1.100000e-5
 max_input_tokens = 1000000
 max_output_tokens = 64000
-cache_read_input_token_cost = 5.468750e-7
-input_cost_per_audio_token = 2.187500e-6
+cache_read_input_token_cost = 3.437500e-7
+input_cost_per_audio_token = 1.375000e-6
+input_cost_per_image_token = 1.375000e-6
 
 ["eu.amazon.nova-lite-v1:0"]
 input_cost_per_token = 7.800000e-8
@@ -1516,6 +1589,20 @@ cache_creation_input_token_cost = 1.375000e-6
 cache_creation_input_token_cost_above_1hr = 2.200000e-6
 prompt_cache_min_tokens = 4096
 
+["eu.anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.100000e-7
+output_cost_per_token = 5.500000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.100000e-8
+cache_creation_input_token_cost = 1.375000e-7
+cache_creation_input_token_cost_above_1hr = 2.200000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 5.500000e-7
+output_cost_per_token_above_100k_tokens = 2.750000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
 ["eu.anthropic.claude-opus-4-1-20250805-v1:0"]
 input_cost_per_token = 1.500000e-5
 output_cost_per_token = 7.500000e-5
@@ -1688,6 +1775,20 @@ cache_creation_input_token_cost = 1.250000e-6
 cache_creation_input_token_cost_above_1hr = 2.000000e-6
 prompt_cache_min_tokens = 4096
 
+["global.anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.000000e-8
+cache_creation_input_token_cost = 1.250000e-7
+cache_creation_input_token_cost_above_1hr = 2.000000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 5.000000e-7
+output_cost_per_token_above_100k_tokens = 2.500000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.000000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.250000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.000000e-6
 ["global.anthropic.claude-opus-4-5-20251101-v1:0"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 2.500000e-5
@@ -1814,6 +1915,20 @@ cache_creation_input_token_cost = 1.375000e-6
 cache_creation_input_token_cost_above_1hr = 2.200000e-6
 prompt_cache_min_tokens = 4096
 
+["jp.anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.100000e-7
+output_cost_per_token = 5.500000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.100000e-8
+cache_creation_input_token_cost = 1.375000e-7
+cache_creation_input_token_cost_above_1hr = 2.200000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 5.500000e-7
+output_cost_per_token_above_100k_tokens = 2.750000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
 ["jp.anthropic.claude-opus-4-7"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 2.750000e-5
@@ -2123,25 +2238,25 @@ max_output_tokens = 16000
 input_cost_per_token = 2.200000e-7
 output_cost_per_token = 8.800000e-7
 max_input_tokens = 262144
-max_output_tokens = 131072
+max_output_tokens = 8192
 
 ["qwen.qwen3-32b-v1:0"]
 input_cost_per_token = 1.500000e-7
 output_cost_per_token = 6.000000e-7
-max_input_tokens = 131072
-max_output_tokens = 16384
+max_input_tokens = 32768
+max_output_tokens = 8192
 
 ["qwen.qwen3-coder-30b-a3b-v1:0"]
 input_cost_per_token = 1.500000e-7
 output_cost_per_token = 6.000000e-7
 max_input_tokens = 262144
-max_output_tokens = 131072
+max_output_tokens = 16384
 
 ["qwen.qwen3-coder-480b-a35b-v1:0"]
 input_cost_per_token = 4.500000e-7
 output_cost_per_token = 1.800000e-6
-max_input_tokens = 262000
-max_output_tokens = 65536
+max_input_tokens = 131072
+max_output_tokens = 16384
 
 ["qwen.qwen3-coder-next"]
 input_cost_per_token = 5.000000e-7
@@ -2189,12 +2304,13 @@ max_output_tokens = 64000
 cache_read_input_token_cost = 8.250000e-8
 
 ["us.amazon.nova-2-pro-preview-20251202-v1:0"]
-input_cost_per_token = 2.187500e-6
-output_cost_per_token = 1.750000e-5
+input_cost_per_token = 1.375000e-6
+output_cost_per_token = 1.100000e-5
 max_input_tokens = 1000000
 max_output_tokens = 64000
-cache_read_input_token_cost = 5.468750e-7
-input_cost_per_audio_token = 2.187500e-6
+cache_read_input_token_cost = 3.437500e-7
+input_cost_per_audio_token = 1.375000e-6
+input_cost_per_image_token = 1.375000e-6
 
 ["us.amazon.nova-lite-v1:0"]
 input_cost_per_token = 6.000000e-8
@@ -2300,6 +2416,20 @@ cache_creation_input_token_cost = 1.375000e-6
 cache_creation_input_token_cost_above_1hr = 2.200000e-6
 prompt_cache_min_tokens = 4096
 
+["us.anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.100000e-7
+output_cost_per_token = 5.500000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.100000e-8
+cache_creation_input_token_cost = 1.375000e-7
+cache_creation_input_token_cost_above_1hr = 2.200000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 5.500000e-7
+output_cost_per_token_above_100k_tokens = 2.750000e-6
+cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
+cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
 ["us.anthropic.claude-opus-4-1-20250805-v1:0"]
 input_cost_per_token = 1.500000e-5
 output_cost_per_token = 7.500000e-5
@@ -2420,7 +2550,7 @@ prompt_cache_min_tokens = 1024
 input_cost_per_token = 1.350000e-6
 output_cost_per_token = 5.400000e-6
 max_input_tokens = 128000
-max_output_tokens = 4096
+max_output_tokens = 8192
 
 ["us.deepseek.v3.2"]
 input_cost_per_token = 6.200000e-7
@@ -2735,19 +2865,19 @@ input_cost_per_second = 2.527000e-2
 ["bedrock/ap-northeast-1/qwen.qwen3-next-80b-a3b"]
 input_cost_per_token = 1.800000e-7
 output_cost_per_token = 1.450000e-6
-max_input_tokens = 128000
+max_input_tokens = 262144
 max_output_tokens = 8192
 
 ["bedrock/ap-south-1/qwen.qwen3-next-80b-a3b"]
 input_cost_per_token = 1.800000e-7
 output_cost_per_token = 1.410000e-6
-max_input_tokens = 128000
+max_input_tokens = 262144
 max_output_tokens = 8192
 
 ["bedrock/ap-southeast-2/qwen.qwen3-next-80b-a3b"]
 input_cost_per_token = 1.545000e-7
 output_cost_per_token = 1.236000e-6
-max_input_tokens = 128000
+max_input_tokens = 262144
 max_output_tokens = 8192
 
 ["bedrock/eu-central-1/1-month-commitment/anthropic.claude-instant-v1"]
@@ -2807,7 +2937,7 @@ input_cost_per_second = 2.305000e-2
 ["bedrock/eu-west-1/qwen.qwen3-next-80b-a3b"]
 input_cost_per_token = 1.800000e-7
 output_cost_per_token = 1.410000e-6
-max_input_tokens = 128000
+max_input_tokens = 262144
 max_output_tokens = 8192
 
 ["bedrock/eu-west-2/nvidia.nemotron-super-3-120b"]
@@ -2819,13 +2949,13 @@ max_output_tokens = 32000
 ["bedrock/eu-west-2/qwen.qwen3-next-80b-a3b"]
 input_cost_per_token = 2.300000e-7
 output_cost_per_token = 1.860000e-6
-max_input_tokens = 128000
+max_input_tokens = 262144
 max_output_tokens = 8192
 
 ["bedrock/sa-east-1/qwen.qwen3-next-80b-a3b"]
 input_cost_per_token = 1.800000e-7
 output_cost_per_token = 1.450000e-6
-max_input_tokens = 128000
+max_input_tokens = 262144
 max_output_tokens = 8192
 
 ["bedrock/us-east-1/1-month-commitment/anthropic.claude-instant-v1"]
@@ -3195,6 +3325,15 @@ max_input_tokens = 1000000
 max_output_tokens = 131072
 cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
+cache_creation_input_token_cost_flex = 1.875000e-6
+cache_creation_input_token_cost_priority = 6.562500e-6
+cache_read_input_token_cost_flex = 1.500000e-7
+cache_read_input_token_cost_priority = 5.250000e-7
+input_cost_per_token_flex = 1.500000e-6
+input_cost_per_token_priority = 5.250000e-6
+output_cost_per_token_flex = 7.500000e-6
+output_cost_per_token_priority = 2.625000e-5
+supports_prompt_cache_breakpoint = false
 
 ["global.openai.gpt-5.4"]
 input_cost_per_token = 2.500000e-6
@@ -3263,6 +3402,14 @@ cache_read_input_token_cost_above_272k_tokens = 2.000000e-6
 input_cost_per_token_above_272k_tokens = 2.000000e-5
 cache_creation_input_token_cost_above_272k_tokens = 2.500000e-5
 output_cost_per_token_above_272k_tokens = 7.500000e-5
+cache_creation_input_token_cost_above_272k_tokens_ultrafast = 1.500000e-4
+cache_creation_input_token_cost_ultrafast = 7.500000e-5
+cache_read_input_token_cost_above_272k_tokens_ultrafast = 1.200000e-5
+cache_read_input_token_cost_ultrafast = 6.000000e-6
+input_cost_per_token_above_272k_tokens_ultrafast = 1.200000e-4
+input_cost_per_token_ultrafast = 6.000000e-5
+output_cost_per_token_above_272k_tokens_ultrafast = 4.500000e-4
+output_cost_per_token_ultrafast = 3.000000e-4
 
 ["global.openai.gpt-6-luna"]
 input_cost_per_token = 1.000000e-7
@@ -3294,6 +3441,12 @@ output_cost_per_token = 6.000000e-6
 max_input_tokens = 500000
 max_output_tokens = 500000
 cache_read_input_token_cost = 5.000000e-7
+cache_read_input_token_cost_flex = 2.500000e-7
+cache_read_input_token_cost_priority = 8.750000e-7
+input_cost_per_token_flex = 1.000000e-6
+input_cost_per_token_priority = 3.500000e-6
+output_cost_per_token_flex = 3.000000e-6
+output_cost_per_token_priority = 1.050000e-5
 
 ["jp.anthropic.claude-opus-5-5"]
 input_cost_per_token = 4.400000e-6
@@ -3318,6 +3471,15 @@ max_input_tokens = 1000000
 max_output_tokens = 131072
 cache_read_input_token_cost = 3.300000e-7
 cache_creation_input_token_cost = 4.125000e-6
+cache_creation_input_token_cost_flex = 2.062500e-6
+cache_creation_input_token_cost_priority = 7.218750e-6
+cache_read_input_token_cost_flex = 1.650000e-7
+cache_read_input_token_cost_priority = 5.775000e-7
+input_cost_per_token_flex = 1.650000e-6
+input_cost_per_token_priority = 5.775000e-6
+output_cost_per_token_flex = 8.250000e-6
+output_cost_per_token_priority = 2.887500e-5
+supports_prompt_cache_breakpoint = false
 
 ["openai.gpt-6-luna"]
 input_cost_per_token = 1.000000e-7
@@ -3383,6 +3545,20 @@ cache_creation_input_token_cost = 6.000000e-6
 cache_creation_input_token_cost_above_1hr = 9.600000e-6
 prompt_cache_min_tokens = 512
 
+["us-gov.anthropic.claude-haiku-5-5"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 1.200000e-8
+cache_creation_input_token_cost = 1.500000e-7
+cache_creation_input_token_cost_above_1hr = 2.400000e-7
+prompt_cache_min_tokens = 512
+input_cost_per_token_above_100k_tokens = 6.000000e-7
+output_cost_per_token_above_100k_tokens = 3.000000e-6
+cache_read_input_token_cost_above_100k_tokens = 6.000000e-8
+cache_creation_input_token_cost_above_100k_tokens = 7.500000e-7
+cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.200000e-6
 ["us-gov.anthropic.claude-sonnet-5"]
 input_cost_per_token = 2.400000e-6
 output_cost_per_token = 1.200000e-5
@@ -3497,6 +3673,15 @@ max_input_tokens = 1000000
 max_output_tokens = 131072
 cache_read_input_token_cost = 3.300000e-7
 cache_creation_input_token_cost = 4.125000e-6
+cache_creation_input_token_cost_flex = 2.062500e-6
+cache_creation_input_token_cost_priority = 7.218750e-6
+cache_read_input_token_cost_flex = 1.650000e-7
+cache_read_input_token_cost_priority = 5.775000e-7
+input_cost_per_token_flex = 1.650000e-6
+input_cost_per_token_priority = 5.775000e-6
+output_cost_per_token_flex = 8.250000e-6
+output_cost_per_token_priority = 2.887500e-5
+supports_prompt_cache_breakpoint = false
 
 ["us.openai.gpt-5.4"]
 input_cost_per_token = 2.750000e-6
@@ -3565,6 +3750,14 @@ cache_read_input_token_cost_above_272k_tokens = 2.200000e-6
 input_cost_per_token_above_272k_tokens = 2.200000e-5
 cache_creation_input_token_cost_above_272k_tokens = 2.750000e-5
 output_cost_per_token_above_272k_tokens = 8.250000e-5
+cache_creation_input_token_cost_above_272k_tokens_ultrafast = 1.650000e-4
+cache_creation_input_token_cost_ultrafast = 8.250000e-5
+cache_read_input_token_cost_above_272k_tokens_ultrafast = 1.320000e-5
+cache_read_input_token_cost_ultrafast = 6.600000e-6
+input_cost_per_token_above_272k_tokens_ultrafast = 1.320000e-4
+input_cost_per_token_ultrafast = 6.600000e-5
+output_cost_per_token_above_272k_tokens_ultrafast = 4.950000e-4
+output_cost_per_token_ultrafast = 3.300000e-4
 
 ["us.openai.gpt-6-luna"]
 input_cost_per_token = 1.100000e-7
@@ -3596,6 +3789,12 @@ output_cost_per_token = 6.600000e-6
 max_input_tokens = 500000
 max_output_tokens = 500000
 cache_read_input_token_cost = 5.500000e-7
+cache_read_input_token_cost_flex = 2.750000e-7
+cache_read_input_token_cost_priority = 9.625000e-7
+input_cost_per_token_flex = 1.100000e-6
+input_cost_per_token_priority = 3.850000e-6
+output_cost_per_token_flex = 3.300000e-6
+output_cost_per_token_priority = 1.155000e-5
 
 ["writer.palmyra-vision-7b"]
 input_cost_per_token = 1.500000e-7
@@ -3613,7 +3812,7 @@ input_cost_per_token = 2.000000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 512
@@ -3623,7 +3822,7 @@ input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.100000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.200000e-7
+cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
@@ -3633,7 +3832,7 @@ input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.100000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.200000e-7
+cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
@@ -3643,7 +3842,7 @@ input_cost_per_token = 2.400000e-6
 output_cost_per_token = 1.200000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.400000e-7
+cache_read_input_token_cost = 1.200000e-7
 cache_creation_input_token_cost = 3.000000e-6
 cache_creation_input_token_cost_above_1hr = 4.800000e-6
 prompt_cache_min_tokens = 512
@@ -3653,7 +3852,7 @@ input_cost_per_token = 2.400000e-6
 output_cost_per_token = 1.200000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.400000e-7
+cache_read_input_token_cost = 1.200000e-7
 cache_creation_input_token_cost = 3.000000e-6
 cache_creation_input_token_cost_above_1hr = 4.800000e-6
 prompt_cache_min_tokens = 512
@@ -3663,7 +3862,7 @@ input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.100000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.200000e-7
+cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
@@ -3673,7 +3872,7 @@ input_cost_per_token = 2.000000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 512
@@ -3684,13 +3883,19 @@ output_cost_per_token = 6.000000e-6
 max_input_tokens = 500000
 max_output_tokens = 500000
 cache_read_input_token_cost = 5.000000e-7
+cache_read_input_token_cost_flex = 2.500000e-7
+cache_read_input_token_cost_priority = 8.750000e-7
+input_cost_per_token_flex = 1.000000e-6
+input_cost_per_token_priority = 3.500000e-6
+output_cost_per_token_flex = 3.000000e-6
+output_cost_per_token_priority = 1.050000e-5
 
 ["jp.anthropic.claude-sonnet-5-5"]
 input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.100000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.200000e-7
+cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
@@ -3700,7 +3905,7 @@ input_cost_per_token = 2.400000e-6
 output_cost_per_token = 1.200000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.400000e-7
+cache_read_input_token_cost = 1.200000e-7
 cache_creation_input_token_cost = 3.000000e-6
 cache_creation_input_token_cost_above_1hr = 4.800000e-6
 prompt_cache_min_tokens = 512
@@ -3710,7 +3915,7 @@ input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.100000e-5
 max_input_tokens = 1000000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.200000e-7
+cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
@@ -3721,6 +3926,12 @@ output_cost_per_token = 6.600000e-6
 max_input_tokens = 500000
 max_output_tokens = 500000
 cache_read_input_token_cost = 5.500000e-7
+cache_read_input_token_cost_flex = 2.750000e-7
+cache_read_input_token_cost_priority = 9.625000e-7
+input_cost_per_token_flex = 1.100000e-6
+input_cost_per_token_priority = 3.850000e-6
+output_cost_per_token_flex = 3.300000e-6
+output_cost_per_token_priority = 1.155000e-5
 
 ["xai.grok-4.7"]
 input_cost_per_token = 2.000000e-6
@@ -3728,6 +3939,12 @@ output_cost_per_token = 6.000000e-6
 max_input_tokens = 500000
 max_output_tokens = 500000
 cache_read_input_token_cost = 5.000000e-7
+cache_read_input_token_cost_flex = 2.500000e-7
+cache_read_input_token_cost_priority = 8.750000e-7
+input_cost_per_token_flex = 1.000000e-6
+input_cost_per_token_priority = 3.500000e-6
+output_cost_per_token_flex = 3.000000e-6
+output_cost_per_token_priority = 1.050000e-5
 
 ["global.openai.gpt-6.1-sol"]
 input_cost_per_token = 2.000000e-6
@@ -3767,3 +3984,10 @@ output_cost_per_token_above_272k_tokens = 1.650000e-5
 cache_read_input_token_cost_above_272k_tokens = 2.200000e-7
 cache_creation_input_token_cost_above_272k_tokens = 5.500000e-6
 source = "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html"
+
+["amazon.nova-2-5-sonic"]
+input_cost_per_token = 3.300000e-7
+output_cost_per_token = 2.750000e-6
+mode = "realtime"
+input_cost_per_audio_token = 3.000000e-6
+output_cost_per_audio_token = 1.200000e-5

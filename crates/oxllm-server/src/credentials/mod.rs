@@ -5,6 +5,7 @@
 //! the provider transforms. This keeps all network/STS/OAuth exchange out of
 //! `oxllm-providers` (which must remain pure).
 
+mod anthropic;
 mod registry;
 mod static_key;
 #[cfg(test)]
@@ -17,6 +18,7 @@ pub(crate) mod bedrock;
 mod bedrock_mantle;
 mod bedrock_mantle_token;
 
+pub use anthropic::AnthropicResolver;
 pub use bedrock::BedrockCredentialResolver;
 pub use bedrock_mantle::BedrockMantleCredentialResolver;
 pub use registry::CredentialResolverRegistry;

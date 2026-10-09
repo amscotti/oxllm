@@ -40,6 +40,9 @@ fn key(id: &str) -> KeyRecord {
 
 fn log(timestamp: &str, request_id: &str) -> SpendLog {
     SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: timestamp.into(),
         request_id: Some(request_id.into()),

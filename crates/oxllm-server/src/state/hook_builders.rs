@@ -153,6 +153,7 @@ pub(crate) fn build_hooks(
     // (`generic` plus the feature-specific hooks built below) are silently
     // honored; anything else is ignored with a single warning per slug.
     warn_unknown_callback_slugs(settings);
+    crate::hooks::datadog::warn_service_callback_config(config);
 
     if let Some(hook) = langfuse_hook {
         hooks.push(wrap_config_block_hook(hook, settings, "langfuse"));
@@ -407,6 +408,14 @@ impl Hook for CallbackEventFilter {
         if self.fire_on_failure {
             self.inner.post_failure(ctx, err).await;
         }
+    }
+
+    async fn post_service_failure(&self, event: &oxllm_core::ServiceFailureEvent) {
+        self.inner.post_service_failure(event).await;
+    }
+
+    fn supports_service_events(&self) -> bool {
+        self.inner.supports_service_events()
     }
 }
 

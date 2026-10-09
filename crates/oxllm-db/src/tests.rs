@@ -736,6 +736,9 @@ async fn clear_team_on_keys_cascades() {
 async fn spend_insert_and_query() {
     let db = fresh_db().await;
     let log = SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: now_iso(),
         request_id: Some("req-1".to_string()),
@@ -788,6 +791,9 @@ async fn spend_logs_tag_filter_and_by_tag_aggregation() {
     let db = fresh_db().await;
     let mk =
         |ts: &str, model: &str, cost: f64, tags: Option<&str>, primary: Option<&str>| SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: ts.to_string(),
             request_id: None,
@@ -890,6 +896,9 @@ async fn spend_total_and_count() {
     let db = fresh_db().await;
     for i in 0..3 {
         db.insert_spend_log(&SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: now_iso(),
             request_id: Some(format!("req-{i}")),
@@ -935,6 +944,9 @@ async fn spend_total_and_count() {
 async fn count_spend_alias_works_across_filters() {
     let db = fresh_db().await;
     let mk = |key: &str, ts: &str| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: ts.to_string(),
         request_id: None,
@@ -997,6 +1009,9 @@ async fn count_spend_alias_works_across_filters() {
 async fn spend_filter_by_model() {
     let db = fresh_db().await;
     let mk = |model: &str, cost: f64| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: now_iso(),
         request_id: None,
@@ -1035,6 +1050,9 @@ async fn spend_filter_by_model() {
 async fn total_spend_sums_all_keys() {
     let db = fresh_db().await;
     let mk = |cost: f64, key: &str| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: now_iso(),
         request_id: None,
@@ -1064,6 +1082,9 @@ async fn total_spend_sums_all_keys() {
 async fn total_spend_respects_date_range() {
     let db = fresh_db().await;
     let mk = |ts: &str, cost: f64| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: ts.to_string(),
         request_id: None,
@@ -1110,6 +1131,9 @@ async fn query_spend_paginated_walks_cursor() {
     let db = fresh_db().await;
     for i in 0..6 {
         db.insert_spend_log(&SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: now_iso(),
             request_id: Some(format!("req-{i}")),
@@ -1162,6 +1186,9 @@ async fn query_spend_paginated_walks_cursor() {
 async fn query_spend_paginated_filters_by_team() {
     let db = fresh_db().await;
     let mk = |team: &str, cost: f64| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: now_iso(),
         request_id: None,
@@ -1208,6 +1235,9 @@ async fn query_spend_paginated_page_size_cap_is_1000() {
     let total_rows = 1010;
     for i in 0..total_rows {
         db.insert_spend_log(&SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: now_iso(),
             request_id: Some(format!("req-{i}")),
@@ -1256,6 +1286,9 @@ async fn query_spend_paginated_page_size_cap_is_1000() {
 async fn daily_activity_buckets_today() {
     let db = fresh_db().await;
     db.insert_spend_log(&SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: now_iso(),
         request_id: None,
@@ -1290,6 +1323,9 @@ async fn daily_activity_buckets_today() {
 async fn query_spend_supports_team_filter() {
     let db = fresh_db().await;
     let mk = |team: &str| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: now_iso(),
         request_id: None,
@@ -1387,6 +1423,9 @@ async fn delete_spend_logs_before_prunes_only_older_rows() {
     // runs at midnight and a row's timestamp happens to equal it.
     let db = fresh_db().await;
     let mk = |ts: &str, key: &str| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: ts.to_string(),
         request_id: None,
@@ -1441,6 +1480,9 @@ async fn insert_spend_logs_batch_inserts_every_row() {
     let db = fresh_db().await;
     let logs = vec![
         SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: "2024-01-01T00:00:00Z".to_string(),
             request_id: Some("r-1".to_string()),
@@ -1460,6 +1502,9 @@ async fn insert_spend_logs_batch_inserts_every_row() {
             latency_ms: Some(42),
         },
         SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: "2024-01-02T00:00:00Z".to_string(),
             request_id: None,
@@ -1479,6 +1524,9 @@ async fn insert_spend_logs_batch_inserts_every_row() {
             latency_ms: None,
         },
         SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: "2024-01-03T00:00:00Z".to_string(),
             request_id: Some("r-3".to_string()),
@@ -1545,6 +1593,9 @@ async fn model_info_optional_roundtrips_when_none() {
 
 fn spend_row(request_id: Option<&str>, key_id: Option<&str>, cost: Option<f64>) -> SpendLog {
     SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: now_iso(),
         request_id: request_id.map(str::to_string),
@@ -2688,6 +2739,9 @@ async fn insert_spend_logs_batch_chunks_around_param_limit() {
     let n = 6_000;
     let logs: Vec<SpendLog> = (0..n)
         .map(|i| SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: "2024-01-01T00:00:00Z".to_string(),
             request_id: Some(format!("req-{i}")),
@@ -2825,6 +2879,9 @@ async fn query_spend_clamps_limit_and_offset() {
     let db = fresh_db().await;
     for i in 0..5 {
         db.insert_spend_log(&SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: now_iso(),
             request_id: Some(format!("req-{i}")),
@@ -2905,6 +2962,9 @@ async fn query_spend_paginated_non_id_sort_ignores_cursor() {
     let db = fresh_db().await;
     for i in 0..6 {
         db.insert_spend_log(&SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: now_iso(),
             request_id: Some(format!("req-{i}")),
@@ -2957,6 +3017,9 @@ async fn query_spend_paginated_asc_cursor_walks_forward() {
     let n = 6;
     for i in 0..n {
         db.insert_spend_log(&SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: now_iso(),
             request_id: Some(format!("req-{i}")),
@@ -3047,6 +3110,9 @@ async fn insert_spend_logs_batch_rolls_back_on_mid_chunk_failure() {
     for i in 0..77 {
         let is_sentinel = i == 76;
         logs.push(SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: now_iso(),
             request_id: Some(format!("r-rollback-{i}")),
@@ -3178,6 +3244,9 @@ async fn list_skills_by_model_does_not_truncate_at_list_cap() {
 async fn daily_activity_buckets_multiple_days_sqlite() {
     let db = fresh_db().await;
     let mk = |ts: &str, cost: f64| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: ts.to_string(),
         request_id: None,
@@ -3325,6 +3394,9 @@ async fn query_spend_by_org_reattributes_after_key_is_moved() {
 async fn insert_spend_log_and_batch_produce_identical_rows() {
     let db = fresh_db().await;
     let mk = |req: &str| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: "2024-01-15T10:30:00Z".to_string(),
         request_id: Some(req.to_string()),
@@ -3459,6 +3531,9 @@ async fn query_spend_paginated_asc_tiebreaker_is_ascending() {
     // DB-assigned ids will be strictly increasing in insertion order.
     for i in 0..4 {
         db.insert_spend_log(&SpendLog {
+            deployment_id: None,
+            requested_model: None,
+            model_group: None,
             id: None,
             timestamp: now_iso(),
             request_id: Some(format!("req-{i}")),
@@ -3805,6 +3880,9 @@ async fn insert_spend_logs_batch_round_trips_per_row_values_across_chunks() {
         .map(|i| {
             let i = i as i64;
             SpendLog {
+                deployment_id: None,
+                requested_model: None,
+                model_group: None,
                 id: None,
                 timestamp: "2024-01-01T00:00:00Z".to_string(),
                 request_id: Some(format!("row-{i}")),
@@ -3930,6 +4008,9 @@ async fn spend_bare_end_date_includes_end_day_rows() {
     use crate::types::{SpendFilter, SpendLog};
     let db = fresh_db().await;
     let log = |ts: &str| SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: ts.to_string(),
         request_id: Some("r1".to_string()),
@@ -3959,4 +4040,31 @@ async fn spend_bare_end_date_includes_end_day_rows() {
         .await
         .expect("query");
     assert_eq!(rows.len(), 1, "noon end-day row must match bare end date");
+}
+
+#[tokio::test]
+async fn deployment_attribution_round_trips_and_filters_without_changing_model_totals() {
+    let db = fresh_db().await;
+    for (deployment, cost) in [
+        (Some("region-a"), 0.1),
+        (Some("region-b"), 0.2),
+        (None, 0.3),
+    ] {
+        let mut row = spend_row(None, None, Some(cost));
+        row.deployment_id = deployment.map(String::from);
+        db.insert_spend_log(&row).await.unwrap();
+    }
+    let all = db.query_spend(&SpendFilter::default()).await.unwrap();
+    assert_eq!(all.len(), 3);
+    assert!(all.iter().any(|row| row.deployment_id.is_none()));
+    let filter = SpendFilter {
+        deployment_id: Some("region-b".into()),
+        ..Default::default()
+    };
+    let selected = db.query_spend(&filter).await.unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].deployment_id.as_deref(), Some("region-b"));
+    assert!((db.total_spend_filtered(&filter).await.unwrap() - 0.2).abs() < 1e-9);
+    assert_eq!(db.count_spend_filtered(&filter).await.unwrap(), 1);
+    assert!((db.total_spend(None, None).await.unwrap() - 0.6).abs() < 1e-9);
 }

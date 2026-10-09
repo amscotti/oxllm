@@ -298,8 +298,8 @@ max_input_tokens = 1010000
 cache_read_input_token_cost = 2.500000e-7
 
 ["together_ai/Qwen/Qwen3.8-Flash"]
-input_cost_per_token = 9.000000e-8
-output_cost_per_token = 2.820000e-7
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 4.700000e-7
 max_input_tokens = 1000000
 
 ["together_ai/arcee-ai/trinity-mini"]
@@ -439,10 +439,10 @@ max_input_tokens = 262144
 cache_read_input_token_cost = 1.900000e-7
 
 ["together_ai/moonshotai/Kimi-K3"]
-input_cost_per_token = 3.000000e-6
-output_cost_per_token = 1.500000e-5
+input_cost_per_token = 2.700000e-6
+output_cost_per_token = 1.350000e-5
 max_input_tokens = 1048576
-cache_read_input_token_cost = 3.000000e-7
+cache_read_input_token_cost = 2.700000e-7
 
 ["together_ai/nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"]
 input_cost_per_token = 8.800000e-7

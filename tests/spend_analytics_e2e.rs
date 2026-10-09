@@ -141,6 +141,9 @@ async fn wait_for_spend_count(db: &Database, target: usize) {
 
 fn seeded_log(timestamp: &str, cost: f64, tags: Option<String>) -> oxllm_server::SpendLog {
     oxllm_server::SpendLog {
+        deployment_id: None,
+        requested_model: None,
+        model_group: None,
         id: None,
         timestamp: timestamp.into(),
         request_id: None,
@@ -158,6 +161,81 @@ fn seeded_log(timestamp: &str, cost: f64, tags: Option<String>) -> oxllm_server:
         tags,
         status: Some("success".into()),
         latency_ms: Some(1),
+    }
+}
+
+#[tokio::test]
+async fn azure_model_router_prices_the_served_model_plus_one_fee_for_json_and_sse() {
+    let fee_rate = oxllm_core::cost::price_table()["azure_ai/model-router"].input_cost_per_token;
+    let usage = oxllm_core::UsageSummary {
+        prompt_tokens: 100,
+        completion_tokens: 20,
+        total_tokens: 120,
+        cache_read_input_tokens: Some(40),
+        ..Default::default()
+    };
+    for provider in ["azure", "azure_ai"] {
+        for stream in [false, true] {
+            let mock = MockServer::start_async().await;
+            let wire = mock.mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(if provider == "azure" { "/openai/v1/chat/completions" } else { "/chat/completions" })
+                    .json_body_partial(json!({"model":"production-router"}).to_string());
+                if stream {
+                    then.status(200).header("content-type", "text/event-stream").body(format!(
+                        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                        json!({"id":"routed", "object":"chat.completion.chunk", "model":"gpt-6.1-sol", "choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}),
+                        json!({"model":"gpt-6.1-sol", "choices":[], "usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}})
+                    ));
+                } else {
+                    then.status(200).json_body(json!({
+                        "id":"routed", "object":"chat.completion", "model":"gpt-6.1-sol",
+                        "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+                        "usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}
+                    }));
+                }
+            }).await;
+            let mut config = proxy_config(&mock.base_url());
+            config.model_list[0].model_name = "public-router".into();
+            let params = &mut config.model_list[0].oxllm_params;
+            params.model = format!("{provider}/model_router/production-router");
+            params.api_version = (provider == "azure").then(|| "v1".into());
+            params
+                .extra
+                .insert("base_model".into(), json!("model-router"));
+            let handle = start_oxllm(config).await;
+            let expected =
+                oxllm_core::calculate_cost_with_provider("gpt-6.1-sol", &usage, provider).unwrap()
+                    + usage.prompt_tokens as f64 * fee_rate;
+            let response = reqwest::Client::new()
+                .post(handle.url("/v1/chat/completions"))
+                .bearer_auth(MASTER_KEY)
+                .json(&json!({
+                    "model":"public-router", "stream":stream, "max_tokens":32,
+                    "messages":[{"role":"user","content":"hello"}]
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+            if !stream {
+                let cost: f64 = response.headers()["x-oxllm-response-cost"]
+                    .to_str()
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                assert!((cost - expected).abs() < 1e-12);
+            }
+            let text = response.text().await.unwrap();
+            assert!(text.contains("public-router"), "{text}");
+            wait_for_spend_count(&handle.db, 1).await;
+            let rows = handle.db.query_spend(&Default::default()).await.unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].provider, provider);
+            assert!((rows[0].cost.unwrap() - expected).abs() < 1e-12);
+            wire.assert_hits_async(1).await;
+            shutdown(handle).await;
+        }
     }
 }
 
@@ -236,6 +314,164 @@ async fn every_spend_endpoint_includes_the_final_nanosecond_of_a_bare_end_date()
             .unwrap();
         assert_eq!(body["total_cost"].as_f64(), Some(expected));
     }
+    shutdown(handle).await;
+}
+
+#[tokio::test]
+async fn deployment_spend_separates_siblings_for_unary_and_streaming_calls() {
+    let first = MockServer::start_async().await;
+    let second = MockServer::start_async().await;
+    let mut config = proxy_config(&first.base_url());
+    config.model_list[0].model_name = "external-chat".into();
+    config.model_list[0].model_info = Some(oxllm_core::deployment::ModelInfo {
+        id: Some("leg-a".into()),
+        ..Default::default()
+    });
+    config.model_list[0].oxllm_params.input_cost_per_token = Some(0.001);
+    config.model_list[0].oxllm_params.output_cost_per_token = Some(0.002);
+    let mut sibling = config.model_list[0].clone();
+    sibling.oxllm_params.api_base = Some(second.base_url());
+    sibling.oxllm_params.input_cost_per_token = Some(0.003);
+    sibling.oxllm_params.output_cost_per_token = Some(0.004);
+    sibling.model_info.as_mut().unwrap().id = Some("leg-b".into());
+    config.model_list.push(sibling);
+    config.router_settings.routing.routing_strategy = Some("round_robin".into());
+    let first_wire = mock_chat(&first);
+    let second_wire = second.mock_async(|when, then| {
+        when.method(httpmock::Method::POST).path("/chat/completions");
+        then.status(200).header("content-type", "text/event-stream").body(concat!(
+            "data: {\"id\":\"stream\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"stream\",\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n",
+            "data: [DONE]\n\n"
+        ));
+    }).await;
+    let handle = start_oxllm(config).await;
+    let client = reqwest::Client::new();
+    for (stream, id) in [(false, "leg-a"), (true, "leg-b")] {
+        let response = client
+            .post(handle.url("/v1/chat/completions"))
+            .bearer_auth(MASTER_KEY)
+            .json(&json!({
+                "model": "external-chat", "messages": [{"role": "user", "content": "hi"}],
+                "stream": stream, "stream_options": {"include_usage": true}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["x-oxllm-deployment-id"], id);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("external-chat"), "{body}");
+    }
+    wait_for_spend_count(&handle.db, 2).await;
+    let all = handle
+        .db
+        .query_spend(&oxllm_server::SpendFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 2);
+    assert!(all.iter().all(
+        |row| row.requested_model.as_deref() == Some("external-chat")
+            && row.model_group.as_deref() == Some("external-chat")
+    ));
+    assert!(
+        all.iter()
+            .all(|row| row.model == "gpt-4o" && row.provider == "openai")
+    );
+    assert!((all.iter().filter_map(|row| row.cost).sum::<f64>() - 0.07).abs() < 1e-9);
+    for (id, cost) in [("leg-a", 0.02), ("leg-b", 0.05)] {
+        for endpoint in ["/spend/logs", "/spend/logs/v2"] {
+            let response = client
+                .get(handle.url(endpoint))
+                .bearer_auth(MASTER_KEY)
+                .query(&[("deployment_id", id)])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200);
+            let body = response.json::<Value>().await.unwrap();
+            assert_eq!(body["data"].as_array().unwrap().len(), 1, "{body}");
+            assert_eq!(body["data"][0]["deployment_id"], id);
+            assert!((body["data"][0]["cost"].as_f64().unwrap() - cost).abs() < 1e-9);
+        }
+    }
+    first_wire.assert_hits_async(1).await;
+    second_wire.assert_hits_async(1).await;
+    shutdown(handle).await;
+}
+
+#[tokio::test]
+async fn fallback_spend_filters_separate_requested_alias_from_serving_group() {
+    let primary = MockServer::start_async().await;
+    let serving = MockServer::start_async().await;
+    let mut config = proxy_config(&primary.base_url());
+    config.model_list[0].model_name = "requested-alias".into();
+    let mut fallback = config.model_list[0].clone();
+    fallback.model_name = "serving-alias".into();
+    fallback.oxllm_params.api_base = Some(serving.base_url());
+    fallback.oxllm_params.input_cost_per_token = Some(0.002);
+    fallback.oxllm_params.output_cost_per_token = Some(0.004);
+    fallback.model_info = Some(oxllm_core::ModelInfo {
+        id: Some("billed-leg".into()),
+        ..Default::default()
+    });
+    config.model_list.push(fallback);
+    config.router_settings.routing.num_retries = Some(0);
+    config.router_settings.routing.fallbacks =
+        Some(json!([{"requested-alias": ["serving-alias"]}]));
+    let failed = primary
+        .mock_async(|when, then| {
+            when.method(httpmock::Method::POST);
+            then.status(503)
+                .json_body(json!({"error": {"message": "unavailable"}}));
+        })
+        .await;
+    let healthy = mock_chat(&serving);
+    let handle = start_oxllm(config).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(handle.url("/v1/chat/completions"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({"model": "requested-alias", "messages": [{"role": "user", "content": "hi"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-oxllm-model-group"], "serving-alias");
+    assert_eq!(
+        response.headers()["x-oxllm-requested-model"],
+        "requested-alias"
+    );
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["model"],
+        "serving-alias"
+    );
+    wait_for_spend_count(&handle.db, 1).await;
+    for endpoint in ["/spend/logs", "/spend/logs/v2"] {
+        for filter in [
+            ("requested_model", "requested-alias"),
+            ("model_group", "serving-alias"),
+        ] {
+            let response = client
+                .get(handle.url(endpoint))
+                .bearer_auth(MASTER_KEY)
+                .query(&[filter])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200);
+            let body = response.json::<Value>().await.unwrap();
+            assert_eq!(body["data"].as_array().unwrap().len(), 1);
+            let row = &body["data"][0];
+            assert_eq!(row["requested_model"], "requested-alias");
+            assert_eq!(row["model_group"], "serving-alias");
+            assert_eq!(row["deployment_id"], "billed-leg");
+            assert_eq!(row["model"], "gpt-4o");
+            assert!((row["cost"].as_f64().unwrap() - 0.04).abs() < 1e-9);
+        }
+    }
+    failed.assert_hits_async(1).await;
+    healthy.assert_hits_async(1).await;
     shutdown(handle).await;
 }
 

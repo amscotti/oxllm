@@ -31,7 +31,7 @@ enum SpendBind {
 /// insert NULLs.
 const SPEND_LOG_COLS: &str = "timestamp, request_id, model, provider, \
  prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, \
- end_user_id, tag_name, tags, status, latency_ms";
+ end_user_id, tag_name, tags, status, latency_ms, deployment_id, requested_model, model_group";
 /// The number of columns in [`SPEND_LOG_COLS`] (and therefore the number of
 /// binds applied per row by [`bind_spend_log`]). The single-row insert
 /// ([`Database::insert_spend_log`]) and the chunked batch insert
@@ -41,7 +41,7 @@ const SPEND_LOG_COLS: &str = "timestamp, request_id, model, provider, \
 /// cannot drift from the column list / bind order when a column is added.
 /// Updating [`SPEND_LOG_COLS`] and [`bind_spend_log`] without bumping this
 /// constant is caught by the batch-roundtrip tests.
-const SPEND_LOG_COL_COUNT: usize = 16;
+const SPEND_LOG_COL_COUNT: usize = 19;
 /// Bind every field of `log` onto `query`, in the same order as
 /// [`SPEND_LOG_COLS`]. Both the single-row and batched insert paths route
 /// through here so the column ↔ bind mapping has one source of truth.
@@ -67,7 +67,10 @@ fn bind_spend_log<'q>(
         .bind(log.tag_name.clone())
         .bind(log.tags.clone())
         .bind(log.status.clone())
-        .bind(log.latency_ms);
+        .bind(log.latency_ms)
+        .bind(log.deployment_id.clone())
+        .bind(log.requested_model.clone())
+        .bind(log.model_group.clone());
     query
 }
 /// Builds the `WHERE` clause shared by the spend-log queries and owns the
@@ -408,6 +411,9 @@ impl Database {
             .cmp_str("key_id", "=", filter.key_id.as_deref())
             .cmp_str("team_id", "=", filter.team_id.as_deref())
             .cmp_str("model", "=", filter.model.as_deref())
+            .cmp_str("deployment_id", "=", filter.deployment_id.as_deref())
+            .cmp_str("requested_model", "=", filter.requested_model.as_deref())
+            .cmp_str("model_group", "=", filter.model_group.as_deref())
             .cmp_str("request_id", "=", filter.request_id.as_deref())
             .matches_tag(filter.tag_name.as_deref());
         let where_sql = w.where_sql();
@@ -508,6 +514,9 @@ impl Database {
             .cmp_str("key_id", "=", filter.key_id.as_deref())
             .cmp_str("team_id", "=", filter.team_id.as_deref())
             .cmp_str("model", "=", filter.model.as_deref())
+            .cmp_str("deployment_id", "=", filter.deployment_id.as_deref())
+            .cmp_str("requested_model", "=", filter.requested_model.as_deref())
+            .cmp_str("model_group", "=", filter.model_group.as_deref())
             .cmp_str("request_id", "=", filter.request_id.as_deref())
             .matches_tag(filter.tag_name.as_deref());
         let where_sql = w.where_sql();
@@ -630,6 +639,9 @@ impl Database {
             .cmp_str("key_id", "=", filter.key_id.as_deref())
             .cmp_str("team_id", "=", filter.team_id.as_deref())
             .cmp_str("model", "=", filter.model.as_deref())
+            .cmp_str("deployment_id", "=", filter.deployment_id.as_deref())
+            .cmp_str("requested_model", "=", filter.requested_model.as_deref())
+            .cmp_str("model_group", "=", filter.model_group.as_deref())
             .cmp_str("request_id", "=", filter.request_id.as_deref())
             .matches_tag(filter.tag_name.as_deref());
         let where_sql = w.where_sql();
@@ -651,6 +663,9 @@ impl Database {
             .cmp_str("key_id", "=", filter.key_id.as_deref())
             .cmp_str("team_id", "=", filter.team_id.as_deref())
             .cmp_str("model", "=", filter.model.as_deref())
+            .cmp_str("deployment_id", "=", filter.deployment_id.as_deref())
+            .cmp_str("requested_model", "=", filter.requested_model.as_deref())
+            .cmp_str("model_group", "=", filter.model_group.as_deref())
             .cmp_str("request_id", "=", filter.request_id.as_deref())
             .matches_tag(filter.tag_name.as_deref());
         let where_sql = w.where_sql();

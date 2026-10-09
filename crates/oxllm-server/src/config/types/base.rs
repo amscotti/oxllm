@@ -197,6 +197,10 @@ pub struct OxllmSettings {
     /// `failure_callback`.
     #[serde(default)]
     pub callbacks: Option<Vec<String>>,
+    /// Infrastructure failure callback backends. `datadog` uses the configured
+    /// logs intake and the server's bounded dependency-health monitor.
+    #[serde(default)]
+    pub service_callback: Option<Vec<String>>,
     /// Per-slug configuration for `success_callback`. Keys are slugs (e.g.
     /// `"generic"`); values are arbitrary YAML objects consumed by the
     /// corresponding hook.

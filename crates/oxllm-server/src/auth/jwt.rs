@@ -819,7 +819,7 @@ pub async fn claims_to_user_if_valid(
 /// principal so JWT callers respect the same scope caps as virtual keys.
 ///
 /// Team/user records are resolved through the shared cached helpers
-/// ([`super::team_limits_for`] / [`super::user_limits_for`], positive 300s /
+/// (`team_limits_for` / `user_limits_for`, positive 300s /
 /// negative 60s snapshots). Each hit validates its content version against the
 /// shared DB, just like virtual-key auth, so a late fill or lost invalidation
 /// cannot restore stale team/user policy. A warm snapshot cannot bypass a DB

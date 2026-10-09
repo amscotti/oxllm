@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use oxllm_core::Deployment;
 
-use super::{CredentialResolver, StaticKeyResolver, WatsonXResolver};
+use super::{AnthropicResolver, CredentialResolver, StaticKeyResolver, WatsonXResolver};
 
 /// A slug → resolver map with a default fallback.
 ///
@@ -33,6 +33,7 @@ impl CredentialResolverRegistry {
     /// slugs. Other cloud resolvers are added via [`register`](Self::register).
     pub fn new() -> Self {
         let mut registry = Self::with_default(Arc::new(StaticKeyResolver));
+        registry.register("anthropic", Arc::new(AnthropicResolver::new()));
         let watsonx: Arc<dyn CredentialResolver> = Arc::new(WatsonXResolver::new());
         registry.register("watsonx", watsonx.clone());
         registry.register("watsonx_text", watsonx);

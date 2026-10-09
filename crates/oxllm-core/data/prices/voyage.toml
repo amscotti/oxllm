@@ -146,3 +146,23 @@ max_input_tokens = 32000
 input_cost_per_token = 1.200000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 32000
+
+["voyage/rerank-1"]
+input_cost_per_token = 5.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 8000
+max_output_tokens = 8000
+mode = "rerank"
+
+["voyage/rerank-lite-1"]
+input_cost_per_token = 2.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 4000
+max_output_tokens = 4000
+mode = "rerank"
+
+["voyage/voyage-large-2-instruct"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 16000
+mode = "embedding"

@@ -29,7 +29,10 @@ pub use cost::{
 pub use deployment::{Deployment, ModelInfo, OxllmParams};
 pub use endpoint::Endpoint;
 pub use error::{Error, Result};
-pub use hook::{CallContext, Hook, HookAction, RateLimitInfo, ResponseSummary, UsageSummary};
+pub use hook::{
+    CallContext, Hook, HookAction, RateLimitInfo, ResponseSummary, ServiceFailureEvent,
+    UsageSummary,
+};
 pub use limits::{AllScopeLimits, ScopeLimits};
 pub use provider::{
     ChatProvider, EmbeddingProvider, Provider, ProviderId, RealtimeProvider, RerankProvider,

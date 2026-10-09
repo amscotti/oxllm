@@ -215,6 +215,15 @@ impl ChatProvider for AnthropicProvider {
         creds: &ResolvedCredentials,
         headers: &mut HashMap<String, String>,
     ) {
+        if let ResolvedCredentials::PreSignedHeaders(signed) = creds {
+            headers.extend(
+                signed
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
+            headers.insert("anthropic-version".into(), ANTHROPIC_VERSION.into());
+            return;
+        }
         let key = match creds {
             ResolvedCredentials::ApiKey { bearer } => bearer.clone(),
             other => match other.best_effort_bearer() {
@@ -3362,6 +3371,8 @@ fn anthropic_error_status(error_type: Option<&str>) -> u16 {
         Some("authentication_error") => 401,
         Some("permission_error") => 403,
         Some("invalid_request_error") => 400,
+        Some("not_found_error") => 404,
+        Some("timeout_error") => 504,
         // `api_error` and any unmapped type → 500.
         _ => 500,
     }
@@ -4043,6 +4054,8 @@ fn anthropic_reasoning_tokens(usage: &Value) -> Option<u64> {
 
 #[cfg(test)]
 mod tests;
+
+pub mod count_tokens;
 
 #[cfg(test)]
 mod validation_tests;

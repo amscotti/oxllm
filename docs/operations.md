@@ -89,6 +89,9 @@ Legacy and native gateway-settings names refer to the same replaceable block.
 The hot-reload watcher follows contributing files and their logical symlink
 paths, including files added by later edits. `POST /config/update` validates
 includes and env-driven scalars before atomically writing the root file.
+Directory aliases share one OS watch registration. The bounded event queue
+coalesces overflow into a rescan, preserving changes without blocking callback
+threads during watcher startup or restart.
 
 Deployments with `model_info.supported_environments` load only in matching
 environments. The first non-empty `OXLLM_ENVIRONMENT` or `LITELLM_ENVIRONMENT`
@@ -122,12 +125,36 @@ signing remains owned by the signer.
 `azure_ai/` serves Foundry native Claude messages, compatible vendor chat and
 text embeddings. Configure the resource or full endpoint in `api_base`; existing
 query strings are preserved and explicit `api_version` fills an absent
-`api-version` query. Unified `.services.ai.azure.com` resources use `api-key`;
+`api-version` query. Native Claude Messages routes use `x-api-key`. Compatible
+vendor routes on unified `.services.ai.azure.com` resources use `api-key`;
 explicit `azure_ad_token` uses Bearer authentication. Native Cohere embedding
 deployments also recognize unified Foundry hosts, or `api_type: azure_ai` for
 custom gateways, and send `input` to `/models/embeddings`. Azure ML
 `llm_provider-num_tokens` headers are honored for embedding usage and cost.
 See [the Foundry configuration sample](../examples/config.foundry.yaml).
+
+Azure OpenAI deployments identified by GPT-5/GPT-6/o-series names
+translate `max_tokens` to `max_completion_tokens`; an explicit modern limit
+wins. This includes GPT-5/GPT-6 chat variants, deployment labels containing
+those family names, and `gpt5_series` labels. Token-limit translation does not
+enable reasoning-specific sampling restrictions for chat models.
+Set `model_info.base_model` for opaque deployment aliases that need a
+capability hint. An explicit nonreasoning base-model hint takes precedence over
+deployment-name inference.
+
+Azure/Azure AI Model Router selectors (`model_router/<deployment>` or
+`model-router/<deployment>`) retain their configured identity for routing and
+send only the deployment name upstream. Settlement prices the model reported
+by Azure, then adds the canonical Model Router infrastructure rate once
+($0.14 per million input tokens in the 2026-10-08 catalog). Cached-read prompt
+tokens still incur that fee. A canonical fee-only response or an unpriced
+selected model charges the fee once; explicit deployment/request cost overrides
+are all-in and take precedence, including explicit zero rates. Opaque deployment
+names can use `model_info.base_model: model-router`; merely containing the words
+`model-router` does not select this billing mode. Budget admission for an unpriced
+deployment reserves the nominal $0.01 floor plus the known infrastructure fee;
+canonical fee-only cards reserve their effective fee once.
+JSON headers, SSE settlement, spend records and exporters use the same result.
 
 `general_settings.http_force_ipv4: true` restricts the shared upstream and
 image-download clients to IPv4 through DNS filtering and IPv4 local binding.
@@ -144,6 +171,24 @@ Malformed selectors and points combined with explicitly disabled global
 prompt caching are rejected during validation. Automatic cache insertion from
 the global prompt-routing switch remains a separate feature.
 
+Flagged OpenAI-shaped deployments also accept these selectors. Mantle GPT-5.6+
+and flagged Foundry GPT deployments inject `prompt_cache_breakpoint:
+{mode: explicit}` on the last eligible content block instead of Anthropic
+`cache_control`. Missing/null `prompt_cache_options` becomes `{mode: implicit}`
+when a new mark is inserted. Existing marks and explicit options win; assistant
+messages are skipped. Request-level point lists override deployment points;
+malformed request entries are ignored, while deployment selectors remain typed
+and validated. Request decorations such as Anthropic TTL controls do not alter
+OpenAI selectors. The four-block cap counts message/content annotations, not
+schema properties or metadata fields with matching names. Foundry OpenAI bodies
+remove Anthropic cache annotations before inserting native breakpoints.
+`supports_prompt_cache_breakpoint: false` disables the dialect;
+only boolean `true` opts an unmodeled deployment in. Provider-scoped catalog
+flags never license another provider. Native OpenAI defaults require the OpenAI
+API host or explicit caller cache options on a compatible custom host. An exact
+regional hosted-model card is authoritative, including unflagged GovCloud cards;
+commercial flags do not opt those deployments in.
+
 Deployment `*_above_<N>k_tokens`/`*_above_<N>_tokens` prices apply to all tokens
 after the prompt crosses the threshold. At 272,000 tokens the base applies;
 at 272,001 the tier applies. `tier_threshold_is_inclusive: true` opts into an
@@ -152,13 +197,52 @@ including standalone one-hour details. Malformed tier keys/rates are warned.
 
 Named `retry_policy` entries map onto status counts and structured categories.
 Timeouts map to 408; actual upstream 504s belong to the 5xx category.
+The internal-server-error category also covers Anthropic overload status 529;
+explicit numeric status policies retain precedence. Streamed Anthropic timeout
+and not-found frames preserve HTTP 504 and 404 respectively.
 `BadRequestErrorRetries` and `AuthenticationErrorRetries` accept only zero.
 Their zero allowed-fails mappings opt those statuses into immediate fallback;
-other request-content errors remain terminal unless explicitly opted in.
+zero disables same-deployment retries while allowing sibling/configured
+failover. Other request-content errors remain terminal unless explicitly opted in.
 Explicit numeric retry entries win over aliases. Nonzero content-policy
 retry parity is not established by the zero-retry compatibility tests.
 Exhausted deployments are excluded for the remainder of the current request,
 even with `cooldown_time: 0`; future requests may reconsider them immediately.
+
+Chat, Messages and Responses requests can override `fallbacks`,
+`context_window_fallbacks` and `content_policy_fallbacks` with model-name lists
+or the configured rule shape. Null inherits defaults; an empty list disables
+that chain. `disable_fallbacks: true` disables all model fallback, including
+unknown-model defaults. `max_fallbacks` can lower the server cap; zero disables
+fallback walks. Every target retains key/team/user ACL and budget checks.
+Embeddings share request-scoped generic fallback and retry controls.
+
+An explicit status/exception retry policy wins over request `num_retries`, then
+deployment `num_retries`, then the model-group/global default. Zero prevents
+same-deployment retries. Request `num_retries` must be an integer from 0 through
+10; larger values return 400 before provider calls. Trusted server/deployment
+retry policies retain their configured budgets. The one-shot thinking-signature
+repair is included in `x-oxllm-max-retries` and the attempted-retry count.
+Gateway controls, including cache selectors and `metadata.tags`, are removed
+from final provider bodies after configured overrides and allowed-parameter
+restoration. Raw bodies are validated before Messages/Responses/counting
+conversion; opt-in fallback status summaries survive API bridges.
+
+Streaming startup holds role/usage metadata until content or a normal terminator
+arrives. A pre-content disconnect, timeout or provider error frame re-enters the
+same retry/fallback chain; malformed provider preludes are retryable 502s and
+failed-attempt metadata never reaches clients. Startup retains at most 16 MiB
+of coalesced upstream bytes. Cancellation before commitment releases the
+deployment in-flight slot and acquired router-budget estimates; refunds have
+one owner even when cancellation interrupts a multi-scope release. Once
+the stream is committed, later errors terminate it without restarting output.
+Header waits and stream reads use the same idle timeout precedence: request
+`stream_timeout`, request `timeout`, deployment `stream_timeout`, global
+`request_timeout`, then 60 seconds. Deployment `timeout` remains a unary
+setting and does not shorten streams. Request timeouts accept finite positive
+fractional seconds. Healthy chunks/keepalives do not trigger a total streaming
+deadline. Native `/anthropic/v1/messages` passthrough remains single-attempt;
+translated `/v1/messages` participates in chat retry/fallback orchestration.
 
 Vertex renewable auth supports service-account and authorized-user JSON,
 with precedence: static deployment `api_key`, deployment `vertex_credentials`,
@@ -172,6 +256,88 @@ token is rejected rather than forwarded. The bounded identity cache has a
 two-hour idle policy; eviction or resolver shutdown cancels workers and releases
 refresh material. Full ADC discovery/federation/impersonation is not implemented.
 
+Vertex Gemini chat and OpenAI-compatible embeddings send `google/<model>` as
+the publisher-qualified selector. Configured bare IDs, `google/<model>` and
+`publishers/google/models/<model>` are accepted. Native Vertex Claude routes
+use an Anthropic publisher URL with a single model-id segment.
+
+Vertex multi-regions `us` and `eu` use `aiplatform.us.rep.googleapis.com` and
+`aiplatform.eu.rep.googleapis.com`; `global` and regional hosts retain their
+normal forms. `vertex_location` and counting-region overrides use nonempty
+lowercase letters/digits/hyphens, including with a custom API base; uppercase
+or path/query-bearing names are rejected. Gemini requests discard foreign
+`thinking_blocks`, retaining
+the caller's single `reasoning_content` representation and Google's native
+provider fields/tool-call IDs.
+
+### Provider token counting
+
+`POST /v1/messages/count_tokens` supports direct Anthropic, Vertex Claude and
+Foundry Claude deployments. System prompts and native tool definitions are
+forwarded, null fields are omitted, and malformed tool lists fail before any
+provider request. OpenAI `image_url` blocks are normalized to Anthropic image
+sources, including images nested in tool results. Counts incur no generation
+spend. Vertex removes `@default`/snapshot suffixes only for counting and calls
+the publisher's `count-tokens:rawPredict` endpoint. Set
+`vertex_count_tokens_location` when counting uses a different region; otherwise
+the deployment location applies, with `us-east5` when no location is configured.
+The stable Anthropic counting API does not need a token-counting beta header;
+explicit caller/OAuth feature betas are preserved.
+
+`POST /utils/token_counter` remains local by default. `call_endpoint: true`
+uses a supported Claude counting deployment and falls back to local estimation
+if the provider is unavailable. `disable_token_counter: true` prohibits local
+estimation on every path, including default/local-only calls and unsupported or
+missing native counters. A missing native result returns 503 with code
+`token_counting_disabled`; native errors retain their status. Both flags must be
+boolean or null. Model ACLs and the utility work limit apply to both paths.
+
+### Anthropic workload identity federation
+
+See [the federation configuration example](../examples/config.anthropic-wif.yaml).
+An explicit static `api_key` takes precedence. Otherwise configure
+`anthropic_identity_token_file`, or `anthropic_identity_token` as
+`oidc/file//absolute/path` or `oidc/env/NAME`. The standard
+`ANTHROPIC_IDENTITY_TOKEN_FILE`/`ANTHROPIC_IDENTITY_TOKEN` environment sources are
+also supported. Source precedence is deployment file, deployment reference,
+environment file, `OXLLM_ANTHROPIC_IDENTITY_TOKEN_REF`, then the raw assertion in
+`ANTHROPIC_IDENTITY_TOKEN`. Raw assertions are not accepted in the deployment
+reference parameter. `anthropic_identity_source` or an ambient
+`ANTHROPIC_IDENTITY_SOURCE` requires a custom registered resolver; the built-in
+resolver does not implement Keycloak/internal issuer acquisition.
+
+Federation requires `anthropic_federation_rule_id` and
+`anthropic_organization_id`, with vendor environment fallbacks
+`ANTHROPIC_FEDERATION_RULE_ID` and `ANTHROPIC_ORGANIZATION_ID`. Missing IDs return
+a named 401 before file access or an exchange. Optional
+`anthropic_service_account_id` and `anthropic_federation_workspace_id` select the
+grant scope. `anthropic_disable_workload_identity_federation: true` selects static
+key resolution. These credentials belong to deployments and cannot be supplied
+through generation request bodies.
+Validation includes the federation-disable flag and runs before body conversion.
+A credential 401 can still cool a bad deployment and select an authorized
+sibling/configured fallback; failing locally means no assertion read/exchange
+for malformed configuration, not disabling normal authorized routing recovery.
+
+The built-in resolver exchanges JSON JWT-bearer grants for expiry-checked Bearer
+tokens, coalesces concurrent acquisition, and reuses unexpired grants. File reads
+and token responses are capped at 64 KiB. The assertion cap applies to raw bytes
+before UTF-8 conversion or whitespace trimming, so padding cannot bypass it.
+Identity assertions must rotate before
+the minted token expires; no expired grant is forwarded. OAuth beta flags are
+merged without empty segments or duplicates on translated/native chat and
+counting paths. Assertion source buffers and the owned serialized JSON grant
+buffer are zeroized when dropped, including after transport clones release the
+last owner; this does not cover copies inside HTTP/TLS libraries or headers.
+Additional issuer/identity-source implementations use the credential-resolver registry.
+
+Exchange URLs require HTTPS. `api.anthropic.com` is trusted by default;
+`OXLLM_ANTHROPIC_WIF_ALLOWED_HOSTS` adds comma-separated exact authorities,
+optionally pinning a port. Identity files default to `/var/run/secrets` and
+`/run/secrets`; `OXLLM_OIDC_ALLOWED_CREDENTIAL_DIRS` selects allowed roots using
+the platform path separator (`:` on Unix). These are server-owned environment
+settings. Restart after changing them.
+
 Bedrock Cohere/Titan text embeddings use InvokeModel with SigV4 over the exact
 sent bytes. Runtime URLs use the resolved signing region. Usage comes from
 the native body, then the invocation token-count header, then text estimation
@@ -180,11 +346,27 @@ host region so an ambient region cannot create a mismatched token.
 
 A database model row whose `model_name` matches a YAML deployment is skipped;
 the YAML deployment is the one that is served. Spend logs flush every 60
-seconds. The Postgres pool allows at most 20 connections. Session affinity is
-a stateless hash of the session id and has no TTL. Datadog receives logs for
-successful requests and terminal failures, excluding cache hits/master-key
-requests; failure messages redact credential-shaped values. Redis/PG service
-failure callbacks are not supplied by this request hook.
+seconds. The Postgres pool allows at most 20 connections;
+`database_connection_pool_limit` does not tune this pool. Session affinity is
+a stateless hash of the session id and has no TTL; changes to group membership
+can remap sessions. `optional_pre_call_checks: [session_affinity]` selects this
+strategy when the global strategy is omitted. An explicitly configured strategy
+takes precedence. Unknown/unconfigured check diagnostics are shared by
+`validate` and `serve`, and only enabled filters enter the routing pipeline.
+`router_budget_limiting` is accepted as an alias for the native `budget_limiter`
+check. `enforce_model_rate_limits` is accepted as a declaration of deployment
+RPM/TPM enforcement, which runs for every selected deployment independently of
+the optional-filter list.
+
+`oxllm_settings.datadog_config` sends successful-request and terminal-failure
+logs, excluding cache-hit/master-key request events. Failure messages redact
+credential-shaped values. Adding `service_callback: [datadog]` enables separate
+dependency-health failure logs using that same intake configuration. The server
+checks configured DB/cache backends every 15 seconds with the readiness probe's
+500 ms deadlines. It logs an outage once, repeats after 60 seconds, and rearms
+after recovery. These events are independent of callers and billing. Hot reload
+updates the callback configuration; shutdown stops the monitor. Missing intake
+credentials and unsupported service backends produce validation/startup warnings.
 
 Bedrock Converse always merges adjacent user/assistant roles and parallel tool
 results while retaining content metadata and signed reasoning. Enable
@@ -212,6 +394,79 @@ roll pods when Helm-managed config or secrets change. Do not rely on file
 watching alone for projected-volume updates or startup-only settings. A
 ConfigMap mounted with `subPath` does not receive updates. For externally
 managed Secret rotations, bump `rolloutRevision` or restart the Deployments.
+
+### Response metadata and deployment attribution
+
+Direct chat JSON/SSE responses and embeddings echo the client's requested model
+name. When a configured/default fallback serves the request, both JSON and SSE
+identify its public model group. `x-oxllm-requested-model` records the original
+alias and `x-oxllm-model-group` records the serving group, making fallback
+reporting consistent across response shapes.
+Billing and spend telemetry use the serving provider/model and deployment's
+rate card. Completion usage includes
+`completion_tokens_details.reasoning_tokens: 0` when no reasoning count was
+reported; reported nonzero counts are retained.
+
+`x-oxllm-*` is the primary client contract, including for browser clients using
+the configured proxy CORS policy. Selected `x-litellm-*` response names are
+additive compatibility aliases with the same values; native clients use only
+`x-oxllm-*` headers and native configuration names.
+
+| Primary header | Meaning |
+|---|---|
+| `x-oxllm-deployment-id`, `x-oxllm-model-id` | Selected deployment's `model_info.id` |
+| `x-oxllm-model-name` | Selected deployment's provider/model selector, independently of its pricing hint |
+| `x-oxllm-model-group` | Public group that served, including a fallback group |
+| `x-oxllm-requested-model` | Original client-requested alias |
+| `x-oxllm-attempted-retries` | Same-deployment retries across attempted groups, including history repair |
+| `x-oxllm-attempted-fallbacks` | Configured/default fallback groups attempted |
+| `x-oxllm-max-retries` | Effective retry budget when the serving deployment needed a policy retry |
+| `x-oxllm-fallback-errors` | Bounded status summaries when `include_fallback_errors: true` was requested |
+| `x-oxllm-response-duration-ms` | Total time from HTTP request admission to response-header construction |
+| `x-oxllm-upstream-duration-ms` | Sum of upstream attempts, including failed attempts |
+| `x-oxllm-overhead-duration-ms` | Total time outside upstream attempts, including backoff and response conversion |
+
+Streaming timing headers stop at response commitment (first content for
+transformed streams); complete generation
+duration is available from final telemetry. Upstream `x-ratelimit-*` headers
+are passed through from the serving leg. Local per-principal quota headers take
+precedence when both provide the same header.
+
+Configure a unique `model_info.id` for durable identities across restarts and
+replicas. Otherwise oxllm generates a UUID and preserves it across in-process
+reloads and DB refreshes. DB-managed deployments default to their stored model
+row id. IDs are public identifiers independent of internal routing fingerprints.
+A response-cache hit has no new deployment selection and omits deployment-id
+headers.
+Cache hits retain the original public response model and serving group;
+retry/fallback counters describe the current request and are zero. Cached
+rate-limit snapshots and deployment selections are not replayed. Cache-hit
+overhead excludes the response-cache lookup time.
+
+Spend logs include nullable `deployment_id`; historical records retain null.
+Both `/spend/logs?deployment_id=region-a` and
+`/spend/logs/v2?deployment_id=region-a` filter rows to one leg, including when
+multiple deployments share the same provider model.
+Schema version 16 also records nullable `requested_model` and `model_group`.
+Both log endpoints accept `requested_model=requested-alias` or
+`model_group=serving-alias`, with filtered totals on the v1 endpoint. These
+identities remain separate from the provider-model field used to compute spend.
+
+#### Compatibility boundaries
+
+The optional compatibility headers preserve the meanings listed above. Retry
+counters cover the whole gateway request, including earlier failed groups;
+some upstream routers report only the winning group's retries. Provider
+error frames that fail before stream commitment become ordinary HTTP errors
+after recovery is exhausted, preserving their status; errors after commitment
+remain terminal SSE events. Request-content
+4xx require an explicit failover policy, as described in the retry section.
+Session affinity uses the documented stateless strategy, and Datadog service
+callbacks are sampled dependency-health notifications rather than per-operation
+latency/error telemetry. Vertex Gemini uses the OpenAI-compatible API surface;
+native Gemini-specific safety/grounding/thinking fields need capability-specific
+validation. The gateway's native request/cost/group contract is the stable
+interface for clients.
 
 ### Logs, CORS and client IPs
 
@@ -265,8 +520,8 @@ runtime DML roles, run the migration CLI externally and use
 
 PostgreSQL upgrades automatically prepare existing legacy spend tables online:
 additive columns commit in a short transaction, then missing spend indexes are
-built with `CREATE INDEX CONCURRENTLY` before schema version 14 and its read
-fallbacks become ready. A dedicated migration session coordinates replicas;
+built with `CREATE INDEX CONCURRENTLY` before publishing the current schema
+and its read fallbacks. A dedicated migration session coordinates replicas;
 public startup allows a bounded 30-minute preparation budget, including waiting
 for another replica, while ordinary DDL lock waits remain short. Allow enough
 startup/init-container grace for a large index build. Session locks/settings are
@@ -274,6 +529,13 @@ discarded with that connection on completion or cancellation. Wrong or invalid
 same-named indexes and inconsistent event IDs produce a typed readiness error
 without replacement or data deletion; an interrupted concurrent build can leave
 an invalid index that must be inspected and recovered before retrying.
+
+Schema version 15 adds nullable deployment attribution and updates the spend
+read view. Existing rows and older writers that omit the column remain readable;
+no historical deployment identity is guessed or backfilled.
+Version 16 adds original-request and serving-group identities and refreshes the
+read view again. Historical records keep null group fields. Upgrading from v15
+is additive on SQLite and PostgreSQL, including mixed-version writers.
 
 Before an upgrade, retain the current image/config and take a database backup.
 Use a backup method appropriate to the database:
@@ -330,6 +592,14 @@ budget/rate-limit, revocation and coordination state.
 The bundled Redis uses `noeviction` for this reason. Monitor its capacity and
 errors: reaching `maxmemory` rejects writes instead of silently resetting live
 enforcement counters.
+
+Redis-backed deployments already use an in-process Moka value-cache tier ahead
+of Redis. This local tier is per replica; there is no shared memcached service.
+Redis counters remain authoritative across replicas. The Redis driver shares a
+managed multiplexed connection, with a separate pub/sub connection for
+invalidation; `cache_kwargs.max_connections` does not configure a connection
+pool. Configure Redis through `oxllm_settings.cache.redis_url` or `host`/`port`;
+legacy `router_settings.redis_host`/`redis_port` are ignored.
 
 ## Validation and image publication
 

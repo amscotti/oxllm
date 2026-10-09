@@ -219,6 +219,28 @@ pub(crate) fn build_proxy_cors(
                 axum::http::HeaderName::from_static("x-oxllm-router-decision"),
                 axum::http::HeaderName::from_static("x-oxllm-cache-hit"),
                 axum::http::HeaderName::from_static("x-oxllm-fallback-used"),
+                axum::http::HeaderName::from_static("x-oxllm-deployment-id"),
+                axum::http::HeaderName::from_static("x-oxllm-model-id"),
+                axum::http::HeaderName::from_static("x-oxllm-model-name"),
+                axum::http::HeaderName::from_static("x-oxllm-model-group"),
+                axum::http::HeaderName::from_static("x-oxllm-requested-model"),
+                axum::http::HeaderName::from_static("x-oxllm-attempted-retries"),
+                axum::http::HeaderName::from_static("x-oxllm-attempted-fallbacks"),
+                axum::http::HeaderName::from_static("x-oxllm-max-retries"),
+                axum::http::HeaderName::from_static("x-oxllm-fallback-errors"),
+                axum::http::HeaderName::from_static("x-oxllm-response-duration-ms"),
+                axum::http::HeaderName::from_static("x-oxllm-upstream-duration-ms"),
+                axum::http::HeaderName::from_static("x-oxllm-overhead-duration-ms"),
+                // Additive compatibility response aliases.
+                axum::http::HeaderName::from_static("x-litellm-model-id"),
+                axum::http::HeaderName::from_static("x-litellm-model-name"),
+                axum::http::HeaderName::from_static("x-litellm-model-group"),
+                axum::http::HeaderName::from_static("x-litellm-attempted-retries"),
+                axum::http::HeaderName::from_static("x-litellm-attempted-fallbacks"),
+                axum::http::HeaderName::from_static("x-litellm-max-retries"),
+                axum::http::HeaderName::from_static("x-litellm-fallback-errors"),
+                axum::http::HeaderName::from_static("x-litellm-response-duration-ms"),
+                axum::http::HeaderName::from_static("x-litellm-overhead-duration-ms"),
                 // OpenAI-standard alias stamped alongside x-oxllm-request-id.
                 axum::http::HeaderName::from_static("x-request-id"),
                 // Client-side throttling headers (IETF draft pattern).
@@ -250,11 +272,41 @@ async fn request_timing(request: axum::extract::Request, next: middleware::Next)
     // failure are traceable using the same headers as a successful call.
     let request_id = uuid::Uuid::new_v4().to_string();
     Span::current().record("request_id", request_id.as_str());
-    let mut response = crate::pipeline::HTTP_REQUEST_ID
-        .scope(request_id.clone(), next.run(request))
+    let mut response = crate::pipeline::HTTP_REQUEST_START
+        .scope(
+            started,
+            crate::pipeline::HTTP_REQUEST_ID.scope(request_id.clone(), next.run(request)),
+        )
         .await;
     crate::pipeline::stamp_request_id_header(&mut response, &request_id);
     let elapsed = started.elapsed().as_secs_f64();
+    let total_ms = elapsed * 1000.0;
+    // Include conversion/admission work up to the outer response boundary.
+    let previous = response
+        .headers()
+        .get("x-oxllm-response-duration-ms")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<f64>().ok());
+    let overhead = response
+        .headers()
+        .get("x-oxllm-overhead-duration-ms")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<f64>().ok());
+    if let (Some(previous), Some(overhead)) = (previous, overhead) {
+        let corrected = (overhead + (total_ms - previous).max(0.0)).to_string();
+        for header in [
+            "x-oxllm-overhead-duration-ms",
+            "x-litellm-overhead-duration-ms",
+        ] {
+            crate::pipeline::set_header(&mut response, header, &corrected);
+        }
+    }
+    for header in [
+        "x-oxllm-response-duration-ms",
+        "x-litellm-response-duration-ms",
+    ] {
+        crate::pipeline::set_header(&mut response, header, &total_ms.to_string());
+    }
     let status_family = match response.status().as_u16() {
         200..=299 => "2xx",
         400..=499 => "4xx",

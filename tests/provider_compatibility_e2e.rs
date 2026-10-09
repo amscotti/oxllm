@@ -363,11 +363,12 @@ async fn unpriced_response_alias_and_cache_hit_preserve_cost_without_double_debi
         assert!((cost - 0.2).abs() < 1e-12);
         assert_eq!(response.headers().contains_key("x-oxllm-cache-hit"), cached);
         let body: Value = response.json().await.unwrap();
-        assert_eq!(body["model"], "unpriced-public-alias");
+        assert_eq!(body["model"], "model");
         assert!(body.get("_oxllm_cache_version").is_none());
     }
     let entry = spend(&mut ledger).await;
     assert!((entry.cost.unwrap() - 0.2).abs() < 1e-12);
+    assert_eq!(entry.model, "unpriced-public-alias");
     assert!(ledger.try_recv().is_err());
     let total = state
         .load_full()

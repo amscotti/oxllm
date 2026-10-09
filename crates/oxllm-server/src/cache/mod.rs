@@ -12,12 +12,16 @@
 
 pub mod disk;
 pub mod qdrant;
+#[cfg(feature = "redis")]
 pub mod redis_semantic;
 pub mod semantic;
 
-pub use self::{disk::*, qdrant::*, redis_semantic::*, semantic::*};
+#[cfg(feature = "redis")]
+pub use self::redis_semantic::*;
+pub use self::{disk::*, qdrant::*, semantic::*};
 
 use std::collections::HashMap;
+#[cfg(any(feature = "redis", test))]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};

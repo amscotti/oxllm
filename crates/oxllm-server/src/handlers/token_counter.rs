@@ -1,4 +1,4 @@
-//! `POST /utils/token_counter` — server-only token estimation.
+//! `POST /utils/token_counter` — local estimation or opt-in native counting.
 //!
 //! Computes the prompt token count for the supplied model + messages locally
 //! using `crate::tokens::estimate_token_counter_tokens_async` (which dispatches to
@@ -7,7 +7,9 @@
 //! same default encoding the reference uses for unrecognised models; only if
 //! `cl100k_base` itself fails to load does it degrade to a `bytes/4`
 //! heuristic). A bounded number of utility jobs use the blocking pool so the
-//! async runtime is not stalled by BPE encoding. No upstream call is made.
+//! async runtime is not stalled by BPE encoding. `call_endpoint: true` first
+//! tries a supported native counter; `disable_token_counter: true` prevents
+//! local estimation when no native result is available.
 
 use axum::Extension;
 use axum::Json;
@@ -53,9 +55,9 @@ use crate::state::SharedState;
 /// `"huggingface_tokenizer"` even for models the reference would route to an HF
 /// tokenizer.
 ///
-/// This endpoint performs no upstream call and therefore no spend, so it
-/// intentionally does **not** run the full `EndpointPipeline` (budget
-/// reservation / cache lookup would be meaningless for a free local estimate).
+/// The default local path performs no upstream call and therefore no spend, so
+/// it does **not** run the full `EndpointPipeline`. Opt-in provider counting
+/// uses the native counting route's pipeline instead.
 /// It still honours the model ACL ([`check_model_acl`]) for consistency with
 /// every other LLM endpoint. Two process-wide utility slots bound CPU work;
 /// saturation returns 429 immediately rather than building a blocking-work
@@ -73,6 +75,21 @@ pub async fn token_counter(
         .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;
 
     crate::security::check_json_depth(&request, crate::security::MAX_JSON_DEPTH)?;
+    crate::orchestration::request_controls::validate(&request)?;
+
+    for field in ["call_endpoint", "disable_token_counter"] {
+        if request
+            .get(field)
+            .filter(|value| !value.is_null())
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(ApiError::bad_request(format!("{field} must be a boolean")));
+        }
+    }
+    let disable_token_counter = request
+        .get("disable_token_counter")
+        .and_then(Value::as_bool)
+        == Some(true);
 
     let model = request
         .get("model")
@@ -120,6 +137,35 @@ pub async fn token_counter(
         })
         .unwrap_or_else(|| model.clone());
     let tokenizer_type = oxllm_core::tokenizer_type_for(&model_used);
+    if request.get("call_endpoint").and_then(Value::as_bool) == Some(true) {
+        oxllm_providers::anthropic::count_tokens::validate_tools(&request)
+            .map_err(ApiError::from)?;
+        match crate::handlers::anthropic_count_tokens::count_at_provider(
+            &state, &auth, &request, &model,
+        )
+        .await
+        {
+            Ok(Some((tokens, tokenizer))) => {
+                return Ok(Json(json!({
+                    "total_tokens":tokens, "prompt_tokens":tokens, "completion_tokens":0,
+                    "request_model":model, "model_used":model_used, "tokenizer_type":tokenizer,
+                }))
+                .into_response());
+            }
+            Err(error) if disable_token_counter => return Err(error),
+            Err(_) => tracing::debug!("provider token count unavailable; using local estimation"),
+            Ok(None) => {}
+        }
+    }
+    if disable_token_counter {
+        let mut error = ApiError::internal(
+            "token counting is disabled and no provider API result is available",
+        );
+        error.status = axum::http::StatusCode::SERVICE_UNAVAILABLE;
+        error.error_type = "token_counting_disabled".into();
+        error.code = Some("token_counting_disabled".into());
+        return Err(error);
+    }
 
     // Route the estimator through the resolved model so the count uses the same
     // tokenizer `model_used` / `tokenizer_type` report. The body is only used
@@ -435,6 +481,104 @@ mod tests {
                 StatusCode::BAD_REQUEST,
                 "body {body} must 400 via the missing-model check"
             );
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(token_counter)]
+    async fn token_counter_disabled_rejects_unavailable_native_counters() {
+        for (configured, upstream, request) in [
+            (
+                "gpt-4o",
+                "openai/gpt-4o",
+                json!({"model":"gpt-4o", "messages":[{"role":"user", "content":"hello"}]}),
+            ),
+            (
+                "native",
+                "anthropic/claude-sonnet-4-5",
+                json!({"model":"missing", "messages":[{"role":"user", "content":"hello"}]}),
+            ),
+            (
+                "native",
+                "anthropic/claude-sonnet-4-5",
+                json!({"model":"native", "contents":[{"parts":[{"text":"hello"}]}]}),
+            ),
+        ] {
+            let mut request = request;
+            request["call_endpoint"] = json!(true);
+            request["disable_token_counter"] = json!(true);
+            let err = token_counter(
+                State(shared_state_with(configured, upstream)),
+                Extension(AuthUser::open()),
+                Bytes::from(request.to_string()),
+            )
+            .await
+            .expect_err("a missing native result must not become a local estimate");
+            assert_eq!(err.status, StatusCode::SERVICE_UNAVAILABLE, "{request}");
+            assert_eq!(err.code.as_deref(), Some("token_counting_disabled"));
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(token_counter)]
+    async fn token_counter_disabled_blocks_default_and_explicit_local_counting() {
+        let shared = shared_state_with("native", "anthropic/claude-sonnet-4-5");
+        for call_endpoint in [None, Some(json!(false)), Some(json!(null))] {
+            let mut request = json!({"model":"native", "messages":[{"role":"user", "content":"hello"}], "disable_token_counter":true});
+            if let Some(value) = call_endpoint {
+                request["call_endpoint"] = value;
+            }
+            let err = token_counter(
+                State(shared.clone()),
+                Extension(AuthUser::open()),
+                Bytes::from(request.to_string()),
+            )
+            .await
+            .expect_err("disabling local counting must apply without an endpoint call too");
+            assert_eq!(err.status, StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(token_counter)]
+    async fn token_counter_unavailable_native_counter_can_still_fall_back() {
+        for request in [
+            json!({"model":"gpt-4o", "prompt":"hello world", "disable_token_counter":false}),
+            json!({"model":"missing", "prompt":"hello world", "disable_token_counter":null}),
+        ] {
+            let mut request = request;
+            request["call_endpoint"] = json!(true);
+            let response = token_counter(
+                State(shared_state()),
+                Extension(AuthUser::open()),
+                Bytes::from(request.to_string()),
+            )
+            .await
+            .expect("an enabled local fallback must still estimate");
+            let body = read_json(response).await;
+            assert!(body["total_tokens"].as_u64().unwrap() > 0);
+            assert_eq!(body["tokenizer_type"], "openai_tokenizer");
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(token_counter)]
+    async fn token_counter_rejects_non_boolean_controls() {
+        let shared = shared_state();
+        for field in ["call_endpoint", "disable_token_counter"] {
+            for value in [json!("true"), json!(1), json!(0), json!([]), json!({})] {
+                let mut request = json!({"model":"gpt-4o", "prompt":"hello"});
+                request[field] = value;
+                let err = token_counter(
+                    State(shared.clone()),
+                    Extension(AuthUser::open()),
+                    Bytes::from(request.to_string()),
+                )
+                .await
+                .expect_err("malformed flags must not silently select local counting");
+                assert_eq!(err.status, StatusCode::BAD_REQUEST, "{request}");
+                assert!(err.message.contains(field));
+            }
         }
     }
 

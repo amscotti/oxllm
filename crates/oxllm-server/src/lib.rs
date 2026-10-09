@@ -39,7 +39,9 @@ pub mod state;
 pub mod tokens;
 
 pub use app::run;
-pub use cache::{DualCache, InMemoryCache};
+#[cfg(feature = "redis")]
+pub use cache::DualCache;
+pub use cache::InMemoryCache;
 pub use config::{ProxyConfig, load_config, parse_config_str};
 pub use credentials::{
     BedrockCredentialResolver, BedrockMantleCredentialResolver, CredentialResolver,

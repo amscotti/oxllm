@@ -57,6 +57,7 @@ pub async fn messages(
     // nested payload cannot burn CPU/alloc in `anthropic_to_openai_request`.
     // Responses API does the same; chat also checks the converted body.
     crate::security::check_json_depth(&request_body, crate::security::MAX_JSON_DEPTH)?;
+    crate::orchestration::request_controls::validate(&request_body)?;
 
     let model = request_body
         .get("model")

@@ -284,7 +284,8 @@ impl AppState {
     /// [`refresh_db_models`] to swap in YAML + DB merged deployments without
     /// rebuilding derived fields (router, hooks, credentials, ...).
     #[cfg(feature = "db")]
-    fn with_deployments(&self, deployments: Vec<Deployment>) -> Self {
+    fn with_deployments(&self, mut deployments: Vec<Deployment>) -> Self {
+        build::assign_deployment_ids(&mut deployments, Some(&self.deployments));
         let mut next = self.clone();
         next.deployments = deployments;
         next

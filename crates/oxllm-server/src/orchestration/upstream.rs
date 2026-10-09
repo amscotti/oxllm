@@ -29,6 +29,26 @@ tokio::task_local! {
     /// Keeping transport metadata out of the JSON body prevents it from being
     /// forwarded as an unknown model parameter or retained by body hooks.
     pub(crate) static CLIENT_ANTHROPIC_BETAS: Vec<String>;
+    pub(crate) static CLIENT_TRACE_HEADERS: axum::http::HeaderMap;
+}
+
+pub(crate) fn client_trace_headers(headers: &axum::http::HeaderMap) -> axum::http::HeaderMap {
+    let mut trace = axum::http::HeaderMap::new();
+    if let Some(value) = headers.get("traceparent") {
+        trace.insert("traceparent", value.clone());
+    }
+    let baggage = headers
+        .get_all("baggage")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>()
+        .join(",");
+    if !baggage.is_empty()
+        && let Ok(value) = axum::http::HeaderValue::from_str(&baggage)
+    {
+        trace.insert("baggage", value);
+    }
+    trace
 }
 
 pub(crate) fn client_anthropic_betas(headers: &axum::http::HeaderMap) -> Vec<String> {
@@ -77,6 +97,11 @@ pub(crate) async fn attempt_upstream_with_context(
     traceparent: Option<&str>,
     mut call_ctx: Option<&mut oxllm_core::CallContext>,
 ) -> Result<reqwest::Response, UpstreamError> {
+    super::request_controls::validate(request_body).map_err(|error| UpstreamError::Client {
+        status: error.status.as_u16(),
+        message: error.message,
+        headers: None,
+    })?;
     let effective_deployment = deployment_with_transform_settings(deployment, &state.config);
     let deployment = effective_deployment.as_ref();
     let chat = provider.chat().ok_or_else(|| UpstreamError::Client {
@@ -102,15 +127,24 @@ pub(crate) async fn attempt_upstream_with_context(
         .resolve_for(deployment)
         .resolve(deployment)
         .await
-        // A credential failure (expired/missing key) is deployment-level, not
-        // request-level: classifying it `Client` would abort the whole chain
-        // and let one bad-key deployment poison a load-balanced group. As
-        // `Retryable` the loop retries, cools the deployment, and fails over
-        // to healthy twins — the key may be fixed by an operator in flight.
-        .map_err(|e| UpstreamError::Retryable {
-            status: 500,
-            message: ApiError::from(e).message,
-            headers: None,
+        // Credential 401/403 failures retain their status and can cool/fail
+        // over to authorized siblings or configured fallback groups. Other
+        // credential failures use the retry policy before deployment rotation.
+        .map_err(|error| {
+            let error = ApiError::from(error);
+            if error.status.is_client_error() {
+                UpstreamError::Client {
+                    status: error.status.as_u16(),
+                    message: error.message,
+                    headers: None,
+                }
+            } else {
+                UpstreamError::Retryable {
+                    status: error.status.as_u16(),
+                    message: error.message,
+                    headers: None,
+                }
+            }
         })?;
 
     // A request-transform failure is provider-specific, not request-
@@ -136,6 +170,7 @@ pub(crate) async fn attempt_upstream_with_context(
             .transform_request(request_body, deployment)
             .map_err(transform_failure)?,
     };
+    super::request_controls::strip(&mut transformed);
     let body_model = transformed
         .get("model")
         .and_then(Value::as_str)
@@ -213,6 +248,16 @@ pub(crate) async fn attempt_upstream_with_context(
     chat.apply_auth(&auth_deployment, &creds, &mut headers);
     oxllm_core::provider::apply_auth_overrides(deployment, &creds, &mut headers);
     merge_extra_headers(&mut headers, deployment);
+    if let Some(traceparent) = traceparent {
+        headers.insert("traceparent".into(), traceparent.to_string());
+    }
+    if let Ok(client_headers) = CLIENT_TRACE_HEADERS.try_with(Clone::clone) {
+        for (name, value) in &client_headers {
+            if let Ok(value) = value.to_str() {
+                headers.insert(name.to_string(), value.to_string());
+            }
+        }
+    }
     if provider.id() == "bedrock"
         && url::Url::parse(&url).is_ok_and(|url| {
             matches!(
@@ -297,18 +342,23 @@ pub(crate) async fn attempt_upstream_with_context(
     // `stream_timeout: 600` configured). For streams we therefore apply NO
     // total deadline: the header wait is bounded here by the same idle
     // budget the pump enforces per-chunk (`resolve_stream_idle_timeout`).
-    let stream_idle_budget = resolve_stream_idle_timeout(deployment, &state.config);
+    let stream_idle_budget =
+        resolve_stream_idle_timeout_for_request(deployment, &state.config, request_body);
     let timeout_secs = if is_stream {
         None
     } else {
-        Some(deployment.oxllm_params.timeout.unwrap_or_else(|| {
-            state
-                .config
-                .oxllm_settings
-                .request_timeout
-                .map(|t| t as f64)
-                .unwrap_or(DEFAULT_TIMEOUT_SECS as f64)
-        }))
+        Some(
+            super::request_controls::seconds(request_body, "timeout")
+                .or(deployment.oxllm_params.timeout)
+                .unwrap_or_else(|| {
+                    state
+                        .config
+                        .oxllm_settings
+                        .request_timeout
+                        .map(|t| t as f64)
+                        .unwrap_or(DEFAULT_TIMEOUT_SECS as f64)
+                }),
+        )
     };
 
     let body_bytes = serde_json::to_vec(&transformed).map_err(|e| UpstreamError::Client {
@@ -366,11 +416,6 @@ pub(crate) async fn attempt_upstream_with_context(
     let mut header_map = reqwest::header::HeaderMap::new();
     if let Ok(ct) = reqwest::header::HeaderValue::from_str("application/json") {
         header_map.insert(reqwest::header::CONTENT_TYPE, ct);
-    }
-    if let Some(tp) = traceparent {
-        if let Ok(hv) = axum::http::HeaderValue::from_str(tp) {
-            header_map.insert("traceparent", hv);
-        }
     }
     for (key, value) in &headers {
         let invalid_header = || UpstreamError::Retryable {
@@ -451,6 +496,7 @@ pub(crate) async fn attempt_upstream_with_context(
 
     if let Some(ctx) = call_ctx {
         ctx.reached_upstream = true;
+        crate::pipeline::capture_upstream_headers(ctx, response.headers());
     }
     let status = response.status();
     if status.is_success() {
@@ -943,23 +989,35 @@ pub(crate) fn inject_stream_usage(body: &mut Value, is_stream: bool, provider_sl
     }
 }
 
-/// Resolve the per-read (idle) budget for a streaming request, matching
-/// the reference `_get_stream_timeout` precedence (`router.py`): the
-/// deployment's `stream_timeout`, then `oxllm_settings.request_timeout`,
-/// then the pump default. Shared by the upstream send (header wait) and the
-/// stream pump (per-chunk idle timeout) so both enforce the same budget —
-/// an operator who raises `request_timeout` for long streams gets a longer
-/// idle allowance instead of a total cap that kills them.
-pub(crate) fn resolve_stream_idle_timeout(
+/// Resolve the per-read budget: request `stream_timeout` or `timeout`, then
+/// deployment `stream_timeout`, global `request_timeout`, and the pump default.
+/// Deployment unary timeouts do not shorten streams. The header wait and pump
+/// use the same idle allowance, without a total streaming deadline.
+#[cfg(test)]
+fn resolve_stream_idle_timeout(
     deployment: &Deployment,
     config: &crate::config::types::ProxyConfig,
 ) -> std::time::Duration {
-    let secs = deployment
-        .oxllm_params
-        .stream_timeout
-        .or(config.oxllm_settings.request_timeout)
-        .unwrap_or(super::stream::DEFAULT_STREAM_TIMEOUT_SECS);
-    std::time::Duration::from_secs(secs)
+    resolve_stream_idle_timeout_for_request(deployment, config, &Value::Null)
+}
+
+pub(crate) fn resolve_stream_idle_timeout_for_request(
+    deployment: &Deployment,
+    config: &crate::config::types::ProxyConfig,
+    request: &Value,
+) -> std::time::Duration {
+    let secs = super::request_controls::seconds(request, "stream_timeout")
+        .or_else(|| super::request_controls::seconds(request, "timeout"))
+        .or(deployment
+            .oxllm_params
+            .stream_timeout
+            .map(|seconds| seconds as f64))
+        .or(config
+            .oxllm_settings
+            .request_timeout
+            .map(|seconds| seconds as f64))
+        .unwrap_or(super::stream::DEFAULT_STREAM_TIMEOUT_SECS as f64);
+    crate::pipeline::sanitize_timeout_secs(secs)
 }
 
 /// Merge deployment-level `extra_headers` (e.g. `anthropic-beta` for prompt
@@ -969,7 +1027,12 @@ pub(crate) fn resolve_stream_idle_timeout(
 pub(crate) fn merge_extra_headers(headers: &mut HashMap<String, String>, deployment: &Deployment) {
     if let Some(extra) = &deployment.oxllm_params.extra_headers {
         for (k, v) in extra {
-            headers.insert(k.to_ascii_lowercase(), v.clone());
+            let key = k.to_ascii_lowercase();
+            if key == "anthropic-beta" {
+                merge_anthropic_beta_headers(headers, vec![v.clone()]);
+            } else {
+                headers.insert(key, v.clone());
+            }
         }
     }
 }
@@ -1030,17 +1093,31 @@ pub(crate) fn merge_anthropic_beta_headers(
     if new_betas.is_empty() {
         return;
     }
-    let mut merged: Vec<&str> = headers
+    let mut merged = Vec::new();
+    for beta in headers
         .get("anthropic-beta")
         .into_iter()
         .flat_map(|h| h.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()))
-        .collect();
-    for b in &new_betas {
-        if !merged.contains(&b.as_str()) {
-            merged.insert(0, b.as_str());
+    {
+        if !merged.contains(&beta) {
+            merged.push(beta);
         }
     }
-    headers.insert("anthropic-beta".to_string(), merged.join(", "));
+    for beta in new_betas
+        .iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|beta| !beta.is_empty())
+    {
+        if !merged.contains(&beta) {
+            merged.insert(0, beta);
+        }
+    }
+    if merged.is_empty() {
+        headers.remove("anthropic-beta");
+    } else {
+        headers.insert("anthropic-beta".to_string(), merged.join(", "));
+    }
 }
 
 /// Apply `drop_params` semantics and run the provider's
@@ -1090,29 +1167,10 @@ pub(crate) fn apply_drop_params(
     // removed — the rest of `metadata` (e.g. `user_id`) is provider-visible
     // by design. The strip only clones when a control is present,
     // preserving the no-clone fast path below for the common case.
-    let control_stripped = request.as_object().and_then(|o| {
-        let has_cache = o.contains_key("cache");
-        let has_tags = o
-            .get("metadata")
-            .and_then(|m| m.as_object())
-            .is_some_and(|m| m.contains_key("tags"));
-        // `stream_chunk_size` sizes how this proxy reads an upstream
-        // stream. It is not a model parameter; providers that validate the
-        // body (Bedrock in particular) reject it.
-        let has_stream_chunk_size = o.contains_key("stream_chunk_size");
-        let has_traceback_control = o.contains_key("log_client_error_tracebacks");
-        (has_cache || has_tags || has_stream_chunk_size || has_traceback_control).then(|| {
-            let mut body = request.clone();
-            if let Some(obj) = body.as_object_mut() {
-                obj.remove("cache");
-                obj.remove("stream_chunk_size");
-                obj.remove("log_client_error_tracebacks");
-                if let Some(meta) = obj.get_mut("metadata").and_then(|m| m.as_object_mut()) {
-                    meta.remove("tags");
-                }
-            }
-            body
-        })
+    let control_stripped = super::request_controls::contains(request).then(|| {
+        let mut body = request.clone();
+        super::request_controls::strip_before_transform(&mut body);
+        body
     });
     let request: &Value = control_stripped.as_ref().unwrap_or(request);
 
@@ -1239,6 +1297,7 @@ pub(crate) fn shape_outbound_body(
             obj.remove(key);
         }
     }
+    super::request_controls::strip(body);
 }
 
 /// Strip top-level request keys not present in the provider's
@@ -1258,6 +1317,7 @@ pub(crate) fn strip_unsupported_params(
     let mut out = serde_json::Map::new();
     for (key, value) in obj {
         let kept = supported.contains(&key.as_str())
+            || key == "cache_control_injection_points"
             || allowed.is_some_and(|names| names.iter().any(|name| name == key));
         if kept {
             out.insert(key.clone(), value.clone());
@@ -3075,6 +3135,44 @@ mod tests {
             std::time::Duration::from_secs(120),
             "deployment stream_timeout wins over request_timeout"
         );
+    }
+
+    #[test]
+    fn stream_idle_timeout_preserves_unary_deployment_timeouts_and_request_overrides() {
+        let mut config = stream_timeout_state().config.as_ref().clone();
+        config.oxllm_settings.request_timeout = Some(600);
+        let mut deployment = Deployment::default();
+        deployment.oxllm_params.timeout = Some(0.025);
+        assert_eq!(
+            resolve_stream_idle_timeout(&deployment, &config),
+            std::time::Duration::from_secs(600),
+            "a unary deployment timeout must not shorten streams"
+        );
+        config.oxllm_settings.request_timeout = None;
+        assert_eq!(
+            resolve_stream_idle_timeout(&deployment, &config),
+            std::time::Duration::from_secs(60)
+        );
+        deployment.oxllm_params.stream_timeout = Some(120);
+        for (request, expected) in [
+            (
+                json!({"timeout":0.025}),
+                std::time::Duration::from_millis(25),
+            ),
+            (
+                json!({"timeout":0.025, "stream_timeout":0.05}),
+                std::time::Duration::from_millis(50),
+            ),
+            (
+                json!({"timeout":null, "stream_timeout":null}),
+                std::time::Duration::from_secs(120),
+            ),
+        ] {
+            assert_eq!(
+                resolve_stream_idle_timeout_for_request(&deployment, &config, &request),
+                expected
+            );
+        }
     }
 
     // ---- MEDIUM (C11): transform failure is a deployment fault -----------

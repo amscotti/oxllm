@@ -54,12 +54,13 @@ pub(crate) fn build_router_config(config: &ProxyConfig) -> anyhow::Result<Router
         }
     }
 
-    let routing_strategy = parse_strategy_kind(
-        knobs
-            .routing_strategy
-            .as_deref()
-            .unwrap_or("simple_shuffle"),
-    );
+    let routing_strategy = parse_strategy_kind(knobs.routing_strategy.as_deref().unwrap_or(
+        if crate::pre_call_checks::session_affinity_requested(config) {
+            "session_affinity"
+        } else {
+            "simple_shuffle"
+        },
+    ));
 
     let retry_policy = filter_status_policy(knobs.retry_policy.as_ref(), "retry_policy");
 
@@ -136,7 +137,7 @@ pub(crate) fn build_router_config(config: &ProxyConfig) -> anyhow::Result<Router
             .health_check_staleness_threshold_secs
             .unwrap_or(60),
         health_check_failure_threshold: router.health_check_failure_threshold.unwrap_or(3),
-        optional_pre_call_checks: router.optional_pre_call_checks.clone().unwrap_or_default(),
+        optional_pre_call_checks: crate::pre_call_checks::configured_filter_names(config),
         complexity_router_config: router.complexity_router_config.clone(),
         adaptive_router_config: router.adaptive_router_config.clone(),
     })
@@ -1165,9 +1166,20 @@ mod tests {
     fn build_router_config_optional_pre_call_checks_wired() {
         let config = ProxyConfig {
             model_list: vec![],
-            oxllm_settings: OxllmSettings::default(),
+            oxllm_settings: OxllmSettings {
+                prompt_caching_enabled: Some(true),
+                ..Default::default()
+            },
             general_settings: crate::config::types::GeneralSettings::default(),
             router_settings: RouterSettings {
+                enable_health_check_routing: Some(true),
+                provider_budget_config: Some(std::collections::HashMap::from([(
+                    "openai".into(),
+                    oxllm_core::router::ProviderBudgetConfig {
+                        budget_limit: 100.0,
+                        time_period: "1d".into(),
+                    },
+                )])),
                 optional_pre_call_checks: Some(vec![
                     "prompt_caching".to_string(),
                     "budget_limiter".to_string(),
@@ -1181,6 +1193,27 @@ mod tests {
         assert_eq!(
             cfg.optional_pre_call_checks,
             vec!["prompt_caching", "budget_limiter", "health_check"]
+        );
+    }
+
+    #[test]
+    fn session_pre_call_alias_selects_affinity_and_preserves_explicit_strategy_precedence() {
+        let mut config = proxy_with_settings(OxllmSettings::default());
+        config.router_settings.optional_pre_call_checks = Some(vec![
+            "session-affinity".into(),
+            "unknown_check".into(),
+            "health_check".into(),
+        ]);
+        let router = build_router_config(&config);
+        assert_eq!(
+            router.routing_strategy,
+            RoutingStrategyKind::SessionAffinity
+        );
+        assert!(router.optional_pre_call_checks.is_empty());
+        config.router_settings.routing.routing_strategy = Some("round_robin".into());
+        assert_eq!(
+            build_router_config(&config).routing_strategy,
+            RoutingStrategyKind::RoundRobin
         );
     }
 

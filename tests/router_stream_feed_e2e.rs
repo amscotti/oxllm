@@ -18,10 +18,29 @@ use oxllm_server::config::types::{
     ConfigModel, GeneralSettings, OxllmSettings, ProxyConfig, RouterSettings, RoutingKnobs,
 };
 use serde_json::json;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Minimal OpenAI-compatible streaming SSE chunk the proxy forwards verbatim.
 const CHUNK_1: &str = "data: {\"id\":\"chatcmpl-s1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n";
+
+const ROLE_ONLY: &str = "data: {\"id\":\"failed-attempt\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n";
+
+async fn sse_drop_before_content() -> axum::response::Response {
+    use futures_util::{StreamExt, stream};
+    let body = stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(
+        ROLE_ONLY.as_bytes(),
+    ))])
+    .chain(stream::once(async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        Err(std::io::Error::other("upstream closed before content"))
+    }));
+    axum::response::Response::builder()
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from_stream(body))
+        .expect("SSE response")
+}
 
 /// Slow streaming upstream: sends one chunk, then a second after `delay`.
 async fn sse_delayed_response(delay: Duration) -> axum::response::Response {
@@ -350,5 +369,200 @@ async fn allowed_fails_zero_cools_on_first_mid_stream_failure() {
          (LiteLLM `>` semantics: count=1 > limit=0)",
     )
     .await;
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn pre_content_disconnect_retries_without_leaking_the_failed_prelude() {
+    for route in ["/v1/chat/completions", "/v1/messages"] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let upstream = spawn_upstream(axum::routing::post(move || {
+            let counter = counter.clone();
+            async move {
+                if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                    sse_drop_before_content().await
+                } else {
+                    sse_delayed_response(Duration::from_millis(20)).await
+                }
+            }
+        }))
+        .await;
+        let mut config = config_with(
+            &upstream,
+            RoutingKnobs {
+                num_retries: Some(0),
+                ..Default::default()
+            },
+            RouterSettings::default(),
+        );
+        config.model_list[0].oxllm_params.num_retries = Some(1);
+        let key = store_key(&config);
+        let (handle, state) = start_oxllm(config).await.expect("proxy starts");
+        let response = common::http_client()
+            .post(handle.url(route))
+            .json(&json!({
+                "model":"gpt-4o", "max_tokens":32, "stream":true,
+                "messages":[{"role":"user","content":"hi"}]
+            }))
+            .send()
+            .await
+            .expect("response");
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["x-oxllm-attempted-retries"], "1");
+        assert_eq!(response.headers()["x-oxllm-max-retries"], "1");
+        let body = response.text().await.expect("SSE");
+        assert!(body.contains("Hi"), "{body}");
+        assert!(
+            !body.contains("failed-attempt"),
+            "failed metadata escaped: {body}"
+        );
+        assert!(!body.contains("\"error\""), "{body}");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        wait_until(
+            || state.load_full().router.usage_store().in_flight(&key) == 0,
+            Duration::from_secs(3),
+            "retried stream slot release",
+        )
+        .await;
+        handle.shutdown();
+    }
+}
+
+#[tokio::test]
+async fn exhausted_pre_content_retries_walk_the_fallback_chain_once() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let primary = spawn_upstream(axum::routing::post(move || {
+        let counter = counter.clone();
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            sse_drop_before_content().await
+        }
+    }))
+    .await;
+    let backup = spawn_upstream(axum::routing::post(|| sse_delayed_response(Duration::ZERO))).await;
+    let mut config = config_with(
+        &primary,
+        RoutingKnobs {
+            num_retries: Some(1),
+            fallbacks: Some(json!([{ "gpt-4o": ["configured-unavailable"] }])),
+            ..Default::default()
+        },
+        RouterSettings::default(),
+    );
+    let mut rescue = config.model_list[0].clone();
+    rescue.model_name = "rescue".into();
+    rescue.oxllm_params.api_base = Some(backup);
+    config.model_list.push(rescue);
+    let key = store_key(&config);
+    let (handle, state) = start_oxllm(config).await.expect("proxy starts");
+    let response = common::http_client()
+        .post(handle.url("/v1/chat/completions"))
+        .json(
+            &json!({"model":"gpt-4o", "stream":true, "fallbacks":["rescue"],
+            "messages":[{"role":"user","content":"hello"}]}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-oxllm-fallback-used"], "rescue");
+    assert_eq!(response.headers()["x-oxllm-attempted-fallbacks"], "1");
+    let body = response.text().await.expect("SSE");
+    assert!(
+        body.contains("Hi") && body.contains("\"model\":\"rescue\""),
+        "{body}"
+    );
+    assert!(!body.contains("failed-attempt"));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "primary must not be re-entered after fallback"
+    );
+    assert_eq!(state.load_full().router.usage_store().in_flight(&key), 0);
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn content_already_delivered_disables_retries_and_fallbacks() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let primary = spawn_upstream(axum::routing::post(move || {
+        let counter = counter.clone();
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            sse_abort_response().await
+        }
+    }))
+    .await;
+    let config = config_with(
+        &primary,
+        RoutingKnobs {
+            num_retries: Some(2),
+            fallbacks: Some(json!([{ "gpt-4o": ["gpt-4o"] }])),
+            ..Default::default()
+        },
+        RouterSettings::default(),
+    );
+    let (handle, _) = start_oxllm(config).await.expect("proxy starts");
+    let response = send_streaming(&handle).await;
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.expect("SSE");
+    assert!(body.contains("Hi") && body.contains("\"error\""), "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn native_messages_pre_content_error_uses_the_status_retry_policy() {
+    const SUCCESS: &str = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"served\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-haiku-5-5\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"native answer\"}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let app = axum::Router::new().route("/v1/messages", axum::routing::post(move || {
+        let counter = counter.clone();
+        async move {
+            let body = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"retry me\"}}\n\n"
+            } else { SUCCESS };
+            axum::response::Response::builder().header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from(body)).expect("response")
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("address"));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("upstream");
+    });
+    let mut config = config_with(
+        &base,
+        RoutingKnobs {
+            num_retries: Some(0),
+            retry_policy: Some(std::collections::HashMap::from([("429".into(), 1)])),
+            ..Default::default()
+        },
+        RouterSettings::default(),
+    );
+    config.model_list[0].oxllm_params.model = "anthropic/claude-haiku-5-5".into();
+    config.model_list[0].oxllm_params.api_base = Some(format!("{base}/v1"));
+    let (handle, _) = start_oxllm(config).await.expect("proxy starts");
+    let response = common::http_client()
+        .post(handle.url("/v1/messages"))
+        .json(&json!({
+            "model":"gpt-4o", "stream":true, "max_tokens":32,
+            "messages":[{"role":"user","content":"hi"}]
+        }))
+        .send()
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-oxllm-max-retries"], "1");
+    let body = response.text().await.expect("SSE");
+    assert!(body.contains("native answer"), "{body}");
+    assert!(!body.contains("retry me"), "{body}");
+    assert_eq!(body.matches("event: message_start").count(), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
     handle.shutdown();
 }

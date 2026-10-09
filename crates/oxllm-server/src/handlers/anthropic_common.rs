@@ -20,6 +20,7 @@ pub(crate) fn extract_request_model(body: &Bytes) -> Result<String, ApiError> {
     let value: serde_json::Value = serde_json::from_slice(body)
         .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;
     crate::security::check_json_depth(&value, crate::security::MAX_JSON_DEPTH)?;
+    crate::orchestration::request_controls::validate(&value)?;
     value
         .get("model")
         .and_then(|v| v.as_str())

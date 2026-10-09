@@ -14,7 +14,7 @@ use crate::state::SharedState;
 use super::{redact_secrets, require_master};
 
 /// `GET /config` — return the current proxy config with every secret value
-/// redacted (see [`super::redact_secrets`] and the `sk-` value heuristic).
+/// redacted using the internal `redact_secrets` helper and the `sk-` value heuristic.
 pub async fn get_config(
     State(shared): State<SharedState>,
     Extension(auth): Extension<AuthUser>,
@@ -40,7 +40,7 @@ pub async fn get_routes(
 /// file the proxy loaded from and let the hot-reload watcher apply it.
 ///
 /// The request body is a JSON document matching the gateway config shape. It
-/// is re-emitted as YAML and written verbatim to [`config::current_config_path`],
+/// is re-emitted as YAML and written verbatim to `config::loader::current_config_path`,
 /// overwriting the previous file. The reload watcher then rebuilds the
 /// [`crate::state::AppState`] from the new file — this handler deliberately
 /// does not duplicate the reload logic.
@@ -69,7 +69,7 @@ pub async fn get_routes(
 /// safe: this handler writes only the **caller-provided** `value` to disk — it
 /// never snapshots the resolved in-memory `state.config` or process env vars.
 /// The in-memory config is serialized only for the **response**, and that
-/// serialization always passes through [`redact_secrets`]. Env-var expansion
+/// serialization always passes through `redact_secrets`. Env-var expansion
 /// happens at *load* time (the reload watcher re-resolves from the file), not
 /// at write time, so no expanded secret is ever persisted.
 pub async fn update_config(

@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use oxllm_core::Hook;
-use oxllm_core::{CallContext, ResponseSummary};
+use oxllm_core::{CallContext, ResponseSummary, ServiceFailureEvent};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -88,6 +88,9 @@ pub type PayloadBuilder = dyn Fn(&CallContext, &ResponseSummary) -> Value + Send
 /// Optional failure payload. Unset backends stay silent on `post_failure`.
 pub type FailurePayloadBuilder = dyn Fn(&CallContext, &oxllm_core::Error) -> Value + Send + Sync;
 
+/// Optional infrastructure failure payload, independent of request callbacks.
+pub type ServicePayloadBuilder = dyn Fn(&ServiceFailureEvent) -> Value + Send + Sync;
+
 /// Generic HTTP telemetry hook — fire-and-forget POST to a configurable
 /// endpoint. Each concrete backend provides a payload-builder closure.
 ///
@@ -104,6 +107,7 @@ pub struct HttpTelemetryHook {
     /// When set, `post_failure` posts this payload. Other backends leave it
     /// unset and `supports_failure_events` stays false.
     build_failure: Option<Box<FailurePayloadBuilder>>,
+    build_service: Option<Box<ServicePayloadBuilder>>,
     /// Bounded sender into the background POST task. Cheap to clone per
     /// request; `try_send` never blocks.
     tx: mpsc::Sender<QueuedPayload>,
@@ -234,6 +238,7 @@ impl HttpTelemetryHook {
             auth_header,
             build_payload: Box::new(build_payload),
             build_failure: None,
+            build_service: None,
             tx,
             memory,
             event_name,
@@ -248,6 +253,15 @@ impl HttpTelemetryHook {
         G: Fn(&CallContext, &oxllm_core::Error) -> Value + Send + Sync + 'static,
     {
         self.build_failure = Some(Box::new(build_failure));
+        self
+    }
+
+    /// Attach a service-failure payload to the same bounded telemetry queue.
+    pub fn with_service_payload<G>(mut self, build_service: G) -> Self
+    where
+        G: Fn(&ServiceFailureEvent) -> Value + Send + Sync + 'static,
+    {
+        self.build_service = Some(Box::new(build_service));
         self
     }
 
@@ -280,6 +294,16 @@ impl Hook for HttpTelemetryHook {
 
     fn supports_failure_events(&self) -> bool {
         self.build_failure.is_some()
+    }
+
+    async fn post_service_failure(&self, event: &ServiceFailureEvent) {
+        if let Some(build) = &self.build_service {
+            self.enqueue_payload(build(event));
+        }
+    }
+
+    fn supports_service_events(&self) -> bool {
+        self.build_service.is_some()
     }
 }
 

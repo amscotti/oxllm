@@ -60,14 +60,11 @@ use crate::state::SharedState;
 /// and settled against key/team/model budgets by `post_success`, matching
 /// the reference passthrough spend tracking.
 ///
-/// **Streaming** responses (`"stream": true`, `text/event-stream`) relay the
-/// SSE body incrementally and are not buffered here, so usage is not yet
-/// extracted and this path records zero settled spend on the streaming arm.
-/// Budget conservatively for streaming `/anthropic/v1/messages`; for fully-
-/// metered Anthropic-shaped streaming traffic use the conversion handler at
-/// `/v1/messages` instead. (Closing the streaming gap would require either
-/// buffering the whole stream or settling `post_success` after the relay
-/// completes.)
+/// **Streaming** responses relay native SSE bytes incrementally while the
+/// shared relay accumulates usage and settles spend on completion. Disconnects
+/// and provider errors follow the same partial-accounting policy as chat.
+/// This native route makes one attempt; translated `/v1/messages` uses the chat
+/// retry/fallback chain before client commitment.
 pub async fn messages_passthrough(
     State(state): State<SharedState>,
     Extension(auth): Extension<AuthUser>,
