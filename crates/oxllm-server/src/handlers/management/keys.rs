@@ -1,5 +1,6 @@
 //! Virtual API key management endpoints.
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
@@ -8,15 +9,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::auth::{
-    AuthUser, hash_key_hex, invalidate_cache_key, parse_cache_controls_column,
+    AuthUser, hash_key_hex, invalidate_cache_key, parse_cache_controls_column, parse_models_column,
     validate_allowed_cache_controls,
 };
 use crate::error::ApiError;
 use crate::state::SharedState;
 
 use super::{
-    db_err, load_db, random_id, require_master, validate_budget_duration, validate_expires,
-    validate_limits,
+    db_err, load_db, models_match_stored_policy, random_id, require_master,
+    validate_budget_duration, validate_expires, validate_limits,
 };
 
 /// The prefix used for all generated virtual keys.
@@ -27,47 +28,25 @@ const KEY_PREFIX: &str = "sk-ox-";
 /// until proper offset/limit pagination is added (#39).
 const KEY_LIST_LIMIT: usize = 1000;
 
-async fn validate_key_scopes(
-    db: &oxllm_db::Database,
-    record: &oxllm_db::KeyRecord,
-) -> Result<(), ApiError> {
-    for (scope, missing) in [
-        (
-            "team_id",
-            match record.team_id.as_deref() {
-                Some(id) => db.get_team(id).await.map_err(db_err)?.is_none(),
-                None => false,
-            },
-        ),
-        (
-            "user_id",
-            match record.user_id.as_deref() {
-                Some(id) => db.get_user(id).await.map_err(db_err)?.is_none(),
-                None => false,
-            },
-        ),
-        (
-            "org_id",
-            match record.org_id.as_deref() {
-                Some(id) => db.get_organization(id).await.map_err(db_err)?.is_none(),
-                None => false,
-            },
-        ),
-        (
-            "project_id",
-            match record.project_id.as_deref() {
-                Some(id) => db.get_project(id).await.map_err(db_err)?.is_none(),
-                None => false,
-            },
-        ),
-    ] {
-        if missing {
-            return Err(ApiError::bad_request(format!(
-                "{scope} must reference an existing scope"
-            )));
-        }
+fn key_json_rejection(error: JsonRejection) -> ApiError {
+    let status = error.status();
+    let mut error = ApiError::bad_request(error.body_text());
+    // Invalid JSON/data fields use the key API's 400 contract. HTTP transport
+    // errors retain their status, including unsupported media and body limits.
+    if status != axum::http::StatusCode::UNPROCESSABLE_ENTITY {
+        error.status = status;
     }
-    Ok(())
+    error
+}
+
+fn key_write_error(error: anyhow::Error) -> ApiError {
+    match error.downcast_ref::<oxllm_db::ScopeLinkError>() {
+        Some(oxllm_db::ScopeLinkError::MissingScope { entity, .. }) => ApiError::bad_request(
+            format!("{} must reference an existing scope", entity.field_name()),
+        ),
+        Some(error) => ApiError::bad_request(error.to_string()),
+        None => db_err(error),
+    }
 }
 
 async fn invalidate_mutated_key(
@@ -85,6 +64,7 @@ async fn invalidate_mutated_key(
 
 /// Request body for `POST /key/generate`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GenerateKeyRequest {
     #[serde(default)]
     pub key_alias: Option<String>,
@@ -100,9 +80,9 @@ pub struct GenerateKeyRequest {
     pub max_budget: Option<f64>,
     #[serde(default)]
     pub budget_duration: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "rpm_limit")]
     pub rpm: Option<i64>,
-    #[serde(default)]
+    #[serde(default, alias = "tpm_limit")]
     pub tpm: Option<i64>,
     #[serde(default)]
     pub expires: Option<String>,
@@ -148,9 +128,10 @@ fn validate_key_limits(
 pub async fn generate_key(
     State(shared): State<SharedState>,
     Extension(auth): Extension<AuthUser>,
-    Json(req): Json<GenerateKeyRequest>,
+    req: Result<Json<GenerateKeyRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     require_master(&auth)?;
+    let Json(req) = req.map_err(key_json_rejection)?;
     validate_limits(&req.rpm, &req.tpm, req.max_budget)?;
     validate_expires(&req.expires)?;
     validate_budget_duration(&req.budget_duration)?;
@@ -181,8 +162,9 @@ pub async fn generate_key(
         models: serialize_models(req.models),
         allowed_cache_controls,
     };
-    validate_key_scopes(&db, &record).await?;
-    db.create_key(&record).await.map_err(db_err)?;
+    db.create_key_scoped(&record)
+        .await
+        .map_err(key_write_error)?;
     invalidate_cache_key(&state, &format!("vk:{}", record.key_hash)).await;
 
     tracing::info!(key_id = %key_id, "virtual key generated");
@@ -230,9 +212,17 @@ pub async fn list_keys(
         );
         keys.truncate(KEY_LIST_LIMIT);
     }
+    let key_ids = keys
+        .iter()
+        .map(|key| key.key_id.as_str())
+        .collect::<Vec<_>>();
+    let totals = db.total_spend_for_keys(&key_ids).await.map_err(db_err)?;
     let keys = keys
         .into_iter()
-        .map(key_response)
+        .map(|record| {
+            let spend = totals.get(&record.key_id).copied().unwrap_or(0.0);
+            key_response_with_spend(record, spend)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(json!({ "keys": keys, "truncated": truncated })).into_response())
@@ -257,7 +247,14 @@ pub async fn key_info(
         .await
         .map_err(db_err)?
         .ok_or_else(|| ApiError::not_found(format!("key '{}' not found", q.key_id)))?;
-    Ok(Json(key_response(record)?).into_response())
+    let spend = db
+        .total_spend_filtered(&oxllm_db::SpendFilter {
+            key_id: Some(record.key_id.clone()),
+            ..Default::default()
+        })
+        .await
+        .map_err(db_err)?;
+    Ok(Json(key_response_with_spend(record, spend)?).into_response())
 }
 
 /// Request body for `POST /key/delete`.
@@ -281,30 +278,13 @@ pub async fn delete_key(
     require_master(&auth)?;
     let (state, db) = load_db(&shared, &auth).await?;
 
-    let existing = db.get_key(&req.key_id).await.map_err(db_err)?;
-    let Some(record) = existing else {
-        return Err(ApiError::not_found(format!(
-            "key '{}' not found",
-            req.key_id
-        )));
-    };
-
-    db.delete_key(&req.key_id, &oxllm_db::now_iso())
+    let hash = db
+        .set_key_active(&req.key_id, false, &oxllm_db::now_iso())
         .await
-        .map_err(db_err)?;
+        .map_err(db_err)?
+        .ok_or_else(|| ApiError::not_found(format!("key '{}' not found", req.key_id)))?;
 
-    invalidate_cache_key(&state, &format!("vk:{}", record.key_hash)).await;
-    // Re-read after the mutation to catch a concurrent `rotate_key` that
-    // changed `key_hash` between our initial `get_key` and the soft-delete.
-    // Without this, a request already cached under the new hash would keep
-    // being served from cache as active for up to VK_POSITIVE_TTL (5 min)
-    // after the delete. If the row is gone (concurrent purge) or the hash
-    // is unchanged, this is a harmless no-op.
-    if let Ok(Some(post)) = db.get_key(&req.key_id).await {
-        if post.key_hash != record.key_hash {
-            invalidate_cache_key(&state, &format!("vk:{}", post.key_hash)).await;
-        }
-    }
+    invalidate_cache_key(&state, &format!("vk:{hash}")).await;
 
     Ok(Json(json!({ "status": "deleted", "key_id": req.key_id })).into_response())
 }
@@ -324,30 +304,20 @@ pub async fn purge_key(
     require_master(&auth)?;
     let (state, db) = load_db(&shared, &auth).await?;
 
-    let existing = db
-        .get_key(&req.key_id)
+    let hash = db
+        .purge_key_scoped(&req.key_id)
         .await
         .map_err(db_err)?
         .ok_or_else(|| ApiError::not_found(format!("key '{}' not found", req.key_id)))?;
 
-    db.purge_key(&req.key_id).await.map_err(db_err)?;
-
-    invalidate_cache_key(&state, &format!("vk:{}", existing.key_hash)).await;
-    // Re-read after the mutation to catch a concurrent `rotate_key` (same
-    // rationale as `delete_key`). After a purge the row is gone, so this
-    // will typically be `None` — but if a concurrent rotate+purge raced,
-    // the new hash (if any row still exists under this key_id) is covered.
-    if let Ok(Some(post)) = db.get_key(&req.key_id).await {
-        if post.key_hash != existing.key_hash {
-            invalidate_cache_key(&state, &format!("vk:{}", post.key_hash)).await;
-        }
-    }
+    invalidate_cache_key(&state, &format!("vk:{hash}")).await;
 
     Ok(Json(json!({ "status": "purged", "key_id": req.key_id })).into_response())
 }
 
 /// Request body for `POST /key/update`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateKeyRequest {
     pub key_id: String,
     #[serde(default)]
@@ -371,9 +341,9 @@ pub struct UpdateKeyRequest {
     pub clear_max_budget: bool,
     #[serde(default)]
     pub budget_duration: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "rpm_limit")]
     pub rpm: Option<i64>,
-    #[serde(default)]
+    #[serde(default, alias = "tpm_limit")]
     pub tpm: Option<i64>,
     /// When true, clear `rpm` (set to `None` / unlimited). Mirrors
     /// `clear_max_budget`: a rate limit, once set, can only be lowered to `0`
@@ -409,16 +379,9 @@ pub struct UpdateKeyRequest {
 
 /// `POST /key/update` — update key metadata (not the secret).
 ///
-/// Concurrency: like every management mutation this performs a
-/// read-modify-write (`get_key` → mutate → `update_key`) with no
-/// `SELECT … FOR UPDATE` or version column. Two concurrent master-key
-/// operations on the same `key_id` can therefore clobber each other (the
-/// last writer wins, silently reverting the other's field change). The
-/// window is small and the actors are master-key operators, so impact is
-/// bounded; a complete fix needs an optimistic-concurrency column checked in
-/// the `WHERE` clause (409 on stale read). The team bulk helper
-/// (`reassign_user_keys`) sidesteps this for the `team_id` field by using a
-/// single scoped bulk `UPDATE`.
+/// The DB applies this mutation to the current row under the scope graph lock.
+/// Omitted fields retain their committed values when a concurrent team move,
+/// project detach, or metadata edit wins first. Validation precedes the write.
 ///
 /// U12: the raw caller-supplied key value must never
 /// land in audit trails or logs. oxllm is safe here by design: this handler
@@ -432,9 +395,10 @@ pub struct UpdateKeyRequest {
 pub async fn update_key(
     State(shared): State<SharedState>,
     Extension(auth): Extension<AuthUser>,
-    Json(req): Json<UpdateKeyRequest>,
+    req: Result<Json<UpdateKeyRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     require_master(&auth)?;
+    let Json(req) = req.map_err(key_json_rejection)?;
     validate_limits(&req.rpm, &req.tpm, req.max_budget)?;
     validate_budget_duration(&req.budget_duration)?;
     if req.clear_allowed_cache_controls && req.allowed_cache_controls.is_some() {
@@ -450,73 +414,74 @@ pub async fn update_key(
     }
     let (state, db) = load_db(&shared, &auth).await?;
 
-    let mut record = db
-        .get_key(&req.key_id)
+    let key_id = req.key_id.clone();
+    let record = db
+        .update_key_scoped(&key_id, |record| {
+            if let Some(v) = req.key_alias {
+                record.key_alias = if v.is_empty() { None } else { Some(v) };
+            }
+            if let Some(v) = req.team_id {
+                record.team_id = if v.is_empty() { None } else { Some(v) };
+            }
+            if let Some(v) = req.user_id {
+                record.user_id = if v.is_empty() { None } else { Some(v) };
+            }
+            if let Some(v) = req.org_id {
+                record.org_id = if v.is_empty() { None } else { Some(v) };
+            }
+            if let Some(v) = req.project_id {
+                record.project_id = if v.is_empty() { None } else { Some(v) };
+            }
+            if req.clear_max_budget {
+                record.max_budget = None;
+            } else if req.max_budget.is_some() {
+                record.max_budget = req.max_budget;
+            }
+            if let Some(v) = req.budget_duration {
+                record.budget_duration = if v.is_empty() { None } else { Some(v) };
+            }
+            if req.clear_rpm {
+                record.rpm = None;
+            } else if req.rpm.is_some() {
+                record.rpm = req.rpm;
+            }
+            if req.clear_tpm {
+                record.tpm = None;
+            } else if req.tpm.is_some() {
+                record.tpm = req.tpm;
+            }
+            if let Some(v) = req.is_active {
+                record.is_active = v;
+            }
+            if let Some(v) = req.expires {
+                record.expires_at = if v.is_empty() { None } else { Some(v) };
+            }
+            if let Some(v) = req.models
+                && !models_match_stored_policy(record.models.as_deref(), &v)
+            {
+                record.models = serialize_models(Some(v));
+            }
+            if req.clear_allowed_cache_controls {
+                record.allowed_cache_controls = None;
+            } else if req.allowed_cache_controls.is_some() {
+                record.allowed_cache_controls = allowed_cache_controls;
+            }
+            record.updated_at = oxllm_db::now_iso();
+        })
         .await
-        .map_err(db_err)?
-        .ok_or_else(|| ApiError::not_found(format!("key '{}' not found", req.key_id)))?;
-
-    if let Some(v) = req.key_alias {
-        record.key_alias = if v.is_empty() { None } else { Some(v) };
-    }
-    if let Some(v) = req.team_id {
-        record.team_id = if v.is_empty() { None } else { Some(v) };
-    }
-    if let Some(v) = req.user_id {
-        record.user_id = if v.is_empty() { None } else { Some(v) };
-    }
-    if let Some(v) = req.org_id {
-        record.org_id = if v.is_empty() { None } else { Some(v) };
-    }
-    if let Some(v) = req.project_id {
-        record.project_id = if v.is_empty() { None } else { Some(v) };
-    }
-    if req.clear_max_budget {
-        record.max_budget = None;
-    } else if req.max_budget.is_some() {
-        record.max_budget = req.max_budget;
-    }
-    if let Some(v) = req.budget_duration {
-        record.budget_duration = if v.is_empty() { None } else { Some(v) };
-    }
-    if req.clear_rpm {
-        record.rpm = None;
-    } else if req.rpm.is_some() {
-        record.rpm = req.rpm;
-    }
-    if req.clear_tpm {
-        record.tpm = None;
-    } else if req.tpm.is_some() {
-        record.tpm = req.tpm;
-    }
-    if let Some(v) = req.is_active {
-        record.is_active = v;
-    }
-    if let Some(v) = req.expires {
-        record.expires_at = if v.is_empty() { None } else { Some(v) };
-    }
-    if let Some(v) = req.models {
-        record.models = serialize_models(Some(v));
-    }
-    if req.clear_allowed_cache_controls {
-        record.allowed_cache_controls = None;
-    } else if req.allowed_cache_controls.is_some() {
-        record.allowed_cache_controls = allowed_cache_controls;
-    }
-    record.updated_at = oxllm_db::now_iso();
-
-    validate_key_scopes(&db, &record).await?;
-    let updated = db.update_key(&record).await.map_err(db_err)?;
-    if !updated {
-        return Err(ApiError::not_found(format!(
-            "key '{}' not found",
-            record.key_id
-        )));
-    }
+        .map_err(key_write_error)?
+        .ok_or_else(|| ApiError::not_found(format!("key '{key_id}' not found")))?;
 
     invalidate_mutated_key(&state, &db, &record).await;
 
-    Ok(Json(key_response(record)?).into_response())
+    let spend = db
+        .total_spend_filtered(&oxllm_db::SpendFilter {
+            key_id: Some(record.key_id.clone()),
+            ..Default::default()
+        })
+        .await
+        .map_err(db_err)?;
+    Ok(Json(key_response_with_spend(record, spend)?).into_response())
 }
 
 /// Request body for `POST /key/block` and `POST /key/unblock`.
@@ -556,20 +521,13 @@ async fn set_key_active(
     require_master(auth)?;
     let (state, db) = load_db(shared, auth).await?;
 
-    let mut record = db
-        .get_key(key_id)
+    let hash = db
+        .set_key_active(key_id, active, &oxllm_db::now_iso())
         .await
         .map_err(db_err)?
         .ok_or_else(|| ApiError::not_found(format!("key '{key_id}' not found")))?;
 
-    record.is_active = active;
-    record.updated_at = oxllm_db::now_iso();
-    let updated = db.update_key(&record).await.map_err(db_err)?;
-    if !updated {
-        return Err(ApiError::not_found(format!("key '{key_id}' not found")));
-    }
-
-    invalidate_mutated_key(&state, &db, &record).await;
+    invalidate_cache_key(&state, &format!("vk:{hash}")).await;
     Ok(())
 }
 
@@ -648,9 +606,11 @@ fn serialize_cache_controls(controls: Option<&[String]>) -> Result<Option<String
 }
 
 /// The DB stores JSON TEXT, but management clients receive a typed JSON array
-/// (or null for unrestricted), consistently on info, list, and update.
+/// (or null for unrestricted), consistently on info, list, and update. Corrupt
+/// stored policies use the same fail-closed decoder as authentication.
 fn key_response(mut record: oxllm_db::KeyRecord) -> Result<Value, ApiError> {
     let controls = parse_cache_controls_column(record.allowed_cache_controls.as_deref());
+    let models = parse_models_column(record.models.as_deref());
     record.key_hash.clear();
     let mut value = serde_json::to_value(record)
         .map_err(|_| ApiError::internal("unable to encode key information"))?;
@@ -658,6 +618,16 @@ fn key_response(mut record: oxllm_db::KeyRecord) -> Result<Value, ApiError> {
         .as_object_mut()
         .ok_or_else(|| ApiError::internal("unable to encode key information"))?;
     object.insert("allowed_cache_controls".to_string(), json!(controls));
+    object.insert("models".to_string(), json!(models));
+    object.remove("key_hash");
+    Ok(value)
+}
+
+fn key_response_with_spend(record: oxllm_db::KeyRecord, spend: f64) -> Result<Value, ApiError> {
+    let mut value = key_response(record)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("spend".into(), json!(spend));
+    }
     Ok(value)
 }
 

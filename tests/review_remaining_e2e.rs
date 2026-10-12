@@ -99,6 +99,14 @@ fn assert_cost(actual: f64, expected: f64, context: &str) {
     );
 }
 
+fn assert_unbilled_failure(log: &SpendLog) {
+    assert_eq!(log.status.as_deref(), Some("failure"));
+    assert_eq!(log.cost, Some(0.0));
+    assert_eq!(log.prompt_tokens, None);
+    assert_eq!(log.completion_tokens, None);
+    assert_eq!(log.total_tokens, None);
+}
+
 async fn preview(client: &Client, handle: &OxllmHandle, body: Value) -> f64 {
     let model = body["model"].clone();
     let result = post_json(client, handle.url("/spend/calculate"), &body).await;
@@ -284,6 +292,7 @@ async fn perplexity_dynamic_receipts_match_headers_streams_previews_ledger_and_b
                 );
             }
         }
+        let mut denied_request_id = None;
         if !custom {
             // Token-only prices would leave this budget virtually untouched;
             // the complete receipts must settle both dynamic request fees.
@@ -315,6 +324,12 @@ async fn perplexity_dynamic_receipts_match_headers_streams_previews_ledger_and_b
                 .await
                 .unwrap();
             assert_eq!(denied.status(), 429, "dynamic fees must debit the budget");
+            denied_request_id = Some(
+                denied.headers()["x-oxllm-request-id"]
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            );
             for selector in ["sonar-public", "sonar", "perplexity/sonar"] {
                 let result = post_json(&client, handle.url("/spend/calculate"), &json!({
                     "model":selector, "provider":"perplexity", "usage":{"prompt_tokens":5,"completion_tokens":1}
@@ -331,8 +346,17 @@ async fn perplexity_dynamic_receipts_match_headers_streams_previews_ledger_and_b
         let db = handle.db.clone();
         handle.shutdown().await;
         let rows = db.query_spend(&Default::default()).await.unwrap();
-        assert_eq!(rows.len(), 2);
-        for row in rows {
+        let (bills, failures): (Vec<_>, Vec<_>) = rows
+            .into_iter()
+            .partition(|row| row.status.as_deref() == Some("success"));
+        assert_eq!(bills.len(), 2);
+        assert_eq!(failures.len(), usize::from(!custom));
+        if let Some(failure) = failures.first() {
+            assert_unbilled_failure(failure);
+            assert_eq!(failure.request_id, denied_request_id);
+            assert_eq!(failure.requested_model.as_deref(), Some("sonar-public"));
+        }
+        for row in bills {
             assert!(request_ids.contains(row.request_id.as_ref().unwrap()));
             assert_eq!(row.model, "sonar");
             assert_eq!(row.provider, "perplexity");
@@ -1960,7 +1984,17 @@ async fn concurrent_model_creates_keep_one_stored_routable_owner_and_release_del
             .await
             .is_empty()
     );
-    response_json(post(&client, handle.url("/v1/chat/completions"), &json!({"model": alias, "messages": [{"role": "user", "content": "Who owns this alias?"}]})).await, 404).await;
+    let deleted_alias_response = post(
+        &client,
+        handle.url("/v1/chat/completions"),
+        &json!({"model": alias, "messages": [{"role": "user", "content": "Who owns this alias?"}]}),
+    )
+    .await;
+    let deleted_alias_request_id = deleted_alias_response.headers()["x-oxllm-request-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    response_json(deleted_alias_response, 404).await;
     let successor = (winner + 1) % mocks.len();
     let created = post_json(
         &client,
@@ -1979,13 +2013,21 @@ async fn concurrent_model_creates_keep_one_stored_routable_owner_and_release_del
     let db = handle.db.clone();
     handle.shutdown().await;
     let logs = db.query_spend(&Default::default()).await.unwrap();
+    let (bills, failures): (Vec<_>, Vec<_>) = logs
+        .into_iter()
+        .partition(|log| log.status.as_deref() == Some("success"));
     assert_eq!(
-        logs.len(),
+        bills.len(),
         2,
         "both successive owners' successful bills persist"
     );
+    assert_eq!(failures.len(), 1, "the deleted alias is reported once");
+    let failure = &failures[0];
+    assert_unbilled_failure(failure);
+    assert_eq!(failure.request_id.as_ref(), Some(&deleted_alias_request_id));
+    assert_eq!(failure.requested_model.as_deref(), Some(alias));
     let mut stored_costs = Vec::new();
-    for log in logs {
+    for log in bills {
         assert_eq!(log.provider, "openai");
         assert_eq!(log.status.as_deref(), Some("success"));
         assert_eq!(log.prompt_tokens, Some(10));

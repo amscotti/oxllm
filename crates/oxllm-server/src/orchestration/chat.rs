@@ -1090,12 +1090,11 @@ async fn try_model_with_retries(
                         in_flight.reserve();
                         continue;
                     }
-                    // The allowed-fails policy can cool a deployment on
-                    // specific 4xx statuses (e.g. cool immediately on 401).
-                    // Without a policy covering the status nothing is
-                    // recorded and behavior is unchanged.
+                    // A request typo is not a deployment failure, even under a
+                    // global threshold or a retry category sharing HTTP 400.
                     let limit_reached =
-                        allowed_fails_limit_reached(state, &cooldown_key, status, model);
+                        super::outcomes::client_failure_affects_deployment(state, status)
+                            && allowed_fails_limit_reached(state, &cooldown_key, status, model);
                     // Retry parity (`router.py` `_should_retry`:
                     // AuthenticationError is retried "if other deployments
                     // available"): when the policy just declared this 4xx a
@@ -1291,6 +1290,13 @@ async fn try_model_with_retries(
 ///
 /// Shared by streaming and realtime sessions for terminal failures, where
 /// there is no retry loop to own allowed-fails / percentage cooldown.
+///
+/// Terminal relay callers apply
+/// [`terminal_failure_affects_deployment`](super::outcomes::terminal_failure_affects_deployment)
+/// first so committed client errors keep the unary per-status opt-in. The
+/// unary context-window/content-policy arms deliberately call this directly:
+/// those classifications describe a deployment fault and must keep counting
+/// toward the configured failure policy.
 pub(crate) fn allowed_fails_limit_reached(
     state: &AppState,
     cooldown_key: &str,

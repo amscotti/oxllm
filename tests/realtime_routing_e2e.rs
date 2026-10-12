@@ -261,8 +261,18 @@ async fn open_realtime_sessions_move_chat_and_realtime_to_the_other_least_busy_b
 }
 
 #[tokio::test]
-async fn handshake_status_failures_count_by_status_but_bad_requests_do_not_cool() {
-    for status in [400, 401, 403, 404, 429, 503] {
+async fn handshake_status_failures_honor_policy_without_cooling_generic_bad_requests() {
+    for (status, explicit_policy, cooling) in [
+        (400, false, false),
+        (400, true, true),
+        (409, false, true),
+        (401, true, true),
+        (403, true, true),
+        (404, true, true),
+        (424, false, true),
+        (429, true, true),
+        (503, true, true),
+    ] {
         let mock = httpmock::MockServer::start();
         let upstream = mock.mock(|when, then| {
             when.method(httpmock::Method::GET).path("/realtime");
@@ -270,9 +280,9 @@ async fn handshake_status_failures_count_by_status_but_bad_requests_do_not_cool(
                 .body("do not leak this provider error body");
         });
         let mut config = routing_config(&[&mock.base_url()]);
-        config.router_settings.routing.allowed_fails = None;
+        config.router_settings.routing.allowed_fails = Some(0);
         config.router_settings.routing.allowed_fails_policy =
-            Some(std::collections::HashMap::from([(status.to_string(), 0)]));
+            explicit_policy.then(|| std::collections::HashMap::from([(status.to_string(), 0)]));
         let (handle, shared) = common::start_oxllm(config).await.unwrap();
         let state = shared.load_full();
         let key = state.router.cooldown_key(&state.deployments[0]);
@@ -297,11 +307,12 @@ async fn handshake_status_failures_count_by_status_but_bad_requests_do_not_cool(
         );
         assert_eq!(
             state.router.cooldown_store().is_cooling(&key),
-            status != 400
+            cooling,
+            "status={status}, explicit={explicit_policy}"
         );
         assert_eq!(
             state.router.cooldown_store().failure_count(&key, status),
-            u32::from(status != 400)
+            u32::from(cooling)
         );
         assert_eq!(
             state.router.cooldown_store().failure_count(&key, 0),

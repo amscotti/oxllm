@@ -314,7 +314,7 @@ impl<'a> ChatOrchestrator<'a> {
             tracing::info!(request_id = %self.pipeline.call_ctx.request_id, "response cache hit");
             self.pipeline.call_ctx.cache_hit = true;
             let request_id = self.pipeline.request_id().to_string();
-            let resp = build_cache_hit_response(
+            let mut resp = build_cache_hit_response(
                 &cached,
                 model,
                 &request_id,
@@ -340,6 +340,8 @@ impl<'a> ChatOrchestrator<'a> {
                     Some(&cached),
                     cached_provider,
                 )
+                .await;
+            crate::pipeline::stamp_key_spend_header(&mut resp, self.state, &self.pipeline.call_ctx)
                 .await;
             return Ok(resp);
         }
@@ -427,6 +429,14 @@ impl<'a> ChatOrchestrator<'a> {
         // Stamped here (after the chain returns) so streaming responses
         // carry them at stream start exactly like non-streaming ones.
         apply_router_headers(&mut response, &self.pipeline.call_ctx);
+        if !is_stream {
+            crate::pipeline::stamp_key_spend_header(
+                &mut response,
+                self.state,
+                &self.pipeline.call_ctx,
+            )
+            .await;
+        }
 
         Ok(response)
     }

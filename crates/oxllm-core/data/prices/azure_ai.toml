@@ -1,0 +1,15 @@
+# Pricing for provider `azure_ai`.
+# Provider slug is implied by the filename; do not set it per-model.
+# Costs are USD per token.
+
+["azure_ai/Cohere-Embed-V5-Fast"]
+input_cost_per_token = 8.000000e-8
+output_cost_per_token = 0.0
+max_input_tokens = 128000
+mode = "embedding"
+
+["azure_ai/Cohere-Embed-V5-Pro"]
+input_cost_per_token = 1.200000e-7
+output_cost_per_token = 0.0
+max_input_tokens = 128000
+mode = "embedding"

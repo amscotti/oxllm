@@ -401,11 +401,20 @@ async fn hooked_raw(
 
     require_inference_model(upstream_path, effective_model, &request_body)?;
     let resolved_model = resolve_model(state, effective_model, &request_body, req.provider_hint)?;
-    let mut pipeline =
-        EndpointPipeline::for_request(state, auth, &resolved_model, request_body.clone()).await?;
-    validate_nested_model_acl(auth, &request_body)?;
-    pipeline.call_ctx.cache_namespace = Some(format!("raw:{}:{upstream_path}", req.method));
     let tags = request_tags(&req, &request_body);
+    let mut pipeline = EndpointPipeline::for_request_with_tags(
+        state,
+        auth,
+        &resolved_model,
+        request_body.clone(),
+        &tags,
+    )
+    .await?;
+    if let Err(error) = validate_nested_model_acl(auth, &request_body) {
+        crate::pipeline::record_request_rejection(state, &pipeline.call_ctx, &error).await;
+        return Err(error);
+    }
+    pipeline.call_ctx.cache_namespace = Some(format!("raw:{}:{upstream_path}", req.method));
     let session_id = request_session_id(&req, &request_body);
     pipeline.apply_request_tags(&tags).await?;
     let guarded = crate::pipeline::guardrails::apply_raw_request_guardrails(
@@ -1151,6 +1160,9 @@ pub(crate) async fn send_upstream_tracked(
         body
     };
     let creds = resolve_credentials(state, deployment).await?;
+    let url = crate::orchestration::upstream::upstream_url_with_resolved_endpoint(
+        deployment, &creds, url,
+    )?;
     let provider = state.registry.resolve_for_deployment(deployment);
     let mut auth_headers = provider_auth_headers(provider, deployment, &creds)?;
     crate::orchestration::upstream::merge_extra_headers(&mut auth_headers, deployment);
@@ -1225,7 +1237,7 @@ pub(crate) async fn send_upstream_tracked(
         state,
         deployment,
         method,
-        url,
+        &url,
         body,
         headers,
         (!streaming).then_some(timeout_secs),
@@ -1369,13 +1381,20 @@ pub(crate) fn meter_native_stream(
                             .or_else(|| payload.get("error"))
                             .filter(|error| !error.is_null())
                         {
-                            let status = match error.get("type").and_then(Value::as_str) {
-                                Some("rate_limit_error") => 429,
-                                Some("overloaded_error") => 529,
-                                Some("authentication_error") => 401,
-                                Some("permission_error") => 403,
-                                Some("invalid_request_error") => 400,
-                                _ => 500,
+                            let status = if matches!(
+                                error.get("code").and_then(Value::as_str),
+                                Some("cyber_policy" | "invalid_request_error")
+                            ) {
+                                400
+                            } else {
+                                match error.get("type").and_then(Value::as_str) {
+                                    Some("rate_limit_error") => 429,
+                                    Some("overloaded_error") => 529,
+                                    Some("authentication_error") => 401,
+                                    Some("permission_error") => 403,
+                                    Some("invalid_request_error" | "cyber_policy") => 400,
+                                    _ => 500,
+                                }
                             };
                             stream_error.get_or_insert(oxllm_core::Error::Upstream {
                                 status,

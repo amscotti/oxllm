@@ -1739,6 +1739,38 @@ async fn query_spend_by_key_aggregates_with_alias_and_nulls() {
 }
 
 #[tokio::test]
+async fn key_management_spend_totals_are_exact_and_bounded_across_bind_chunks() {
+    let db = fresh_db().await;
+    db.insert_spend_log(&spend_row(None, Some("first"), Some(0.1)))
+        .await
+        .unwrap();
+    db.insert_spend_log(&spend_row(None, Some("first"), Some(0.2)))
+        .await
+        .unwrap();
+    db.insert_spend_log(&spend_row(None, Some("first"), None))
+        .await
+        .unwrap();
+    db.insert_spend_log(&spend_row(None, Some("key' OR 1=1 --"), Some(0.5)))
+        .await
+        .unwrap();
+    db.insert_spend_log(&spend_row(None, Some("unrequested"), Some(100.0)))
+        .await
+        .unwrap();
+    let mut keys = (0..240)
+        .map(|id| format!("missing-{id}"))
+        .collect::<Vec<_>>();
+    keys.extend(["first".into(), "key' OR 1=1 --".into()]);
+    let borrowed = keys.iter().map(String::as_str).collect::<Vec<_>>();
+    let totals = db.total_spend_for_keys(&borrowed).await.unwrap();
+    assert_eq!(totals.len(), keys.len());
+    assert!((totals["first"] - 0.3).abs() < 1e-12);
+    assert_eq!(totals["key' OR 1=1 --"], 0.5);
+    assert_eq!(totals["missing-239"], 0.0);
+    assert!(!totals.contains_key("unrequested"));
+    assert!(db.total_spend_for_keys(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn query_spend_by_key_respects_date_range() {
     let db = fresh_db().await;
     let mut early = spend_row(None, Some("k-1"), Some(0.10));

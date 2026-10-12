@@ -14,11 +14,12 @@
 pub mod types;
 
 pub use types::{
-    BudgetRecord, CustomerRecord, DailySpend, KeyRecord, ModelConfigRecord, OrganizationRecord,
-    ProjectRecord, ScopeDeletion, SkillRecord, SpendByKey, SpendByKeyPage, SpendByModel,
-    SpendByModelPage, SpendByOrg, SpendByOrgPage, SpendByTag, SpendByTagPage, SpendByTeam,
-    SpendByTeamPage, SpendByUser, SpendByUserPage, SpendFilter, SpendLog, SpendLogEvent,
-    SpendMetadataRepair, SpendPage, TagRecord, TeamRecord, UserRecord,
+    BudgetRecord, CustomerRecord, DailySpend, KeyRecord, KeyTeamMutation, ModelConfigRecord,
+    OrganizationRecord, ProjectRecord, ScopeDeletion, ScopeEntity, ScopeLinkError, SkillRecord,
+    SpendByKey, SpendByKeyPage, SpendByModel, SpendByModelPage, SpendByOrg, SpendByOrgPage,
+    SpendByTag, SpendByTagPage, SpendByTeam, SpendByTeamPage, SpendByUser, SpendByUserPage,
+    SpendFilter, SpendLog, SpendLogEvent, SpendMetadataRepair, SpendPage, TagRecord, TeamRecord,
+    UserRecord,
 };
 
 /// Latest schema version applied by `Database::migrate`.
@@ -46,6 +47,8 @@ mod postgres_prepare;
 mod repos;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 mod rows;
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+mod scope_links;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 mod spend_metadata;
 
@@ -354,5 +357,7 @@ mod db_regression_tests;
 mod postgres_prepare_tests;
 #[cfg(all(test, any(feature = "postgres", feature = "sqlite")))]
 mod release_tests;
+#[cfg(all(test, any(feature = "postgres", feature = "sqlite")))]
+mod scope_links_tests;
 #[cfg(all(test, any(feature = "postgres", feature = "sqlite")))]
 mod tests;

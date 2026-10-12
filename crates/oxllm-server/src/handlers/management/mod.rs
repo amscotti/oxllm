@@ -51,6 +51,15 @@ pub(crate) async fn load_db(
     Ok((state, db))
 }
 
+/// Replaying an unchanged literal policy must not normalize it into broader
+/// permissions. Explicitly different replacements still use native validation
+/// and normalization at the mutation site.
+pub(crate) fn models_match_stored_policy(stored: Option<&str>, requested: &[String]) -> bool {
+    stored.is_some_and(|raw| {
+        serde_json::from_str::<Vec<String>>(raw).is_ok_and(|policy| policy.as_slice() == requested)
+    })
+}
+
 /// Map a database error into an internal `ApiError`. The full error chain
 /// is logged server-side; only a generic message reaches the client so
 /// driver-specific text (constraint names, table/column names, query

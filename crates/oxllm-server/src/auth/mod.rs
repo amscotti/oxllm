@@ -1137,11 +1137,9 @@ fn virtual_key_valid(info: &VirtualKeyInfo) -> bool {
     true
 }
 
-/// Sentinel ACL returned when the `models` column is present but unparseable.
-/// `check_model_acl` treats a non-empty list that matches nothing as deny-all;
-/// empty/`None` remain unrestricted by design.
-#[cfg(feature = "db")]
-const MODELS_ACL_DENY_ALL: &str = "\0oxllm-acl-deny-all";
+/// Reserved fail-closed policy marker. ACL and blocklist consumers recognize
+/// it as unconditional denial, never as an ordinary model pattern.
+pub(crate) const MODELS_ACL_DENY_ALL: &str = "\0oxllm-acl-deny-all";
 
 /// Decode the `models` JSON column (`["gpt-4o", "claude-*"]`) into a vec.
 ///
@@ -1150,7 +1148,7 @@ const MODELS_ACL_DENY_ALL: &str = "\0oxllm-acl-deny-all";
 /// non-empty deny-all sentinel so corrupt ACL rows never grant unrestricted
 /// model access.
 #[cfg(feature = "db")]
-fn parse_models_column(raw: Option<&str>) -> Option<Vec<String>> {
+pub(crate) fn parse_models_column(raw: Option<&str>) -> Option<Vec<String>> {
     let raw = raw?.trim();
     if raw.is_empty() {
         return None;
@@ -2521,7 +2519,7 @@ mod tests {
     fn parse_models_column_unparseable_fails_closed() {
         let denied = parse_models_column(Some("not-json")).expect("deny-all sentinel");
         assert_eq!(denied, vec![MODELS_ACL_DENY_ALL.to_string()]);
-        // Integration with check_model_acl: sentinel matches no real model.
+        // The ACL check treats the marker as an unconditional denial.
         let auth = AuthUser::open();
         let err = crate::pipeline::check_model_acl(&auth, "gpt-4o", Some(&denied), None, None);
         assert!(err.is_err(), "deny-all sentinel must block every model");

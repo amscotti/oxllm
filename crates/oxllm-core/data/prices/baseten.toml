@@ -3,7 +3,7 @@
 ["baseten/deepseek-ai/DeepSeek-V4.1-Flash-Fast"]
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 2.400000e-6
-cache_read_input_token_cost = 1.400000e-7
+cache_read_input_token_cost = 1.400000e-8
 max_input_tokens = 1048576
-max_output_tokens = 32768
+max_output_tokens = 131072
 source = "https://inference.baseten.co/v1/models"

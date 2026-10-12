@@ -11,8 +11,8 @@ use crate::error::ApiError;
 use crate::state::SharedState;
 
 use super::{
-    db_err, load_db, map_create_err, random_id, require_master, truncate_scope_list,
-    validate_budget_duration, validate_limits, validate_non_empty_name,
+    db_err, load_db, map_create_err, models_match_stored_policy, random_id, require_master,
+    truncate_scope_list, validate_budget_duration, validate_limits, validate_non_empty_name,
 };
 
 /// Request body for `POST /user/add`.
@@ -163,7 +163,9 @@ pub async fn update_user(
     if let Some(v) = req.budget_duration {
         record.budget_duration = if v.is_empty() { None } else { Some(v) };
     }
-    if let Some(v) = req.models {
+    if let Some(v) = req.models
+        && !models_match_stored_policy(record.models.as_deref(), &v)
+    {
         record.models = serialize_models(Some(v));
     }
     record.updated_at = oxllm_db::now_iso();

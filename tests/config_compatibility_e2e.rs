@@ -299,6 +299,7 @@ general_settings:
 router_settings:
   num_retries: 0
   fallbacks: [{{primary: [backup]}}]
+  allowed_fails_policy: {{"400": 0}}
   retry_policy:
     TimeoutErrorRetries: 1
     RateLimitErrorRetries: 1

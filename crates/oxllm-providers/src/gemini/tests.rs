@@ -6,6 +6,66 @@ use oxllm_core::provider::{ChatProvider, Provider, ResolvedCredentials};
 use serde_json::json;
 
 #[test]
+fn proven_additive_reasoning_usage_is_repaired_for_json_and_sse() {
+    let body = json!({"choices":[], "usage":{"prompt_tokens":5, "completion_tokens":1, "total_tokens":11,
+        "completion_tokens_details":{"reasoning_tokens":5}}});
+    let normalized = GeminiProvider
+        .transform_response(&body, "gemini/gemini-3-flash")
+        .unwrap();
+    assert_eq!(normalized["usage"]["completion_tokens"], 6);
+    assert_eq!(normalized["usage"]["total_tokens"], 11);
+    assert_eq!(
+        normalized["usage"]["completion_tokens_details"]["reasoning_tokens"],
+        5
+    );
+    assert_eq!(
+        GeminiProvider
+            .transform_response(&normalized, "gemini/gemini-3-flash")
+            .unwrap(),
+        normalized
+    );
+    let streamed = GeminiProvider
+        .transform_stream_chunk(&format!("data: {body}\n\n"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(streamed["usage"], normalized["usage"]);
+    let other = crate::openai_compat::OpenAiCompatProvider::new(
+        "other",
+        "https://example.test",
+        "other",
+        true,
+        true,
+        true,
+    );
+    assert_eq!(
+        other.transform_response(&body, "other/model").unwrap()["usage"],
+        body["usage"],
+        "Google-specific repairs must not change other compatible providers"
+    );
+}
+
+#[test]
+fn nonadditive_or_unknown_gemini_usage_is_not_reinterpreted() {
+    for usage in [
+        json!({"prompt_tokens":5,"completion_tokens":6,"total_tokens":11,"completion_tokens_details":{"reasoning_tokens":5}}),
+        json!({"prompt_tokens":21,"total_tokens":21,"completion_tokens_details":{"reasoning_tokens":5}}),
+        json!({"prompt_tokens":21,"total_tokens":21,"completion_tokens_details":{"reasoning_tokens":"unknown"}}),
+        json!({"prompt_tokens":u64::MAX,"completion_tokens":1,"total_tokens":u64::MAX,"completion_tokens_details":{"reasoning_tokens":1}}),
+    ] {
+        let body = json!({"usage":usage});
+        let normalized = GeminiProvider
+            .transform_response(&body, "gemini/gemini-3-flash")
+            .unwrap();
+        assert_eq!(normalized["usage"], usage);
+        let streamed = GeminiProvider
+            .transform_stream_chunk(&format!("data: {body}\n\n"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(streamed["usage"], usage);
+    }
+}
+
+#[test]
 fn validation_logprobs_forwarding_is_preserved_pending_model_specific_evidence() {
     // Decision (see `GEMINI_SUPPORTED_CHAT_PARAMS`): a stale forum report is
     // not

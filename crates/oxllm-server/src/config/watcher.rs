@@ -65,7 +65,7 @@ async fn watch_loop(
     config_path: PathBuf,
     shared: Arc<ArcSwap<AppState>>,
     rebuild: Rebuild,
-    ready: Option<tokio::sync::oneshot::Sender<()>>,
+    ready: Option<tokio::sync::mpsc::UnboundedSender<HashSet<PathBuf>>>,
 ) {
     // Canonicalize the config path so relevance checks match the path form
     // delivered by the OS watcher. On macOS in particular, `notify`'s
@@ -103,8 +103,8 @@ async fn watch_loop(
         files = files.len(),
         "config hot-reload watcher started"
     );
-    if let Some(ready) = ready {
-        let _ = ready.send(());
+    if let Some(ready) = &ready {
+        let _ = ready.send(watched_parents.clone());
     }
 
     let debounce = Duration::from_millis(DEBOUNCE_MS);
@@ -156,7 +156,13 @@ async fn watch_loop(
             // config cannot spin this loop forever.
             while rx.try_recv().is_ok() {}
             files = watched_config_files(&config_path).await;
+            let previous_parents = watched_parents.len();
             let _ = ensure_parents_watched(&mut watcher, &files, &mut watched_parents);
+            if watched_parents.len() != previous_parents
+                && let Some(ready) = &ready
+            {
+                let _ = ready.send(watched_parents.clone());
+            }
             for _ in 0..3 {
                 let now = fingerprint_all(&files).await;
                 if now == last {
@@ -170,7 +176,13 @@ async fn watch_loop(
                     break;
                 }
                 files = watched_config_files(&config_path).await;
+                let previous_parents = watched_parents.len();
                 let _ = ensure_parents_watched(&mut watcher, &files, &mut watched_parents);
+                if watched_parents.len() != previous_parents
+                    && let Some(ready) = &ready
+                {
+                    let _ = ready.send(watched_parents.clone());
+                }
                 while rx.try_recv().is_ok() {}
             }
         }
@@ -477,6 +489,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[serial_test::serial(oxllm_fs_watchers)]
     fn directory_aliases_share_one_watch_registration() {
         let directory = tempfile::tempdir().unwrap();
         let target = directory.path().join("target");
@@ -495,6 +508,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(oxllm_fs_watchers)]
     fn included_files_reload_and_new_include_directories_are_followed() {
         let _guard = crate::config::loader::CONFIG_PATH_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -522,9 +536,11 @@ mod tests {
                     previous.reload_from_config(config)
                 })
             });
-            let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-            tokio::spawn(watch_loop(root.clone(), shared.clone(), rebuild, Some(ready_tx)));
-            tokio::time::timeout(Duration::from_secs(6), ready_rx).await
+            let (ready_tx, mut ready_rx) = tokio::sync::mpsc::unbounded_channel();
+            let watcher = tokio::spawn(watch_loop(root.clone(), shared.clone(), rebuild, Some(ready_tx)));
+            // OS registration can serialize across concurrent watcher tests.
+            // Keep the behavioral deadlines separate from this ready barrier.
+            tokio::time::timeout(Duration::from_secs(30), ready_rx.recv()).await
                 .expect("watcher must register before writes").expect("watcher started");
             let wait_for_model = |name: &'static str| {
                 let shared = shared.clone();
@@ -552,9 +568,16 @@ mod tests {
             wait_for_model("edited-include").await;
             std::fs::write(&root, "model_list: []\ninclude: [next/models.yaml]\n").unwrap();
             wait_for_model("new-directory").await;
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            // State publication precedes OS registration of a newly included
+            // directory. Wait for that lifecycle barrier instead of guessing
+            // how long FSEvents reconfiguration takes under concurrent load.
+            let registered = tokio::time::timeout(Duration::from_secs(30), ready_rx.recv()).await
+                .expect("new include directory must be registered").expect("watcher alive");
+            assert!(registered.contains(&next.parent().unwrap().canonicalize().unwrap()));
             write_model(&next, "edited-new-include");
             wait_for_model("edited-new-include").await;
+            watcher.abort();
+            assert!(watcher.await.unwrap_err().is_cancelled());
         });
     }
 
@@ -577,9 +600,12 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(oxllm_fs_watchers)]
     async fn watcher_reloads_state_on_file_change() {
-        let dir = std::env::temp_dir();
-        let config_path = dir.join(format!("oxllm_test_watcher_{}.yaml", uuid::Uuid::new_v4()));
+        // Watching the shared temporary root receives unrelated compiler/test
+        // churn. A private parent keeps this real-OS regression self-contained.
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
 
         let initial = test_config("gpt-4o");
         let yaml = serde_yml::to_string(&initial).expect("serialize");
@@ -595,24 +621,36 @@ mod tests {
             })
         });
 
-        spawn_watcher(config_path.clone(), shared.clone(), rebuild);
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let (ready_tx, mut ready_rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = tokio::spawn(watch_loop(
+            config_path.clone(),
+            shared.clone(),
+            rebuild,
+            Some(ready_tx),
+        ));
+        tokio::time::timeout(Duration::from_secs(30), ready_rx.recv())
+            .await
+            .expect("watcher must register before writes")
+            .expect("watcher started");
 
         let updated = test_config("claude-3");
         let new_yaml = serde_yml::to_string(&updated).expect("serialize");
         std::fs::write(&config_path, &new_yaml).expect("write update");
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        let swapped = shared.load();
-        let found = swapped
-            .deployments
-            .iter()
-            .any(|d| d.model_name == "claude-3");
-
-        let _ = std::fs::remove_file(&config_path);
-        assert!(found, "state should have been swapped after file change");
+        tokio::time::timeout(Duration::from_secs(6), async {
+            while !shared
+                .load()
+                .deployments
+                .iter()
+                .any(|d| d.model_name == "claude-3")
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("state should have been swapped after file change");
+        watcher.abort();
+        assert!(watcher.await.unwrap_err().is_cancelled());
     }
 
     #[cfg(feature = "db")]
@@ -850,12 +888,10 @@ mod tests {
     /// closure's file read) must not be silently dropped by the post-reload
     /// event drain: the watcher re-fingerprints the file and reloads again.
     #[tokio::test]
+    #[serial_test::serial(oxllm_fs_watchers)]
     async fn watcher_reloads_again_if_file_changes_during_rebuild() {
-        let dir = std::env::temp_dir();
-        let config_path = dir.join(format!(
-            "oxllm_test_watcher_mid_{}.yaml",
-            uuid::Uuid::new_v4()
-        ));
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
 
         let initial = test_config("gpt-4o");
         let yaml = serde_yml::to_string(&initial).expect("serialize");
@@ -887,10 +923,17 @@ mod tests {
             })
         };
 
-        spawn_watcher(config_path.clone(), shared.clone(), rebuild);
-
-        // Wait for the watcher to come up before touching the file.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let (ready_tx, mut ready_rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = tokio::spawn(watch_loop(
+            config_path.clone(),
+            shared.clone(),
+            rebuild,
+            Some(ready_tx),
+        ));
+        tokio::time::timeout(Duration::from_secs(30), ready_rx.recv())
+            .await
+            .expect("watcher must register before writes")
+            .expect("watcher started");
         std::fs::write(&config_path, "model_list: []\n").expect("write update 1");
 
         // First reload fires after the debounce window and signals us when
@@ -912,10 +955,11 @@ mod tests {
             .expect("second reload should start within 10s after mid-rebuild write")
             .expect("watcher alive");
 
-        let _ = std::fs::remove_file(&config_path);
         assert!(
             second >= 1,
             "a write landing mid-rebuild must trigger another reload"
         );
+        watcher.abort();
+        assert!(watcher.await.unwrap_err().is_cancelled());
     }
 }

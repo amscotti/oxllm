@@ -382,12 +382,16 @@ where
                         // available). Client-caused 4xx no policy covers
                         // still return immediately.
                         let status = err.status.as_u16();
-                        let limit_reached = matches!(
-                            state
-                                .router
-                                .record_failure_and_check(&cooldown_key, status, model),
-                            AllowedFailDecision::LimitReached { .. }
-                        );
+                        let limit_reached =
+                            super::outcomes::client_failure_affects_deployment(state, status)
+                                && matches!(
+                                    state.router.record_failure_and_check(
+                                        &cooldown_key,
+                                        status,
+                                        model
+                                    ),
+                                    AllowedFailDecision::LimitReached { .. }
+                                );
                         let sibling_available = state
                             .router
                             .deployments_for_model(&state.deployments, model)

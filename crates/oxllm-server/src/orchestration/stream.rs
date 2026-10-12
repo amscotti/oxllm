@@ -618,9 +618,9 @@ async fn finalize_stream_exit(
                     *accumulated_usage = Some(estimated);
                 }
             }
-            // Aggregators report spend on late usage chunks. Local rate cards
-            // normally win; Perplexity's complete receipt also includes dynamic
-            // search/request fees. It is threaded through the dedicated
+            // Aggregators report measured spend on late usage chunks, including
+            // dynamic routing/search fees. Only that receipt is threaded through
+            // the dedicated
             // `body_cost` field — NOT synthesized into a `{"usage":{"cost":…}}`
             // body, because `CacheHook::post_success` stores `body` verbatim
             // for cache-enabled requests and the next identical request
@@ -632,9 +632,7 @@ async fn finalize_stream_exit(
                 response_model,
                 accumulated_usage.as_ref(),
                 None,
-                reported_cost.or_else(|| {
-                    deployment_cost_fallback(deployment, call_ctx, accumulated_usage.as_ref())
-                }),
+                reported_cost,
                 deployment.provider_slug(),
             )
             .await;
@@ -849,10 +847,11 @@ async fn finalize_stream_exit(
                 oxllm_core::Error::Upstream { status, .. } => Some(*status),
                 _ => None,
             };
-            if let Some(status) = fail_status {
-                if allowed_fails_limit_reached(state, cooldown_key, status, model) {
-                    state.router.mark_cooldown_for(cooldown_key, model);
-                }
+            if let Some(status) = fail_status
+                && super::outcomes::terminal_failure_affects_deployment(state, status)
+                && allowed_fails_limit_reached(state, cooldown_key, status, model)
+            {
+                state.router.mark_cooldown_for(cooldown_key, model);
             }
             tracing::info!(
                 request_id = %call_ctx.request_id,
@@ -935,6 +934,9 @@ async fn record_partial_stream_spend(
     budget_reservation: &super::budget::RouterBudgetReservation,
     reported_cost: Option<f64>,
 ) {
+    if !call_ctx.claim_spend_record() {
+        return;
+    }
     let cost = crate::hooks::cost_fallback::resolve_cost(
         call_ctx,
         response_model,
@@ -944,6 +946,13 @@ async fn record_partial_stream_spend(
         deployment.provider_slug(),
     )
     .or_else(|| deployment_cost_fallback(deployment, call_ctx, accumulated_usage));
+    let tags = tags_json(&call_ctx.request_tags);
+    tracing::info!(event = "spend", status = "partial", request_id = %call_ctx.request_id,
+        model = response_model, provider = deployment.provider_slug(), cost, cost_known = cost.is_some(),
+        deployment_id = call_ctx.deployment_id.as_deref(), key_id = call_ctx.key_id.as_deref(),
+        prompt_tokens = accumulated_usage.map(|usage| usage.prompt_tokens),
+        completion_tokens = accumulated_usage.map(|usage| usage.completion_tokens),
+        tags = %tags.as_deref().unwrap_or("[]"), "partial stream spend recorded");
     if accumulated_usage.is_some() || cost.is_some() {
         super::budget::settle_router_spend(
             state,
@@ -992,21 +1001,11 @@ async fn record_partial_stream_spend(
             user_id: call_ctx.user_id.clone(),
             end_user_id: call_ctx.end_user_id.clone(),
             request_tag: call_ctx.request_tag.clone(),
-            request_tags: tags_json(&call_ctx.request_tags),
+            request_tags: tags,
             status: Some(status.to_string()),
             latency_ms: call_ctx.start_time.map(|s| s.elapsed().as_millis() as i64),
         };
-        match tx.try_send(entry) {
-            Ok(()) => {}
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                tracing::warn!("spend writer channel full; dropping partial stream spend entry");
-                crate::metrics::record_spend_dropped("full", 1);
-            }
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                tracing::warn!("spend writer channel closed; dropping partial stream spend entry");
-                crate::metrics::record_spend_dropped("closed", 1);
-            }
-        }
+        crate::spend_writer::queue_partial_spend(tx, entry).await;
     }
 }
 
@@ -2888,6 +2887,173 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn partial_stream_error_has_one_terminal_row_and_one_router_settlement() {
+        let mut state = AppState::with_registry(
+            crate::config::types::ProxyConfig {
+                model_list: vec![],
+                oxllm_settings: Default::default(),
+                general_settings: Default::default(),
+                router_settings: Default::default(),
+                extra: serde_json::Map::new(),
+            },
+            oxllm_providers::default_registry(),
+        )
+        .unwrap();
+        let (spend_tx, mut ledger) = mpsc::channel(8);
+        state.spend_tx = Some(spend_tx.clone());
+        state.hooks = vec![std::sync::Arc::new(
+            crate::hooks::CostTrackingHook::with_spend_writer(Some(spend_tx)),
+        )];
+        let deployment = Deployment {
+            model_name: "public-alias".into(),
+            oxllm_params: oxllm_core::deployment::OxllmParams {
+                model: "openai/gpt-4o".into(),
+                max_budget: Some(10.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let ctx = CallContext::for_test("public-alias");
+        let mut usage = Some(oxllm_core::UsageSummary {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+            ..Default::default()
+        });
+        let expected = oxllm_core::calculate_cost("gpt-4o", usage.as_ref().unwrap()).unwrap();
+        let reservation = crate::orchestration::budget::RouterBudgetReservation::default();
+        let dep_key = deployment_key(&deployment);
+        let cooldown_key = state.router.cooldown_key(&deployment);
+        let (events, _receiver) = mpsc::channel(8);
+        finalize_stream_exit(
+            &state,
+            &deployment,
+            &ctx,
+            &reservation,
+            &ctx.model,
+            &cooldown_key,
+            &dep_key,
+            &events,
+            StreamExit::Error(oxllm_core::Error::Network("disconnected".into())),
+            &mut usage,
+            "gpt-4o",
+            true,
+            "partial output",
+            None,
+        )
+        .await;
+        let entry = ledger.try_recv().unwrap();
+        assert_eq!(entry.status.as_deref(), Some("partial"));
+        assert_eq!(entry.request_id.as_ref(), Some(&ctx.request_id));
+        assert_eq!(entry.total_tokens, Some(15));
+        assert!((entry.cost.unwrap() - expected).abs() < 1e-12);
+        assert!(
+            ledger.try_recv().is_err(),
+            "terminal failure must not add a second row"
+        );
+        record_partial_stream_spend(
+            &state,
+            &deployment,
+            &ctx.clone(),
+            "gpt-4o",
+            usage.as_ref(),
+            &reservation,
+            None,
+        )
+        .await;
+        assert!(
+            ledger.try_recv().is_err(),
+            "cloned contexts share the partial-spend claim"
+        );
+        let settled = state
+            .cache
+            .counter_value(&crate::hooks::spend_keys::deployment_spend_key(&dep_key))
+            .await
+            .unwrap();
+        assert!(
+            (settled - expected).abs() < 1e-12,
+            "a repeated partial observer cannot settle twice"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn partial_stream_survives_transient_ledger_backpressure() {
+        let mut state = AppState::with_registry(
+            serde_json::from_value(serde_json::json!({"model_list":[]})).unwrap(),
+            oxllm_providers::default_registry(),
+        )
+        .unwrap();
+        let (spend_tx, mut ledger) = mpsc::channel(1);
+        spend_tx
+            .try_send(
+                serde_json::from_value(serde_json::json!({
+                    "timestamp":"2026-10-11T00:00:00Z","model":"filler","provider":"test"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        state.spend_tx = Some(spend_tx.clone());
+        state.hooks = vec![std::sync::Arc::new(
+            crate::hooks::CostTrackingHook::with_spend_writer(Some(spend_tx)),
+        )];
+        let receiver = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            assert_eq!(ledger.recv().await.unwrap().model, "filler");
+            let row = tokio::time::timeout(std::time::Duration::from_millis(500), ledger.recv())
+                .await
+                .expect("partial record must recover when queue capacity returns")
+                .unwrap();
+            assert!(ledger.try_recv().is_err(), "one terminal ledger row");
+            row
+        });
+        let deployment: Deployment = serde_json::from_value(serde_json::json!({
+            "model_name":"public-alias","oxllm_params":{"model":"openai/gpt-4o","max_budget":10}
+        }))
+        .unwrap();
+        let ctx = CallContext::for_test("public-alias");
+        let mut usage = Some(oxllm_core::UsageSummary {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+            ..Default::default()
+        });
+        let expected = oxllm_core::calculate_cost("gpt-4o", usage.as_ref().unwrap()).unwrap();
+        let dep_key = deployment_key(&deployment);
+        let (events, _events_rx) = mpsc::channel(8);
+        finalize_stream_exit(
+            &state,
+            &deployment,
+            &ctx,
+            &Default::default(),
+            &ctx.model,
+            &state.router.cooldown_key(&deployment),
+            &dep_key,
+            &events,
+            StreamExit::Error(oxllm_core::Error::Network("closed".into())),
+            &mut usage,
+            "gpt-4o",
+            true,
+            "partial output",
+            None,
+        )
+        .await;
+        let row = receiver.await.unwrap();
+        assert_eq!(row.status.as_deref(), Some("partial"));
+        assert_eq!(row.total_tokens, Some(15));
+        assert!((row.cost.unwrap() - expected).abs() < 1e-12);
+        assert!(
+            (state
+                .cache
+                .counter_value(&crate::hooks::spend_keys::deployment_spend_key(&dep_key))
+                .await
+                .unwrap()
+                - expected)
+                .abs()
+                < 1e-12
+        );
+    }
+
     /// Without accumulated usage, partial-stream spend recording is a no-op.
     #[tokio::test]
     async fn record_partial_stream_spend_without_usage_is_noop() {
@@ -3006,7 +3172,6 @@ mod tests {
             },
             ..Default::default()
         };
-        let call_ctx = CallContext::for_test("gpt-4o");
         let reservation = crate::orchestration::budget::RouterBudgetReservation::default();
 
         // `full`: capacity-1 channel with no draining receiver. The first
@@ -3016,7 +3181,7 @@ mod tests {
         record_partial_stream_spend(
             &state,
             &deployment,
-            &call_ctx,
+            &CallContext::for_test("gpt-4o"),
             "gpt-4o",
             None,
             &reservation,
@@ -3027,7 +3192,7 @@ mod tests {
         record_partial_stream_spend(
             &state,
             &deployment,
-            &call_ctx,
+            &CallContext::for_test("gpt-4o"),
             "gpt-4o",
             None,
             &reservation,
@@ -3049,7 +3214,7 @@ mod tests {
         record_partial_stream_spend(
             &state,
             &deployment,
-            &call_ctx,
+            &CallContext::for_test("gpt-4o"),
             "gpt-4o",
             None,
             &reservation,

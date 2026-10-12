@@ -512,6 +512,13 @@ router_settings:
             .send()
             .await
             .unwrap();
+        if status == 400 {
+            assert_eq!(response.status(), 400);
+            failed_wire.assert_hits_async(1).await;
+            served_wire.assert_hits_async(0).await;
+            proxy.shutdown();
+            continue;
+        }
         assert_eq!(response.status(), 200, "status {status}");
         assert_eq!(
             response.headers()["x-oxllm-attempted-retries"],

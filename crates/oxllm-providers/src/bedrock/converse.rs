@@ -117,8 +117,7 @@ pub(super) fn transform_request_converse_with_base_model(
                 }
             }
             "tool" => {
-                let block = convert_tool_result(msg);
-                let mut content = vec![block];
+                let mut content = convert_tool_result(msg, feature_model)?;
                 // A `cache_control` hint on the tool message (message-
                 // level or inside its content array) injects a trailing
                 // `cachePoint` sibling block — matches the reference tool-
@@ -1383,41 +1382,107 @@ fn thinking_block_to_converse(block: &Value) -> Option<Value> {
 }
 
 /// Convert an OpenAI tool-role message (`{role:"tool", tool_call_id, content}`)
-/// into a Converse `toolResult` content block (which lives inside a
-/// synthetic `{role:"user"}` message — Bedrock has no `tool` role).
-///
-/// `content` may be a string or an array of typed blocks. Only text blocks
-/// are surfaced today; image / file tool results are a Batch 3 concern.
-fn convert_tool_result(msg: &Value) -> Value {
+/// into Converse user content. GPT models require tool-result images beside
+/// the result; other families keep images nested in their original order.
+fn convert_tool_result(msg: &Value, model: &str) -> Result<Vec<Value>> {
     let tool_call_id = msg
         .get("tool_call_id")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let content_blocks = match &msg["content"] {
-        Value::String(s) => vec![json!({"text": s})],
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|elem| {
-                let obj = elem.as_object()?;
-                if obj.get("type").and_then(|v| v.as_str()).unwrap_or("text") == "text" {
-                    obj.get("text")
-                        .and_then(|v| v.as_str())
-                        .map(|t| json!({"text": t}))
-                } else {
-                    None
+    let mut content_blocks = Vec::new();
+    let mut sibling_images = Vec::new();
+    let images_beside_result = bedrock_gpt_version(model).is_some();
+    match &msg["content"] {
+        Value::String(text) if !text.is_empty() => content_blocks.push(json!({"text": text})),
+        Value::Array(parts) => {
+            for part in parts {
+                let Some(object) = part.as_object() else {
+                    continue;
+                };
+                match object.get("type").and_then(Value::as_str).unwrap_or("text") {
+                    "text" => {
+                        if let Some(text) = object.get("text").and_then(Value::as_str)
+                            && !text.is_empty()
+                        {
+                            content_blocks.push(json!({"text": text}));
+                        }
+                    }
+                    "tool_reference" => {
+                        if let Some(name) = object.get("tool_name").and_then(Value::as_str)
+                            && !name.is_empty()
+                        {
+                            content_blocks.push(json!({"text": name}));
+                        }
+                    }
+                    "image_url" => {
+                        let media = data_url_to_converse_media(object)?;
+                        if images_beside_result && media.get("image").is_some() {
+                            sibling_images.push(media);
+                        } else {
+                            content_blocks.push(media);
+                        }
+                    }
+                    "file" => content_blocks.push(openai_file_to_converse_document(object)?),
+                    _ => {}
                 }
-            })
-            .collect(),
-        // Null/number/etc. — render as empty text so the toolResult stays
-        // well-formed (Bedrock requires a non-empty `content` array).
-        _ => vec![json!({"text": ""})],
-    };
-    json!({
+            }
+        }
+        _ => {}
+    }
+    if content_blocks.is_empty() {
+        let text = if sibling_images.is_empty() {
+            "Tool returned no content."
+        } else {
+            "Tool returned an image. See the image blocks in this message."
+        };
+        content_blocks.push(json!({"text": text}));
+    }
+    let mut result = json!({
         "toolResult": {
             "toolUseId": tool_call_id,
             "content": content_blocks,
         }
-    })
+    });
+    if let Some(status) = msg.get("status").filter(|value| !value.is_null()) {
+        result["toolResult"]["status"] = status.clone();
+    }
+    let mut blocks = vec![result];
+    blocks.append(&mut sibling_images);
+    Ok(blocks)
+}
+
+/// Recognize numeric GPT versions without mistaking GPT-OSS or an opaque
+/// profile name for a GPT model. Family detection handles regional IDs and ARNs.
+fn bedrock_gpt_version(model: &str) -> Option<(u32, u32)> {
+    let lower = model.to_ascii_lowercase();
+    let model = super::model_id_for_family(&lower)?;
+    let version = model
+        .strip_prefix("openai.gpt-")?
+        .split(['-', ':', '['])
+        .next()?;
+    let parse_component = |part: &str| {
+        part.bytes()
+            .all(|byte| byte.is_ascii_digit())
+            .then(|| part.parse::<u32>().ok())
+            .flatten()
+    };
+    let mut components = version.split('.');
+    let major = parse_component(components.next()?)?;
+    let minor = match components.next() {
+        Some(part) => parse_component(part)?,
+        None => 0,
+    };
+    components.next().is_none().then_some((major, minor))
+}
+
+fn bedrock_rejects_stop_sequences(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    let grok = super::model_id_for_family(&lower).is_some_and(|model| {
+        model
+            .strip_prefix("xai.grok-")
+            .is_some_and(|suffix| !suffix.is_empty())
+    });
+    grok || bedrock_gpt_version(model).is_some_and(|version| version >= (5, 6))
 }
 
 fn bedrock_requires_min_max_tokens(model: &str) -> bool {
@@ -1472,21 +1537,23 @@ fn build_inference_config(request: &Value, model: &str) -> Value {
             ic.insert("topP".to_string(), json!(p));
         }
     }
-    // `stop` may be a string or an array of strings.
-    match request.get("stop") {
-        Some(Value::Array(arr)) => {
-            let strs: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-            if !strs.is_empty() {
-                ic.insert("stopSequences".to_string(), json!(strs));
+    // Grok and GPT 5.6+ reject stop sequences on Converse.
+    if !bedrock_rejects_stop_sequences(model) {
+        match request.get("stop") {
+            Some(Value::Array(arr)) => {
+                let strs: Vec<String> = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+                if !strs.is_empty() {
+                    ic.insert("stopSequences".to_string(), json!(strs));
+                }
             }
+            Some(Value::String(s)) if !s.is_empty() => {
+                ic.insert("stopSequences".to_string(), json!([s]));
+            }
+            _ => {}
         }
-        Some(Value::String(s)) if !s.is_empty() => {
-            ic.insert("stopSequences".to_string(), json!([s]));
-        }
-        _ => {}
     }
     Value::Object(ic)
 }
@@ -1759,8 +1826,11 @@ fn validate_native_tool(tool: &Value) -> Result<()> {
 fn data_url_to_converse_media(block: &Map<String, Value>) -> Result<Value> {
     let url = block
         .get("image_url")
-        .and_then(|iu| iu.get("url"))
-        .and_then(Value::as_str)
+        .and_then(|image| {
+            image
+                .as_str()
+                .or_else(|| image.get("url").and_then(Value::as_str))
+        })
         .unwrap_or("");
     let (media_type, data) = crate::util::parse_base64_data_url(url).ok_or_else(|| {
         oxllm_core::Error::BadRequest(
@@ -1803,6 +1873,7 @@ fn document_format_from_media_type(media_type: &str) -> Option<&'static str> {
 }
 
 fn openai_file_to_converse_document(block: &Map<String, Value>) -> Result<Value> {
+    use base64::Engine as _;
     let invalid_file = || {
         oxllm_core::Error::BadRequest(
         "Bedrock Converse file requires non-empty base64 file_data; file IDs and non-base64 data URLs are unsupported".into(),
@@ -1822,7 +1893,11 @@ fn openai_file_to_converse_document(block: &Map<String, Value>) -> Result<Value>
     } else {
         ("application/pdf", data)
     };
-    if bytes.is_empty() {
+    if bytes.is_empty()
+        || base64::engine::general_purpose::STANDARD
+            .decode(bytes)
+            .is_err()
+    {
         return Err(invalid_file());
     }
     let format = document_format_from_media_type(media_type).ok_or_else(|| {

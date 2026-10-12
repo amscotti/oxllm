@@ -26,6 +26,7 @@ pub use service_tiers::{resolve_service_tier, response_service_tier};
 const PRICE_SHARDS: &[(&str, &str)] = &[
     ("ai21", include_str!("../data/prices/ai21.toml")),
     ("anthropic", include_str!("../data/prices/anthropic.toml")),
+    ("azure_ai", include_str!("../data/prices/azure_ai.toml")),
     ("baseten", include_str!("../data/prices/baseten.toml")),
     ("bedrock", include_str!("../data/prices/bedrock.toml")),
     (
@@ -1816,8 +1817,10 @@ output_cost_per_token = 0.00001
                 lookup_pricing_with_provider(model, "bedrock_mantle").expect("Mantle rate");
             assert_eq!(bedrock.provider, "bedrock");
             assert_eq!(mantle.provider, "bedrock_mantle");
+            assert_eq!(bedrock.max_input_tokens, Some(128_000));
+            assert_eq!(mantle.max_input_tokens, Some(131_072));
             assert_eq!(bedrock.max_output_tokens, Some(16_000));
-            assert_eq!(mantle.max_output_tokens, Some(65_536));
+            assert_eq!(mantle.max_output_tokens, Some(16_000));
             assert_eq!(bedrock.input_cost_per_token, mantle.input_cost_per_token);
             assert_eq!(bedrock.output_cost_per_token, mantle.output_cost_per_token);
         }
@@ -2036,6 +2039,386 @@ output_cost_per_token = 2e-6
         assert!(lookup_pricing("bedrock/anthropic.claude-3-haiku-20240307-v1:0").is_some());
         assert!(lookup_pricing("bedrock/meta.llama3-1-70b-instruct-v1:0").is_some());
         assert!(lookup_pricing("bedrock/meta.llama3-1-8b-instruct-v1:0").is_some());
+    }
+
+    #[test]
+    fn sonnet_4_5_flat_prices_keep_all_cache_buckets_past_200k() {
+        for model in ["claude-sonnet-4-5", "claude-sonnet-4-5-20250929"] {
+            let pricing = lookup_pricing_with_provider(model, "anthropic").expect("Sonnet card");
+            assert_eq!(pricing.max_input_tokens, Some(200_000));
+            assert_eq!(pricing.max_output_tokens, Some(64_000));
+            assert!(
+                pricing.tiers.is_empty(),
+                "{model} must not carry a premium tier"
+            );
+            for context in [200_000, 200_001] {
+                let u = UsageSummary {
+                    prompt_tokens: context - 200,
+                    completion_tokens: 100,
+                    cache_read_input_tokens: Some(400),
+                    cache_creation_input_tokens: Some(200),
+                    cache_creation_1h_input_tokens: Some(50),
+                    reasoning_tokens: Some(40),
+                    ..Default::default()
+                };
+                let expected = (context - 600) as f64 * 3e-6
+                    + 400.0 * 3e-7
+                    + 150.0 * 3.75e-6
+                    + 50.0 * 6e-6
+                    + 100.0 * 1.5e-5;
+                let cost =
+                    calculate_cost_with_provider(model, &u, "anthropic").expect("Sonnet cost");
+                assert!((cost - expected).abs() < 1e-12, "{model}/{context}: {cost}");
+            }
+        }
+        let hosted = lookup_pricing("vertex_ai/claude-sonnet-4-5").expect("hosted Sonnet card");
+        assert!(
+            !hosted.tiers.is_empty(),
+            "hosted prices retain their own tiers"
+        );
+    }
+
+    #[test]
+    fn corrected_bedrock_rates_bill_regional_cache_and_token_prices() {
+        for (model, input, output, cache) in [
+            (
+                "apac.amazon.nova-2-lite-v1:0",
+                3.96e-7,
+                3.311e-6,
+                Some(9.9e-8),
+            ),
+            (
+                "eu.amazon.nova-2-lite-v1:0",
+                4.29e-7,
+                3.597e-6,
+                Some(1.0725e-7),
+            ),
+            ("amazon.nova-premier-v1:0", 2.5e-6, 1.25e-5, Some(6.25e-7)),
+            ("bedrock/moonshotai.kimi-k2-thinking", 6e-7, 2.5e-6, None),
+            ("bedrock/moonshotai.kimi-k2.5", 6e-7, 3e-6, None),
+            ("amazon.titan-text-express-v1", 2e-7, 6e-7, None),
+            ("amazon.titan-text-lite-v1", 1.5e-7, 2e-7, None),
+            (
+                "bedrock/us-gov-west-1/amazon.titan-text-express-v1",
+                8e-7,
+                1.6e-6,
+                None,
+            ),
+            (
+                "bedrock/us-gov-west-1/amazon.titan-embed-text-v2:0",
+                1.1e-7,
+                0.0,
+                None,
+            ),
+        ] {
+            let cached = if cache.is_some() { 400 } else { 0 };
+            let u = UsageSummary {
+                cache_read_input_tokens: Some(cached),
+                ..usage(1_000, 100)
+            };
+            let cost = calculate_cost_with_provider(model, &u, "bedrock").expect("Bedrock cost");
+            let expected = (1_000 - cached) as f64 * input
+                + cached as f64 * cache.unwrap_or(0.0)
+                + 100.0 * output;
+            assert!((cost - expected).abs() < 1e-12, "{model}: {cost}");
+        }
+    }
+
+    #[test]
+    fn hosted_catalog_limits_keep_input_windows_separate_from_output_caps() {
+        for (provider, model, input, output) in [
+            ("bedrock", "amazon.nova-premier-v1:0", 1_000_000, 10_000),
+            (
+                "bedrock",
+                "bedrock/ap-northeast-1/deepseek.v3.2",
+                163_840,
+                8_000,
+            ),
+            ("bedrock", "deepseek.v3-v1:0", 128_000, 8_000),
+            (
+                "bedrock",
+                "bedrock/moonshotai.kimi-k2-thinking",
+                262_144,
+                16_000,
+            ),
+            (
+                "bedrock",
+                "bedrock/us-west-2/moonshotai.kimi-k2.5",
+                262_144,
+                16_000,
+            ),
+            (
+                "bedrock",
+                "bedrock/us-east-1/minimax.minimax-m2.5",
+                196_000,
+                8_192,
+            ),
+            ("bedrock", "mistral.voxtral-mini-3b-2507", 32_768, 8_192),
+            ("bedrock", "mistral.voxtral-small-24b-2507", 32_768, 8_192),
+            ("bedrock", "openai.gpt-oss-120b-1:0", 128_000, 16_384),
+            (
+                "bedrock",
+                "bedrock/us-gov-west-1/openai.gpt-oss-20b-1:0",
+                128_000,
+                16_384,
+            ),
+            ("bedrock_mantle", "openai.gpt-oss-120b", 131_072, 16_384),
+            (
+                "bedrock_mantle",
+                "us-gov-east-1/openai.gpt-oss-20b",
+                131_072,
+                16_384,
+            ),
+            (
+                "bedrock_mantle",
+                "openai.gpt-oss-safeguard-120b",
+                131_072,
+                16_000,
+            ),
+            (
+                "bedrock_mantle",
+                "openai.gpt-daybreak-blue-5.6-sol",
+                1_000_000,
+                128_000,
+            ),
+            ("bedrock", "global.openai.gpt-6.1-sol", 1_000_000, 131_072),
+            ("bedrock", "us.openai.gpt-6.1-sol", 1_000_000, 131_072),
+            ("bedrock_mantle", "openai.gpt-6.1-sol", 1_000_000, 131_072),
+            ("openai", "gpt-6.1-sol", 922_000, 128_000),
+        ] {
+            let pricing = lookup_pricing_with_provider(model, provider).expect("hosted card");
+            assert_eq!(pricing.max_input_tokens, Some(input), "{provider}/{model}");
+            assert_eq!(
+                pricing.max_output_tokens,
+                Some(output),
+                "{provider}/{model}"
+            );
+        }
+        for region in ["global", "us"] {
+            for model in [
+                "gpt-5.4",
+                "gpt-5.5",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+            ] {
+                let key = format!("{region}.openai.{model}");
+                let pricing = lookup_pricing_with_provider(&key, "bedrock").expect("GPT card");
+                assert_eq!(pricing.max_input_tokens, Some(1_050_000), "{key}");
+                assert_eq!(pricing.max_output_tokens, Some(128_000), "{key}");
+            }
+        }
+        for alias in ["openai.gpt-6.1-sol", "xai.grok-4.7"] {
+            assert!(
+                !price_table().contains_key(alias),
+                "retired bare id {alias}"
+            );
+            assert!(lookup_pricing_with_provider(alias, "bedrock").is_none());
+        }
+        assert!(lookup_pricing("global.xai.grok-4.7").is_some());
+    }
+
+    #[test]
+    fn gpt_6_1_ultrafast_bills_cache_and_output_at_exclusive_context_boundary() {
+        for (provider, model, multiplier) in [
+            ("openai", "gpt-6.1-sol", 1.0),
+            ("bedrock", "global.openai.gpt-6.1-sol", 1.0),
+            ("bedrock", "us.openai.gpt-6.1-sol", 1.1),
+            ("bedrock_mantle", "openai.gpt-6.1-sol", 1.1),
+        ] {
+            for context in [272_000, 272_001] {
+                let u = UsageSummary {
+                    prompt_tokens: context - 100,
+                    completion_tokens: 100,
+                    cache_read_input_tokens: Some(400),
+                    cache_creation_input_tokens: Some(100),
+                    reasoning_tokens: Some(40),
+                    ..Default::default()
+                };
+                let (input, output, read, write) = if context > 272_000 {
+                    (2.4e-5, 9e-5, 1.2e-6, 3e-5)
+                } else {
+                    (1.2e-5, 6e-5, 6e-7, 1.5e-5)
+                };
+                let expected = ((context - 500) as f64 * input
+                    + 400.0 * read
+                    + 100.0 * write
+                    + 100.0 * output)
+                    * multiplier;
+                let cost =
+                    calculate_cost_for_service_tier(model, &u, None, provider, Some("ultrafast"))
+                        .expect("UltraFast price");
+                assert!((cost - expected).abs() < 1e-12, "{model}/{context}: {cost}");
+
+                let override_prices = DeploymentPricing {
+                    input_cost_per_token: 0.001,
+                    output_cost_per_token: 0.002,
+                    cache_read_input_token_cost: Some(0.0001),
+                    cache_creation_input_token_cost: Some(0.0005),
+                    ..Default::default()
+                };
+                let overridden = calculate_cost_for_service_tier(
+                    model,
+                    &u,
+                    Some(&override_prices),
+                    provider,
+                    Some("ultrafast"),
+                )
+                .expect("explicit deployment price");
+                let expected_override = (context - 500) as f64 * 0.001
+                    + 400.0 * 0.0001
+                    + 100.0 * 0.0005
+                    + 100.0 * 0.002;
+                assert!((overridden - expected_override).abs() < 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn bedrock_flex_prices_use_published_buckets_instead_of_inferred_discounts() {
+        for (provider, model, input, output, cache) in [
+            ("bedrock", "google.gemma-3-12b-it", 5e-8, 1.5e-7, None),
+            (
+                "bedrock",
+                "mistral.ministral-3-8b-instruct",
+                7e-8,
+                7e-8,
+                None,
+            ),
+            ("bedrock", "nvidia.nemotron-nano-9b-v2", 3e-8, 1.2e-7, None),
+            (
+                "bedrock",
+                "us.amazon.nova-2-lite-v1:0",
+                1.65e-7,
+                1.375e-6,
+                Some(4.125e-8),
+            ),
+            (
+                "bedrock",
+                "bedrock/eu-west-2/qwen.qwen3-coder-next",
+                3.9e-7,
+                9.3e-7,
+                None,
+            ),
+            ("bedrock_mantle", "google.gemma-4-31b", 7e-8, 2e-7, None),
+            (
+                "bedrock_mantle",
+                "qwen.qwen3-vl-235b-a22b-instruct",
+                2.6e-7,
+                1.33e-6,
+                None,
+            ),
+            (
+                "bedrock_mantle",
+                "openai.gpt-oss-safeguard-120b",
+                7e-8,
+                3e-7,
+                None,
+            ),
+        ] {
+            let cached = if cache.is_some() { 400 } else { 0 };
+            let u = UsageSummary {
+                cache_read_input_tokens: Some(cached),
+                reasoning_tokens: Some(40),
+                ..usage(1_000, 100)
+            };
+            let cost = calculate_cost_for_service_tier(model, &u, None, provider, Some("flex"))
+                .expect("Flex price");
+            let expected = (1_000 - cached) as f64 * input
+                + cached as f64 * cache.unwrap_or(0.0)
+                + 100.0 * output;
+            assert!(
+                (cost - expected).abs() < 1e-12,
+                "{provider}/{model}: {cost}"
+            );
+        }
+        for alias in [
+            "google.gemma-4-26b-a4b",
+            "google.gemma-4-31b",
+            "google.gemma-4-e2b",
+            "openai.gpt-oss-120b",
+            "openai.gpt-oss-20b",
+        ] {
+            let bare = lookup_pricing(alias).expect("unscoped Mantle card");
+            let scoped =
+                lookup_pricing_with_provider(alias, "bedrock_mantle").expect("Mantle card");
+            let a = bare.rates_for_service_tier(1_000, 0, Some("flex"));
+            let b = scoped.rates_for_service_tier(1_000, 0, Some("flex"));
+            assert_eq!((a.input, a.output), (b.input, b.output), "{alias}");
+        }
+    }
+
+    #[test]
+    fn new_catalog_cards_keep_serving_namespaces_and_unpublished_limits() {
+        for (model, input, output, cache, write) in [
+            ("openai/gpt-5-nano", 5e-8, 4e-7, 5e-9, None),
+            ("openai/gpt-5.3-codex", 3.5e-6, 2.8e-5, 3.5e-7, None),
+            ("openai/gpt-6-astra", 1e-5, 5e-5, 1e-6, Some(1.25e-5)),
+            (
+                "perplexity/deepseek-v4-pro-0813",
+                1.32e-6,
+                3.96e-6,
+                4.4e-8,
+                None,
+            ),
+        ] {
+            let pricing = lookup_pricing_with_provider(model, "perplexity").expect("Agent card");
+            assert_eq!(pricing.provider, "perplexity");
+            assert_eq!(pricing.mode.as_deref(), Some("responses"));
+            assert_eq!(pricing.max_input_tokens, None);
+            assert_eq!(pricing.max_output_tokens, None);
+            let u = UsageSummary {
+                cache_read_input_tokens: Some(400),
+                cache_creation_input_tokens: write.map(|_| 200),
+                ..usage(1_000, 100)
+            };
+            let cost = calculate_cost_with_provider(model, &u, "perplexity").expect("Agent cost");
+            let expected =
+                600.0 * input + 400.0 * cache + 100.0 * output + 200.0 * write.unwrap_or(0.0);
+            assert!((cost - expected).abs() < 1e-12, "{model}: {cost}");
+        }
+        let discovery = lookup_pricing("gpt-rosalind-discovery").expect("Discovery card");
+        assert_eq!(discovery.provider, "openai");
+        assert_eq!(
+            (discovery.max_input_tokens, discovery.max_output_tokens),
+            (None, None)
+        );
+        let u = UsageSummary {
+            cache_read_input_tokens: Some(400),
+            ..usage(1_000, 100)
+        };
+        let cost = calculate_cost("gpt-rosalind-discovery", &u).expect("Discovery cost");
+        assert!((cost - (600.0 * 5e-6 + 400.0 * 5e-7 + 100.0 * 2.5e-5)).abs() < 1e-12);
+        for (model, rate, mode, context) in [
+            ("Cohere-Embed-V5-Fast", 8e-8, "embedding", Some(128_000)),
+            ("Cohere-Embed-V5-Pro", 1.2e-7, "embedding", Some(128_000)),
+        ] {
+            let pricing = lookup_pricing_with_provider(model, "azure_ai").expect("Foundry card");
+            assert_eq!(pricing.provider, "azure_ai");
+            assert_eq!(pricing.mode.as_deref(), Some(mode));
+            assert_eq!(pricing.max_input_tokens, context);
+            assert_eq!(pricing.max_output_tokens, None);
+            assert_eq!(pricing.output_cost_per_token, 0.0);
+            let cost = calculate_cost_with_provider(model, &usage(1_000, 0), "azure_ai")
+                .expect("Foundry input cost");
+            assert!((cost - 1_000.0 * rate).abs() < 1e-12, "{model}: {cost}");
+        }
+    }
+
+    #[test]
+    fn mantle_bare_aliases_match_scoped_rates_limits_and_all_tiers() {
+        let rows: toml::Table =
+            toml::from_str(include_str!("../data/prices/bedrock_mantle.toml")).unwrap();
+        let mut checked = 0;
+        for (alias, row) in rows.iter().filter(|(name, _)| !name.contains('/')) {
+            let canonical = format!("bedrock_mantle/{alias}");
+            assert_eq!(
+                row, &rows[&canonical],
+                "bare Mantle alias {alias} must not drift from its serving card"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 11, "retain every existing bare alias");
     }
 
     #[test]

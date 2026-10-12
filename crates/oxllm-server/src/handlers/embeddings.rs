@@ -72,13 +72,7 @@ pub(crate) async fn embeddings_inner_with_headers(
         .ok_or_else(|| ApiError::bad_request("missing required field: 'model'"))?
         .to_string();
 
-    crate::pipeline::check_model_acl(
-        auth,
-        &model,
-        auth.key_models.as_deref(),
-        auth.team_models.as_deref(),
-        auth.user_models.as_deref(),
-    )?;
+    crate::pipeline::check_request_model_acl(&state, auth, &model, &request_body, headers).await?;
     if let Some(pii) = state.pii_guardrail.as_ref() {
         mask_embeddings_input(pii, &mut request_body);
     }
@@ -86,7 +80,8 @@ pub(crate) async fn embeddings_inner_with_headers(
     let tags = crate::pipeline::extract_tags(headers, Some(&request_body));
 
     let mut pipeline =
-        EndpointPipeline::for_request(&state, auth, &model, request_body.clone()).await?;
+        EndpointPipeline::for_request_with_tags(&state, auth, &model, request_body.clone(), &tags)
+            .await?;
     pipeline.call_ctx.cache_namespace = Some("embeddings".into());
     pipeline.apply_request_tags(&tags).await?;
 
@@ -129,6 +124,7 @@ pub(crate) async fn embeddings_inner_with_headers(
         set_header(&mut resp, CACHE_HIT_HEADER, "true");
         stamp_request_id_header(&mut resp, pipeline.request_id());
         crate::orchestration::apply_router_headers(&mut resp, &pipeline.call_ctx);
+        crate::pipeline::stamp_key_spend_header(&mut resp, &state, &pipeline.call_ctx).await;
         return Ok(resp);
     }
 
@@ -169,6 +165,7 @@ pub(crate) async fn embeddings_inner_with_headers(
             // reach this branch).
             stamp_ratelimit_headers(&mut resp, pipeline.state, &pipeline.call_ctx).await;
             crate::orchestration::apply_router_headers(&mut resp, &pipeline.call_ctx);
+            crate::pipeline::stamp_key_spend_header(&mut resp, &state, &pipeline.call_ctx).await;
             Ok(resp)
         }
         Err(err) => Err(err),

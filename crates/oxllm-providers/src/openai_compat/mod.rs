@@ -369,7 +369,11 @@ impl ChatProvider for OpenAiCompatProvider {
 
     fn transform_response(&self, body: &Value, _model: &str) -> Result<Value> {
         let mut out = body.clone();
-        crate::openai::sanitize_null_tokens(&mut out);
+        if self.slug == "gemini" {
+            crate::gemini_usage::normalize_gemini_usage(&mut out);
+        } else {
+            crate::openai::sanitize_null_tokens(&mut out);
+        }
         map_generic_error_finish_reason(&mut out);
         Ok(out)
     }
@@ -379,7 +383,11 @@ impl ChatProvider for OpenAiCompatProvider {
             Some(v) => v,
             None => return Ok(None),
         };
-        crate::openai::sanitize_null_tokens(&mut value);
+        if self.slug == "gemini" {
+            crate::gemini_usage::normalize_gemini_usage(&mut value);
+        } else {
+            crate::openai::sanitize_null_tokens(&mut value);
+        }
         map_generic_error_finish_reason(&mut value);
         Ok(Some(value))
     }

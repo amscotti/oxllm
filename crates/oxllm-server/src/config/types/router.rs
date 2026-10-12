@@ -173,8 +173,9 @@ impl RoutingKnobs {
     /// `RateLimitErrorRetries` is 429, `ContentPolicyViolationErrorRetries` is
     /// 400, and `InternalServerErrorRetries` is 500/502/503/504/529.
     /// `BadRequestErrorRetries` and `AuthenticationErrorRetries` are accepted
-    /// only at 0, which writes `allowed_fails_policy` for 400/422 and 401/403
-    /// and a zero retry count when that status is still unset. Any other value
+    /// only at 0, which writes zero retry counts for 400/422 and 401/403 when
+    /// those statuses are still unset. Cooldown policy remains independent.
+    /// Any other value
     /// fails: those names have no retry category of their own, and writing a
     /// non-zero 400 would clobber content-policy retries.
     ///
@@ -189,7 +190,7 @@ impl RoutingKnobs {
                     self.retry_policy = Some(policy);
                     return Err(format!(
                         "{name}={count} has no retry translation; only 0 is accepted, \
-                         and it maps to allowed_fails_policy (400 and 422 for bad \
+                         and it maps to retry_policy (400 and 422 for bad \
                          request, 401 and 403 for authentication)"
                     ));
                 }
@@ -222,8 +223,6 @@ impl RoutingKnobs {
         let mut notes = Vec::new();
         let mut exception = self.exception_retry_policy.clone().unwrap_or_default();
         let mut touched_exception = false;
-        let mut allowed = self.allowed_fails_policy.clone().unwrap_or_default();
-        let mut touched_allowed = false;
         for (name, count) in found {
             match name {
                 "TimeoutErrorRetries" => {
@@ -263,23 +262,18 @@ impl RoutingKnobs {
                     ));
                 }
                 "BadRequestErrorRetries" => {
-                    allowed.insert("400".to_string(), 0);
-                    allowed.insert("422".to_string(), 0);
-                    touched_allowed = true;
                     self.insert_retry_status_if_absent("400", 0);
                     self.insert_retry_status_if_absent("422", 0);
                     notes.push(
-                        "BadRequestErrorRetries=0 -> allowed_fails_policy 400 and 422".to_string(),
+                        "BadRequestErrorRetries=0 -> retry_policy 400 and 422 (cooldown unchanged)"
+                            .to_string(),
                     );
                 }
                 "AuthenticationErrorRetries" => {
-                    allowed.insert("401".to_string(), 0);
-                    allowed.insert("403".to_string(), 0);
-                    touched_allowed = true;
                     self.insert_retry_status_if_absent("401", 0);
                     self.insert_retry_status_if_absent("403", 0);
                     notes.push(
-                        "AuthenticationErrorRetries=0 -> allowed_fails_policy 401 and 403"
+                        "AuthenticationErrorRetries=0 -> retry_policy 401 and 403 (cooldown unchanged)"
                             .to_string(),
                     );
                 }
@@ -288,9 +282,6 @@ impl RoutingKnobs {
         }
         if touched_exception {
             self.exception_retry_policy = Some(exception);
-        }
-        if touched_allowed {
-            self.allowed_fails_policy = Some(allowed);
         }
         Ok(notes)
     }

@@ -111,11 +111,19 @@ impl RealtimeRoutingGuard {
                 .increment(1);
             }
         }
-        // Malformed client events and deterministic transform/config failures
-        // say nothing about deployment availability. An explicit 400 policy
-        // must not turn those errors into a way to cool every backend.
+        // Local client/config/transform errors are not upstream observations,
+        // even when a status policy exists. Actual upstream errors follow the
+        // common retryable/deployment-fault/per-status rules. Keep realtime's
+        // existing failed-dependency (424) treatment as well.
+        if !matches!(error, Error::Network(_) | Error::Upstream { .. }) {
+            return;
+        }
         let Some(status) = status.filter(|status| {
-            *status == 0 || *status >= 500 || matches!(*status, 401 | 403 | 404 | 408 | 424 | 429)
+            *status == 424
+                || crate::orchestration::outcomes::terminal_failure_affects_deployment(
+                    &self.state,
+                    *status,
+                )
         }) else {
             return;
         };
@@ -286,5 +294,51 @@ mod tests {
         assert!(!state.router.cooldown_store().is_cooling(&key));
         assert!(state.router.health_store().reason(&key).is_none());
         assert_eq!(state.router.latency_store().p50(&key), Some(7));
+    }
+
+    #[test]
+    fn realtime_upstream_statuses_honor_retryability_and_explicit_cooldown_policies() {
+        for (status, explicit_policy, cooling) in [
+            (409, false, true),
+            (400, true, true),
+            (400, false, false),
+            (422, true, true),
+            (422, false, false),
+            (424, false, true),
+            (401, false, true),
+            (429, false, true),
+        ] {
+            let mut state = AppState::new(
+                serde_json::from_value(serde_json::json!({"model_list":[]})).unwrap(),
+            )
+            .unwrap();
+            state.router = Arc::new(oxllm_core::router::Router::new(
+                oxllm_core::router::RouterConfig {
+                    allowed_fails: Some(0),
+                    allowed_fails_policy: explicit_policy
+                        .then(|| std::collections::HashMap::from([(status.to_string(), 0)])),
+                    ..Default::default()
+                },
+            ));
+            let state = Arc::new(state);
+            let mut guard =
+                RealtimeRoutingGuard::new(state.clone(), &selected("openai/gpt-4o"), "gpt-4o");
+            let key = guard.cooldown_key.clone();
+            guard.finish(&Err(Error::Upstream {
+                status,
+                message: "upstream rejected session".into(),
+            }));
+            drop(guard);
+            assert_eq!(
+                state.router.cooldown_store().is_cooling(&key),
+                cooling,
+                "status={status}, explicit={explicit_policy}"
+            );
+            assert_eq!(
+                state.router.cooldown_store().failure_count(&key, status),
+                u32::from(cooling)
+            );
+            assert_eq!(state.router.usage_store().in_flight(&key), 0);
+        }
     }
 }

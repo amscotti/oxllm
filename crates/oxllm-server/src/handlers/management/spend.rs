@@ -285,7 +285,7 @@ pub async fn global_spend(
     Query(q): Query<GlobalSpendQuery>,
 ) -> Result<Response, ApiError> {
     require_master(&auth)?;
-    let (_state, db) = load_db(&shared, &auth).await?;
+    let (state, db) = load_db(&shared, &auth).await?;
 
     // The DB applies identical inclusive bounds to cost and request count.
     let filter = oxllm_db::SpendFilter {
@@ -299,6 +299,7 @@ pub async fn global_spend(
     Ok(Json(json!({
     "total_cost": total,
     "total_requests": count,
+    "max_budget": state.config.oxllm_settings.max_budget,
     "start_date": q.start_date,
     "end_date": q.end_date,
     }))

@@ -3226,11 +3226,10 @@ router_settings:
         assert_eq!(policy.rate_limit_retries, Some(1));
         assert_eq!(policy.content_policy_retries, Some(0));
         assert_eq!(policy.internal_server_error_retries, Some(2));
-        let allowed = router.allowed_fails_policy.as_ref().expect("allowed");
-        assert_eq!(allowed.get("400"), Some(&0));
-        assert_eq!(allowed.get("422"), Some(&0));
-        assert_eq!(allowed.get("401"), Some(&0));
-        assert_eq!(allowed.get("403"), Some(&0));
+        assert!(
+            router.allowed_fails_policy.is_none(),
+            "retry aliases must not inject cooldown thresholds"
+        );
         let group = cfg
             .router_settings
             .routing_groups
@@ -3256,6 +3255,17 @@ router_settings:
         let rendered = format!("{err:#}");
         assert!(rendered.contains("no retry translation"), "{rendered}");
         assert!(rendered.contains("BadRequestErrorRetries"), "{rendered}");
+    }
+
+    #[test]
+    fn zero_retry_aliases_preserve_explicit_operator_cooldown_settings() {
+        let config = parse_config_str("model_list: []\nrouter_settings:\n  retry_policy: {BadRequestErrorRetries: 0, AuthenticationErrorRetries: 0}\n  allowed_fails_policy: {\"400\": 3, \"401\": 2}\n").unwrap();
+        let routing = config.router_settings.routing;
+        assert_eq!(
+            routing.allowed_fails_policy.unwrap(),
+            std::collections::HashMap::from([("400".into(), 3), ("401".into(), 2),])
+        );
+        assert_eq!(routing.retry_policy.unwrap().get("400"), Some(&0));
     }
 
     #[test]

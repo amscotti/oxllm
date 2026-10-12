@@ -35,11 +35,18 @@ pub(crate) fn resolve_cost(
     if let Some(cost) = ctx.cost_override.filter(|cost| valid_cost(*cost)) {
         return Some(cost);
     }
+    if usage.is_none() && ctx.deployment_pricing.as_ref().is_some_and(pricing_is_free) {
+        // A receipt without token counters is not evidence of a charge under
+        // a completely free override. Preserve absent usage rather than invent
+        // zero token counts just to resolve the operator's known zero price.
+        return Some(0.0);
+    }
     let tier = ctx.billable_service_tier(body);
     let models = [
         Some(model),
         ctx.pricing_model.as_deref(),
         Some(ctx.model.as_str()),
+        ctx.deployment_model.as_deref(),
     ];
     let table_cost = usage.and_then(|usage| {
         models.iter().flatten().find_map(|model| {
@@ -58,10 +65,10 @@ pub(crate) fn resolve_cost(
             .filter(|cost| valid_cost(*cost))
             .or_else(|| body.and_then(crate::pipeline::extract_body_usage_cost))
     };
-    // Perplexity reports a complete receipt, including dynamic search/request
-    // fees absent from token counts. Keep explicit operator pricing in control,
-    // but otherwise use the receipt for the header, budgets, ledger and logs.
-    if provider == "perplexity" && ctx.deployment_pricing.is_none() {
+    // Aggregator receipts include routing/search fees absent from token counts.
+    // Keep explicit operator prices authoritative; otherwise use a measured
+    // receipt consistently for headers, budgets, the ledger and exporters.
+    if matches!(provider, "perplexity" | "openrouter") && ctx.deployment_pricing.is_none() {
         if let Some(cost) = reported_cost() {
             return Some(cost);
         }
@@ -114,11 +121,49 @@ pub(crate) fn resolve_cost(
         .or_else(reported_cost)
 }
 
+/// Prove a zero charge across every explicit bucket and context tier. Duration
+/// pricing follows its existing canonical/input/output precedence; otherwise
+/// token pricing wins, even when an inactive duration rate is configured.
+fn pricing_is_free(pricing: &oxllm_core::DeploymentPricing) -> bool {
+    // Match the core billing rule: negative and non-finite operator rates
+    // collapse to zero, including when counters or timing are unavailable.
+    let zero = |rate: f64| !rate.is_finite() || rate <= 0.0;
+    if pricing.is_per_second_priced() {
+        return pricing
+            .cost_per_second_rate
+            .or(pricing.input_cost_per_second)
+            .or(pricing.output_cost_per_second)
+            .is_some_and(zero);
+    }
+    let zero = |rate: Option<f64>| rate.is_none_or(zero);
+    [
+        Some(pricing.input_cost_per_token),
+        Some(pricing.output_cost_per_token),
+        pricing.cache_read_input_token_cost,
+        pricing.cache_creation_input_token_cost,
+        pricing.output_cost_per_reasoning_token,
+        pricing.cache_creation_input_token_cost_above_1hr,
+    ]
+    .into_iter()
+    .all(zero)
+        && pricing.tiers.iter().all(|tier| {
+            [
+                tier.input_cost_per_token,
+                tier.output_cost_per_token,
+                tier.cache_read_input_token_cost,
+                tier.cache_creation_input_token_cost,
+                tier.cache_creation_input_token_cost_above_1hr,
+            ]
+            .into_iter()
+            .all(zero)
+        })
+}
+
 /// Resolve the cost to embed in a telemetry/exporter payload for `resp`.
 ///
-/// Returns `Some(cost)` when the response already carried a pre-computed cost
-/// or when the price table resolves a row for the serving model + provider.
-/// Returns `None` when no usage was reported or no price-row match exists.
+/// Returns `Some(cost)` for a pre-computed charge, applicable rate card,
+/// measured receipt, timed duration, or proven free deployment. Returns `None`
+/// when no supported source establishes a cost.
 ///
 /// Mirrors [`CostTrackingHook`](crate::hooks::cost::CostTrackingHook)'s
 /// fallback exactly: provider-aware lookup on the response model first, then a
@@ -167,6 +212,220 @@ mod tests {
             web_search_requests: None,
             cache_creation_1h_input_tokens: None,
         }
+    }
+
+    #[test]
+    fn aggregator_receipts_override_fallback_cards_but_not_operator_prices() {
+        let model = "openrouter/openai/gpt-4o";
+        let mut ctx = CallContext::for_test(model);
+        let measured = usage(10, 5);
+        for receipt in [0.0, 0.017, 0.001] {
+            let body = serde_json::json!({"usage":{"cost":receipt}});
+            assert_eq!(
+                resolve_cost(
+                    &ctx,
+                    model,
+                    Some(&measured),
+                    Some(&body),
+                    None,
+                    "openrouter"
+                ),
+                Some(receipt)
+            );
+            assert_eq!(
+                resolve_cost(
+                    &ctx,
+                    model,
+                    Some(&measured),
+                    None,
+                    Some(receipt),
+                    "openrouter"
+                ),
+                Some(receipt)
+            );
+        }
+        let fallback =
+            oxllm_core::calculate_cost_with_provider(model, &measured, "openrouter").unwrap();
+        for receipt in [None, Some(-1.0), Some(f64::NAN), Some(f64::INFINITY)] {
+            assert_eq!(
+                resolve_cost(&ctx, model, Some(&measured), None, receipt, "openrouter"),
+                Some(fallback)
+            );
+        }
+        ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+            input_cost_per_token: 0.002,
+            output_cost_per_token: 0.005,
+            ..Default::default()
+        });
+        let expected = oxllm_core::calculate_cost_with_override_for_provider(
+            model,
+            &measured,
+            ctx.deployment_pricing.as_ref(),
+            "openrouter",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_cost(
+                &ctx,
+                model,
+                Some(&measured),
+                None,
+                Some(0.017),
+                "openrouter"
+            ),
+            Some(expected)
+        );
+        ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+            input_cost_per_token: 0.0,
+            output_cost_per_token: 0.0,
+            ..Default::default()
+        });
+        assert_eq!(
+            resolve_cost(
+                &ctx,
+                model,
+                Some(&measured),
+                None,
+                Some(0.017),
+                "openrouter"
+            ),
+            Some(0.0)
+        );
+        assert_eq!(
+            resolve_cost(&ctx, model, None, None, Some(0.017), "openrouter"),
+            Some(0.0)
+        );
+        // Cache-only or tier-only prices cannot be declared free when the
+        // serving provider omitted the counters needed to price those buckets.
+        ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+            cache_read_input_token_cost: Some(1e-6),
+            ..Default::default()
+        });
+        assert_eq!(
+            resolve_cost(&ctx, model, None, None, Some(0.017), "openrouter"),
+            Some(0.017)
+        );
+        ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+            tiers: vec![oxllm_core::cost::CostTier {
+                threshold_tokens: 1,
+                input_cost_per_token: Some(1e-6),
+                output_cost_per_token: None,
+                cache_read_input_token_cost: None,
+                cache_creation_input_token_cost: None,
+                cache_creation_input_token_cost_above_1hr: None,
+            }],
+            ..Default::default()
+        });
+        assert_eq!(
+            resolve_cost(&ctx, model, None, None, Some(0.017), "openrouter"),
+            Some(0.017)
+        );
+        ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+            cost_per_second_rate: Some(0.0),
+            input_cost_per_second: Some(1.0),
+            ..Default::default()
+        });
+        assert_eq!(
+            resolve_cost(&ctx, model, None, None, Some(0.017), "openrouter"),
+            Some(0.0)
+        );
+        ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+            cache_read_input_token_cost: Some(0.0),
+            cost_per_second_rate: Some(1.0),
+            ..Default::default()
+        });
+        assert_eq!(
+            resolve_cost(&ctx, model, None, None, Some(0.017), "openrouter"),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn concrete_deployment_remains_a_last_resort_for_unpriced_response_aliases() {
+        let mut ctx = CallContext::for_test("public-alias");
+        ctx.deployment_model = Some("openrouter/openai/gpt-4o".into());
+        let measured = usage(5, 1);
+        assert_eq!(
+            resolve_cost(
+                &ctx,
+                "unpriced-response-alias",
+                Some(&measured),
+                None,
+                None,
+                "openrouter"
+            ),
+            Some(5.0 * 2.5e-6 + 10.0e-6)
+        );
+        assert_eq!(
+            resolve_cost(
+                &ctx,
+                "openai/gpt-4o-mini",
+                Some(&measured),
+                None,
+                None,
+                "openrouter"
+            ),
+            Some(5.0 * 0.15e-6 + 0.60e-6)
+        );
+    }
+
+    #[test]
+    fn receipt_only_free_pricing_matches_rate_sanitization() {
+        let model = "private-model";
+        let mut ctx = CallContext::for_test(model);
+        for rate in [-1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+                input_cost_per_token: rate,
+                output_cost_per_token: rate,
+                cache_read_input_token_cost: Some(rate),
+                cache_creation_input_token_cost: Some(rate),
+                output_cost_per_reasoning_token: Some(rate),
+                cache_creation_input_token_cost_above_1hr: Some(rate),
+                ..Default::default()
+            });
+            let measured = usage(5, 1);
+            assert_eq!(
+                resolve_cost(
+                    &ctx,
+                    model,
+                    Some(&measured),
+                    None,
+                    Some(0.017),
+                    "openrouter"
+                ),
+                Some(0.0)
+            );
+            assert_eq!(
+                resolve_cost(&ctx, model, None, None, Some(0.017), "openrouter"),
+                Some(0.0),
+                "missing counters must not turn sanitized zero rates into a receipt charge"
+            );
+            ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+                cost_per_second_rate: Some(rate),
+                ..Default::default()
+            });
+            assert_eq!(
+                ctx.deployment_pricing
+                    .as_ref()
+                    .unwrap()
+                    .cost_per_second(1000.0),
+                Some(0.0)
+            );
+            assert_eq!(
+                resolve_cost(&ctx, model, None, None, Some(0.017), "openrouter"),
+                Some(0.0)
+            );
+        }
+        ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+            input_cost_per_token: 1e-6,
+            output_cost_per_token: f64::NAN,
+            ..Default::default()
+        });
+        assert_eq!(
+            resolve_cost(&ctx, model, None, None, Some(0.017), "openrouter"),
+            Some(0.017),
+            "a positive effective bucket still needs usage and retains receipt fallback"
+        );
     }
 
     /// HIGH #1 (parity with `cost.rs::cost_hook_fallback_uses_serving_provider_for_tiered_gemini`):

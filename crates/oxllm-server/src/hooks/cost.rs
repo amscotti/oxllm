@@ -1,4 +1,4 @@
-//! `CostTrackingHook` — calculates the cost of each successful request,
+//! `CostTrackingHook` — records successful, failed and denied requests,
 //! emits a structured spend log line, and (when a DB is configured) queues a
 //! spend entry to the batched spend writer.
 
@@ -9,13 +9,10 @@ use crate::spend_writer::{SpendEntry, tags_json};
 
 /// A hook that calculates cost and emits a structured spend log line.
 ///
-/// This hook is **post-success-only**: it implements [`Hook::post_success`]
-/// (which skips cache hits) and intentionally has no `pre_call` side effects
-/// (no budget reservation, no counter increment). Because there is nothing to
-/// roll back, the default no-op [`Hook::post_failure`] is correct as-is. A
-/// future maintainer adding a `pre_call` reservation here MUST also add the
-/// corresponding `post_failure` release so the runner's reverse-order
-/// rollback can undo it.
+/// This observer has no admission/reservation side effects. Failed requests
+/// report zero cost with request attribution only; request bodies and upstream
+/// error text are never stored. A shared context claim prevents duplicate rows
+/// when rollback, terminal failure and partial-stream paths converge.
 pub struct CostTrackingHook {
     spend_tx: Option<tokio::sync::mpsc::Sender<SpendEntry>>,
 }
@@ -42,7 +39,7 @@ impl Default for CostTrackingHook {
 #[async_trait]
 impl Hook for CostTrackingHook {
     async fn post_success(&self, ctx: &CallContext, resp: &ResponseSummary) {
-        if ctx.cache_hit {
+        if ctx.cache_hit || !ctx.claim_spend_record() {
             return;
         }
         let cost = crate::hooks::cost_fallback::fallback_cost(ctx, resp);
@@ -171,6 +168,54 @@ impl Hook for CostTrackingHook {
                     queue_spend(tx, entry).await;
                 }
             }
+        }
+    }
+
+    async fn post_failure(&self, ctx: &CallContext, err: &oxllm_core::Error) {
+        if !ctx.claim_spend_record() {
+            return;
+        }
+        let (provider, model) = ctx
+            .deployment_model
+            .as_deref()
+            .map(|model| match model.split_once('/') {
+                Some((provider, model)) if !provider.is_empty() => (provider, model),
+                Some((_, model)) => ("openai", model),
+                None => ("openai", model),
+            })
+            .unwrap_or(("", ctx.model.as_str()));
+        let tags = tags_json(&ctx.request_tags);
+        tracing::info!(event = "spend", status = "failure", cost = 0.0,
+            error_type = crate::pipeline::error_type_label(err), request_id = %ctx.request_id,
+            requested_model = %ctx.model, deployment_id = ctx.deployment_id.as_deref(),
+            key_id = ctx.key_id.as_deref(), tags = %tags.as_deref().unwrap_or("[]"),
+            "failed request recorded");
+        if let Some(tx) = &self.spend_tx {
+            queue_spend(
+                tx,
+                SpendEntry {
+                    timestamp: now_iso(),
+                    request_id: Some(ctx.request_id.clone()),
+                    model: model.into(),
+                    provider: provider.into(),
+                    deployment_id: ctx.deployment_id.clone(),
+                    requested_model: Some(ctx.model.clone()),
+                    model_group: ctx.serving_model_group.clone(),
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    total_tokens: None,
+                    cost: Some(0.0),
+                    key_id: ctx.key_id.clone(),
+                    team_id: ctx.team_id.clone(),
+                    user_id: ctx.user_id.clone(),
+                    end_user_id: ctx.end_user_id.clone(),
+                    request_tag: ctx.request_tag.clone(),
+                    request_tags: tags,
+                    status: Some("failure".into()),
+                    latency_ms: latency_ms_from_ctx(ctx),
+                },
+            )
+            .await;
         }
     }
 }
@@ -403,22 +448,67 @@ mod tests {
         );
     }
 
-    /// Documents the contract: `CostTrackingHook` is post-success-only with no
-    /// `pre_call` reservation, so the default no-op `post_failure` is correct —
-    /// a failed request must never queue a spend entry. Pins the doc-comment so
-    /// a future maintainer who adds a `pre_call` reservation also adds the
-    /// matching `post_failure` release.
     #[tokio::test]
-    async fn post_failure_on_cost_hook_is_a_noop() {
+    async fn failed_requests_are_observed_once_without_charging_or_error_body_storage() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<SpendEntry>(8);
         let hook = CostTrackingHook::with_spend_writer(Some(tx));
         let ctx = make_ctx();
         hook.post_failure(&ctx, &oxllm_core::Error::Network("boom".into()))
             .await;
+        let row = rx.try_recv().unwrap();
+        assert_eq!(row.status.as_deref(), Some("failure"));
+        assert_eq!(row.cost, Some(0.0));
+        assert!(row.prompt_tokens.is_none() && row.completion_tokens.is_none());
+        assert!(!serde_json::to_string(&row).unwrap().contains("boom"));
+        hook.post_failure(
+            &ctx.clone(),
+            &oxllm_core::Error::BudgetExceeded("later".into()),
+        )
+        .await;
+        hook.post_success(&ctx, &make_response("gpt-4o", 10, 5))
+            .await;
         assert!(
             rx.try_recv().is_err(),
-            "post_failure must not queue a spend entry"
+            "terminal observations share one request claim"
         );
+    }
+
+    #[tokio::test]
+    async fn post_success_followed_by_failure_does_not_duplicate_the_billed_row() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        let hook = CostTrackingHook::with_spend_writer(Some(tx));
+        let ctx = make_ctx();
+        hook.post_success(&ctx, &make_response("gpt-4o", 10, 5))
+            .await;
+        hook.post_failure(&ctx.clone(), &oxllm_core::Error::Internal)
+            .await;
+        assert_eq!(rx.try_recv().unwrap().status.as_deref(), Some("success"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn failure_attribution_uses_the_selected_model_for_bare_and_qualified_deployments() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let hook = CostTrackingHook::with_spend_writer(Some(tx));
+        for selector in ["gpt-4o", "/gpt-4o", "openai/gpt-4o"] {
+            let ctx = CallContext {
+                deployment_model: Some(selector.into()),
+                ..CallContext::for_test("public-alias")
+            };
+            hook.post_failure(
+                &ctx,
+                &oxllm_core::Error::Upstream {
+                    status: 503,
+                    message: "unavailable".into(),
+                },
+            )
+            .await;
+            let entry = rx.try_recv().unwrap();
+            assert_eq!(entry.provider, "openai");
+            assert_eq!(entry.model, "gpt-4o");
+            assert_eq!(entry.requested_model.as_deref(), Some("public-alias"));
+        }
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -646,14 +736,13 @@ mod tests {
         // further one overflows.
         let (tx, _rx) = tokio::sync::mpsc::channel::<SpendEntry>(1);
         let hook = CostTrackingHook::with_spend_writer(Some(tx));
-        let ctx = make_ctx();
         let resp = make_response("gpt-4o", 10, 5);
 
         // Drive the real `post_success` path three times. The channel can
         // hold one entry, so two of the three must be counted as `full`.
-        hook.post_success(&ctx, &resp).await;
-        hook.post_success(&ctx, &resp).await;
-        hook.post_success(&ctx, &resp).await;
+        hook.post_success(&make_ctx(), &resp).await;
+        hook.post_success(&make_ctx(), &resp).await;
+        hook.post_success(&make_ctx(), &resp).await;
 
         let after = spend_dropped_count("full");
         assert!(
@@ -676,11 +765,10 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::channel::<SpendEntry>(2);
         drop(rx);
         let hook = CostTrackingHook::with_spend_writer(Some(tx));
-        let ctx = make_ctx();
         let resp = make_response("gpt-4o", 10, 5);
 
-        hook.post_success(&ctx, &resp).await;
-        hook.post_success(&ctx, &resp).await;
+        hook.post_success(&make_ctx(), &resp).await;
+        hook.post_success(&make_ctx(), &resp).await;
 
         let after = spend_dropped_count("closed");
         assert_eq!(

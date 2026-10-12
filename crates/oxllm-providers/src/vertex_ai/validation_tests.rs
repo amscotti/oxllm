@@ -1,6 +1,83 @@
 use super::*;
 
 #[test]
+fn validation_vertex_additive_reasoning_is_normalized_once_for_json_and_sse() {
+    for (usage, expected_completion) in [
+        (
+            json!({"prompt_tokens":5, "completion_tokens":1, "total_tokens":11,
+            "completion_tokens_details":{"reasoning_tokens":5}}),
+            6,
+        ),
+        (
+            json!({"prompt_tokens":4, "completion_tokens":0, "total_tokens":7,
+            "completion_tokens_details":{"reasoning_tokens":3}}),
+            3,
+        ),
+        (
+            json!({"prompt_tokens":4, "total_tokens":7,
+            "completion_tokens_details":{"reasoning_tokens":3}}),
+            3,
+        ),
+        (
+            json!({"prompt_tokens":5, "completion_tokens":6, "total_tokens":11,
+            "completion_tokens_details":{"reasoning_tokens":5}}),
+            6,
+        ),
+        (json!({"prompt_tokens":21, "total_tokens":21}), 0),
+    ] {
+        let body = json!({"model":"gemini-3-flash", "choices":[], "usage":usage});
+        let out =
+            ChatProvider::transform_response(&VertexProvider, &body, "vertex_ai/gemini-3-flash")
+                .unwrap();
+        assert_eq!(
+            out["usage"]["completion_tokens"], expected_completion,
+            "{usage}"
+        );
+        assert_eq!(out["usage"]["total_tokens"], usage["total_tokens"]);
+        assert_eq!(
+            out["usage"]["completion_tokens_details"],
+            usage["completion_tokens_details"]
+        );
+        assert_eq!(
+            ChatProvider::transform_response(&VertexProvider, &out, "vertex_ai/gemini-3-flash")
+                .unwrap(),
+            out,
+            "an already-normalized endpoint must not bill reasoning twice"
+        );
+        let raw = format!("data: {body}\n\n");
+        let streamed = VertexProvider
+            .transform_stream_chunk_stateful(&raw, &mut None, &json!({"model":"gemini-3-flash"}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(streamed["usage"], out["usage"]);
+    }
+}
+
+#[test]
+fn validation_vertex_unknown_or_overflowing_usage_is_not_folded() {
+    for usage in [
+        json!({"service_tier":"default"}),
+        json!({"total_tokens":21}),
+        json!({"prompt_tokens":21, "total_tokens":21, "completion_tokens_details":{"reasoning_tokens":5}}),
+        json!({"prompt_tokens":21, "total_tokens":21, "completion_tokens_details":{"reasoning_tokens":"unknown"}}),
+        json!({"prompt_tokens":5, "completion_tokens":1, "total_tokens":99, "completion_tokens_details":{"reasoning_tokens":5}}),
+        json!({"prompt_tokens":u64::MAX, "completion_tokens":1, "total_tokens":u64::MAX, "completion_tokens_details":{"reasoning_tokens":1}}),
+    ] {
+        let body = json!({"usage":usage});
+        let out =
+            ChatProvider::transform_response(&VertexProvider, &body, "vertex_ai/gemini-3-flash")
+                .unwrap();
+        assert_eq!(out["usage"], usage);
+        let raw = format!("data: {body}\n\n");
+        let streamed = VertexProvider
+            .transform_stream_chunk(&raw)
+            .unwrap()
+            .unwrap();
+        assert_eq!(streamed["usage"], usage);
+    }
+}
+
+#[test]
 fn validation_vertex_locations_remain_lowercase_path_safe_names_with_custom_bases() {
     let request = json!({"messages":[{"role":"user", "content":"hello"}], "max_tokens":32});
     for model in ["vertex_ai/gemini-3.8-flash", "vertex_ai/claude-haiku-5-5"] {

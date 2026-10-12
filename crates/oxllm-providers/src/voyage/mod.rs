@@ -25,6 +25,9 @@ use crate::util::apply_bearer_auth;
 /// The default Voyage AI base URL.
 pub const DEFAULT_VOYAGE_BASE: &str = "https://api.voyageai.com/v1";
 
+/// Hosted endpoint for Voyage credentials issued by MongoDB.
+pub const MONGODB_VOYAGE_BASE: &str = "https://ai.mongodb.com/v1";
+
 /// The Voyage AI provider.
 #[derive(Debug, Clone, Default)]
 pub struct VoyageProvider;

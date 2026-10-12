@@ -678,6 +678,34 @@ impl Database {
             .map_err(|e| anyhow!("failed to read total_spend_filtered: {e}"))?;
         Ok(total)
     }
+
+    /// Persisted spend totals for an explicit bounded set of key IDs. Chunked
+    /// binds avoid backend parameter limits and one query per management row.
+    /// Absent keys and keys without retained spend records return zero.
+    pub async fn total_spend_for_keys(&self, key_ids: &[&str]) -> Result<HashMap<String, f64>> {
+        let mut totals = key_ids
+            .iter()
+            .map(|id| ((*id).to_owned(), 0.0))
+            .collect::<HashMap<_, _>>();
+        for keys in key_ids.chunks(200) {
+            let binds = (1..=keys.len())
+                .map(|index| self.ph(index))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let statement = format!(
+                "SELECT key_id, COALESCE(SUM(cost), 0.0) AS total FROM spend_logs_read \
+                 WHERE key_id IN ({binds}) GROUP BY key_id"
+            );
+            let mut query = sqlx::query(&statement);
+            for key in keys {
+                query = query.bind(*key);
+            }
+            for row in query.fetch_all(self.pool()).await? {
+                totals.insert(row.try_get("key_id")?, row.try_get("total")?);
+            }
+        }
+        Ok(totals)
+    }
     /// Delete at most [`crate::SPEND_PRUNE_BATCH_SIZE`] old spend-log rows in
     /// one transaction. The caller may repeat, yielding between batches so
     /// retention never holds SQLite's writer lock for an unbounded DELETE.

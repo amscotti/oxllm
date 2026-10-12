@@ -15,6 +15,13 @@ use super::{
     validate_budget_duration, validate_limits, validate_non_empty_name,
 };
 
+fn project_write_error(error: anyhow::Error) -> ApiError {
+    match error.downcast_ref::<oxllm_db::ScopeLinkError>() {
+        Some(error) => ApiError::bad_request(error.to_string()),
+        None => db_err(error),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AddProjectRequest {
     pub project_name: String,
@@ -53,22 +60,13 @@ pub async fn add_project(
             "project '{project_id}' already exists"
         )));
     }
-    if let Some(org_id) = &req.org_id {
-        if !org_id.is_empty() && db.get_organization(org_id).await.map_err(db_err)?.is_none() {
-            return Err(ApiError::bad_request(format!("org '{org_id}' not found")));
-        }
-    }
-    if let Some(team_id) = &req.team_id {
-        if !team_id.is_empty() && db.get_team(team_id).await.map_err(db_err)?.is_none() {
-            return Err(ApiError::bad_request(format!("team '{team_id}' not found")));
-        }
-    }
     let now = oxllm_db::now_iso();
     let record = oxllm_db::ProjectRecord {
         project_id: project_id.clone(),
         project_name: req.project_name,
-        org_id: req.org_id,
-        team_id: req.team_id,
+        // Empty parent IDs use the same clearing semantics as project/update.
+        org_id: req.org_id.filter(|id| !id.is_empty()),
+        team_id: req.team_id.filter(|id| !id.is_empty()),
         max_budget: req.max_budget,
         budget_duration: req.budget_duration,
         rpm: req.rpm,
@@ -76,10 +74,14 @@ pub async fn add_project(
         created_at: now.clone(),
         updated_at: now,
     };
-    db.create_project(&record).await.map_err(|e| {
-        map_create_err(e, || {
-            ApiError::bad_request(format!("project '{project_id}' already exists"))
-        })
+    db.create_project_scoped(&record).await.map_err(|e| {
+        if e.downcast_ref::<oxllm_db::ScopeLinkError>().is_some() {
+            project_write_error(e)
+        } else {
+            map_create_err(e, || {
+                ApiError::bad_request(format!("project '{project_id}' already exists"))
+            })
+        }
     })?;
     invalidate_cache_key(&state, &format!("vk_project:{project_id}")).await;
 
@@ -196,83 +198,53 @@ pub async fn update_project(
     require_master(&auth)?;
     validate_limits(&req.rpm, &req.tpm, req.max_budget)?;
     validate_budget_duration(&req.budget_duration)?;
+    let project_name = req.project_name.map(|name| name.trim().to_string());
+    if project_name.as_ref().is_some_and(|name| name.is_empty()) {
+        return Err(ApiError::bad_request("project_name must not be empty"));
+    }
     let (state, db) = load_db(&shared, &auth).await?;
 
-    let mut record = db
-        .get_project(&req.project_id)
+    let project_id = req.project_id.clone();
+    let record = db
+        .update_project_scoped(&project_id, |record| {
+            if let Some(name) = project_name {
+                record.project_name = name;
+            }
+            if let Some(v) = req.org_id {
+                record.org_id = if v.is_empty() { None } else { Some(v) };
+            }
+            if req.clear_org_id {
+                record.org_id = None;
+            }
+            if let Some(v) = req.team_id {
+                record.team_id = if v.is_empty() { None } else { Some(v) };
+            }
+            if req.clear_team_id {
+                record.team_id = None;
+            }
+            if req.clear_max_budget {
+                record.max_budget = None;
+            } else if req.max_budget.is_some() {
+                record.max_budget = req.max_budget;
+            }
+            if let Some(v) = req.budget_duration {
+                record.budget_duration = if v.is_empty() { None } else { Some(v) };
+            }
+            if req.clear_rpm {
+                record.rpm = None;
+            } else if req.rpm.is_some() {
+                record.rpm = req.rpm;
+            }
+            if req.clear_tpm {
+                record.tpm = None;
+            } else if req.tpm.is_some() {
+                record.tpm = req.tpm;
+            }
+            record.updated_at = oxllm_db::now_iso();
+        })
         .await
-        .map_err(db_err)?
-        .ok_or_else(|| ApiError::not_found(format!("project '{}' not found", req.project_id)))?;
-
-    // Referential integrity: a reparent to a non-existent org/team is
-    // rejected here, mirroring `add_project`. There is no FK constraint in
-    // the schema, so without this check a project could be silently
-    // reparented to a ghost id and later surface as a budget-scope miss.
-    // `clear_org_id` / `clear_team_id` take precedence over a supplied id,
-    // so the existence check is skipped when the field is being cleared.
-    if let Some(org_id) = &req.org_id {
-        if !org_id.is_empty()
-            && !req.clear_org_id
-            && db.get_organization(org_id).await.map_err(db_err)?.is_none()
-        {
-            return Err(ApiError::bad_request(format!("org '{org_id}' not found")));
-        }
-    }
-    if let Some(team_id) = &req.team_id {
-        if !team_id.is_empty()
-            && !req.clear_team_id
-            && db.get_team(team_id).await.map_err(db_err)?.is_none()
-        {
-            return Err(ApiError::bad_request(format!("team '{team_id}' not found")));
-        }
-    }
-
-    if let Some(name) = req.project_name {
-        let name = name.trim().to_string();
-        if name.is_empty() {
-            return Err(ApiError::bad_request("project_name must not be empty"));
-        }
-        record.project_name = name;
-    }
-    if let Some(v) = req.org_id {
-        record.org_id = if v.is_empty() { None } else { Some(v) };
-    }
-    if req.clear_org_id {
-        record.org_id = None;
-    }
-    if let Some(v) = req.team_id {
-        record.team_id = if v.is_empty() { None } else { Some(v) };
-    }
-    if req.clear_team_id {
-        record.team_id = None;
-    }
-    if req.clear_max_budget {
-        record.max_budget = None;
-    } else if req.max_budget.is_some() {
-        record.max_budget = req.max_budget;
-    }
-    if let Some(v) = req.budget_duration {
-        record.budget_duration = if v.is_empty() { None } else { Some(v) };
-    }
-    if req.clear_rpm {
-        record.rpm = None;
-    } else if req.rpm.is_some() {
-        record.rpm = req.rpm;
-    }
-    if req.clear_tpm {
-        record.tpm = None;
-    } else if req.tpm.is_some() {
-        record.tpm = req.tpm;
-    }
-    record.updated_at = oxllm_db::now_iso();
-
-    let updated = db.update_project(&record).await.map_err(db_err)?;
-    if !updated {
-        return Err(ApiError::not_found(format!(
-            "project '{}' not found",
-            record.project_id
-        )));
-    }
+        .map_err(project_write_error)?
+        .ok_or_else(|| ApiError::not_found(format!("project '{project_id}' not found")))?;
     invalidate_cache_key(&state, &format!("vk_project:{}", record.project_id)).await;
     Ok(Json(record).into_response())
 }

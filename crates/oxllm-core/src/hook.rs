@@ -63,6 +63,9 @@ pub struct CallContext {
     pub api_key_hash: String,
     /// A unique request identifier.
     pub request_id: String,
+    /// Shared terminal spend-record claim. Cloned request/stream contexts must
+    /// not queue a second success, failure or partial row for the same request.
+    pub spend_recorded: Arc<OnceLock<()>>,
     /// The serialized request body, for hooks that need to inspect it
     /// (e.g. cache key derivation). Wrapped in [`Arc`] so the body is
     /// deep-cloned at most once (on construction) and shared cheaply
@@ -320,6 +323,11 @@ pub struct CallContext {
 }
 
 impl CallContext {
+    /// Claim terminal spend reporting once across cloned contexts.
+    pub fn claim_spend_record(&self) -> bool {
+        self.spend_recorded.set(()).is_ok()
+    }
+
     /// Requested processing tier, or the native Messages speed setting.
     pub fn requested_service_tier(&self) -> Option<&str> {
         self.request_body

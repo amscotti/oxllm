@@ -13,6 +13,7 @@ thiserror.workspace = true
 tracing.workspace = true
 percent-encoding.workspace = true
 uuid.workspace = true
+base64 = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 
 [features]
@@ -30,7 +31,7 @@ mistral = ["openai_compat"]
 cohere = ["openai_compat"]
 azure = ["openai_compat"]
 azure_ai = ["anthropic", "openai_compat"]
-bedrock = ["anthropic"]
+bedrock = ["anthropic", "dep:base64"]
 vertex_ai = ["anthropic", "openai_compat"]
 databricks = ["openai_compat"]
 perplexity = ["openai_compat"]
@@ -56,6 +57,11 @@ baseten = ["openai_compat"]
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
 
+[[test]]
+name = "common_patterns"
+required-features = ["anthropic", "cohere", "gemini", "ollama"]
+
 [[bench]]
 name = "anthropic_bench"
 harness = false
+required-features = ["anthropic"]

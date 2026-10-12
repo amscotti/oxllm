@@ -136,11 +136,41 @@ pub(crate) fn is_retryable_status(status: reqwest::StatusCode) -> bool {
 /// exists to rescue precisely this scenario.
 ///
 /// Request-content 4xx (400/413/422/…) are terminal by default. An explicit
-/// zero allowed-fails entry, including the mapping from
-/// `BadRequestErrorRetries: 0`, opts that status into sibling/configured
-/// fallback. A zero retry count disables same-deployment retries, not failover.
+/// zero allowed-fails entry opts that status into sibling/configured fallback.
+/// Retry aliases never manufacture a cooldown policy.
 pub(crate) fn is_deployment_fault_status(status: u16) -> bool {
     matches!(status, 401 | 403 | 404)
+}
+
+/// Generic request-content failures do not describe deployment health. Only
+/// deployment faults or an operator's explicit per-status cooldown policy count;
+/// global thresholds and content-policy retry categories cannot cool a typo.
+pub(crate) fn client_failure_affects_deployment(
+    state: &crate::state::AppState,
+    status: u16,
+) -> bool {
+    is_deployment_fault_status(status)
+        || state
+            .router
+            .config()
+            .allowed_fails_policy
+            .as_ref()
+            .is_some_and(|policy| policy.contains_key(&status.to_string()))
+}
+
+/// Whether a terminal relay/stream failure with `status` may count toward
+/// deployment health. Non-client statuses (network, 5xx, retryable client
+/// codes) always may; terminal client statuses count only for deployment
+/// faults or an explicit per-status policy. Context-window/content-policy
+/// errors are classified before this point and keep their dedicated cooldown
+/// path.
+pub(crate) fn terminal_failure_affects_deployment(
+    state: &crate::state::AppState,
+    status: u16,
+) -> bool {
+    !reqwest::StatusCode::from_u16(status)
+        .is_ok_and(|status| status.is_client_error() && !is_retryable_status(status))
+        || client_failure_affects_deployment(state, status)
 }
 
 /// An explicit zero allowed-fails entry opts a client status into immediate
@@ -212,10 +242,16 @@ pub(crate) fn is_content_policy_error(body: &serde_json::Value) -> bool {
     let type_lower = typ.to_lowercase();
     let msg_lower = message.to_lowercase();
 
-    if code_lower.contains("content_policy") || code_lower.contains("content_filter") {
+    if code_lower == "cyber_policy"
+        || code_lower.contains("content_policy")
+        || code_lower.contains("content_filter")
+    {
         return true;
     }
-    if type_lower.contains("content_policy") || type_lower.contains("content_filter") {
+    if type_lower == "cyber_policy"
+        || type_lower.contains("content_policy")
+        || type_lower.contains("content_filter")
+    {
         return true;
     }
     if msg_lower.contains("content policy") || msg_lower.contains("content filtering") {
@@ -235,6 +271,19 @@ mod tests {
     use super::*;
     use axum::http::HeaderMap;
     use serde_json::json;
+
+    #[test]
+    fn exact_policy_code_is_specialized_without_promoting_generic_invalid_requests() {
+        assert!(is_content_policy_error(
+            &json!({"error":{"code":"cyber_policy","message":"request declined"}})
+        ));
+        assert!(!is_content_policy_error(
+            &json!({"error":{"code":"invalid_prompt","message":"request declined"}})
+        ));
+        assert!(!is_content_policy_error(
+            &json!({"error":{"code":"not_cyber_policy","message":"request declined"}})
+        ));
+    }
 
     fn headers_with(retry_after: &str) -> Option<HeaderMap> {
         let mut h = HeaderMap::new();

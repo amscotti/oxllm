@@ -22,6 +22,7 @@ pub(crate) const FIELDS: &[&str] = &[
     "stream_chunk_size",
     "cache",
     "cache_control_injection_points",
+    "tags",
 ];
 
 /// Client retry overrides are bounded independently of trusted server policies.
@@ -117,6 +118,17 @@ pub(crate) fn validate(request: &Value) -> Result<(), ApiError> {
                 "{field} must be a list of model names or fallback rules"
             )));
         }
+    }
+    if request
+        .get("tags")
+        .filter(|value| !value.is_null())
+        .is_some_and(|value| {
+            value
+                .as_array()
+                .is_none_or(|tags| tags.iter().any(|tag| !tag.is_string()))
+        })
+    {
+        return Err(ApiError::bad_request("tags must be an array of strings"));
     }
     Ok(())
 }

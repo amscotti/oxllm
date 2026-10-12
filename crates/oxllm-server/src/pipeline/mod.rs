@@ -364,15 +364,16 @@ pub const MAX_REQUEST_TAGS: usize = 16;
 /// spend-log column and cache keys bounded.
 pub const MAX_TAG_BYTES: usize = 128;
 
-/// Extract every request tag from the two supported carriers:
+/// Extract every request tag from the supported carriers:
 ///
+/// - the request body's top-level `tags` array,
 /// - the request body's `metadata.tags` array (the standard proxy
 ///   convention — the common case for per-application tagging on a shared
 ///   key), and
 /// - the `x-oxllm-tag` header, which may itself carry a comma-separated
 ///   list.
 ///
-/// Both sources are merged (order-preserving union, deduplicated, trimmed,
+/// All carriers are merged (order-preserving union, deduplicated, trimmed,
 /// non-empty), then bounded to [`MAX_REQUEST_TAGS`] entries of at most
 /// [`MAX_TAG_BYTES`] bytes each. The returned order is body-tags-first
 /// (the first element is the request's primary tag).
@@ -407,7 +408,9 @@ pub(crate) fn merge_request_tags<'a>(
             while end > 0 && !t.is_char_boundary(end) {
                 end -= 1;
             }
-            let t = &t[..end];
+            // Truncation can expose trailing whitespace. Keep normalized tags
+            // idempotent when header/body carriers are merged again.
+            let t = t[..end].trim_end();
             if !out.iter().any(|e| e == t) {
                 out.push(t.to_string());
             }
@@ -417,9 +420,14 @@ pub(crate) fn merge_request_tags<'a>(
             out.push(t.to_string());
         }
     };
-    if let Some(Value::Array(tags)) = body
-        .and_then(|b| b.get("metadata"))
-        .and_then(|m| m.get("tags"))
+    for tags in [
+        body.and_then(|body| body.get("tags")),
+        body.and_then(|body| body.get("metadata"))
+            .and_then(|metadata| metadata.get("tags")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_array)
     {
         for t in tags {
             if out.len() == MAX_REQUEST_TAGS {
@@ -472,44 +480,36 @@ impl<'a> EndpointPipeline<'a> {
         model: &str,
         request_body: Value,
     ) -> Result<Self, ApiError> {
-        check_model_acl(
+        Self::for_request_with_tags(state, auth, model, request_body, &[]).await
+    }
+
+    /// Build a pipeline with normalized header/body tags already available to
+    /// ACL and customer-denial reporting. Resolve tag budget limits separately
+    /// with [`Self::apply_request_tags`] before running admission hooks.
+    pub async fn for_request_with_tags(
+        state: &'a AppState,
+        auth: &AuthUser,
+        model: &str,
+        request_body: Value,
+        tags: &[String],
+    ) -> Result<Self, ApiError> {
+        let mut call_ctx = request_call_context(auth, model, request_body, tags);
+        call_ctx.set_scope_limits(&auth.scope_limits());
+        call_ctx.max_parallel_requests = auth.max_parallel_requests;
+        if let Err(error) = check_model_acl(
             auth,
             model,
             auth.key_models.as_deref(),
             auth.team_models.as_deref(),
             auth.user_models.as_deref(),
-        )?;
-        let request_id = request_id();
-        // Attribute master-key traffic as "master" so spend logs always show a key.
-        let key_id = auth.key_id.clone().or_else(|| {
-            if auth.is_master {
-                Some("master".to_string())
-            } else {
-                None
-            }
-        });
-        let mut call_ctx = CallContext {
-            model: model.to_string(),
-            api_key_hash: auth.key_hash_hex().to_string(),
-            request_id,
-            request_body: std::sync::Arc::new(request_body),
-            key_id,
-            team_id: auth.team_id.clone(),
-            user_id: auth.user_id.clone(),
-            org_id: auth.org_id.clone(),
-            project_id: auth.project_id.clone(),
-            is_master: auth.is_master,
-            allowed_cache_controls: auth.allowed_cache_controls.clone(),
-            start_time: Some(
-                HTTP_REQUEST_START
-                    .try_with(|start| *start)
-                    .unwrap_or_else(|_| std::time::Instant::now()),
-            ),
-            ..Default::default()
-        };
-        call_ctx.set_scope_limits(&auth.scope_limits());
-        call_ctx.max_parallel_requests = auth.max_parallel_requests;
-        apply_customer_context(state, &mut call_ctx).await?;
+        ) {
+            record_request_rejection(state, &call_ctx, &error).await;
+            return Err(error);
+        }
+        if let Err(error) = apply_customer_context(state, &mut call_ctx).await {
+            record_request_rejection(state, &call_ctx, &error).await;
+            return Err(error);
+        }
         Ok(Self { state, call_ctx })
     }
 
@@ -519,13 +519,21 @@ impl<'a> EndpointPipeline<'a> {
     /// `BudgetHook` sees `tag_max_budget`. Unknown tags pass through; a DB
     /// error fails closed when the header is present.
     pub async fn apply_request_tag(&mut self, tag: Option<&str>) -> Result<(), ApiError> {
-        apply_tag_context(self.state, &mut self.call_ctx, tag).await
+        let result = apply_tag_context(self.state, &mut self.call_ctx, tag).await;
+        if let Err(error) = &result {
+            record_request_rejection(self.state, &self.call_ctx, error).await;
+        }
+        result
     }
 
-    /// Stamp every request tag (body `metadata.tags` + header) and resolve
+    /// Stamp every request tag (top-level, metadata and header) and resolve
     /// per-tag budget scopes. See [`apply_request_tags`].
     pub async fn apply_request_tags(&mut self, tags: &[String]) -> Result<(), ApiError> {
-        apply_request_tags(self.state, &mut self.call_ctx, tags).await
+        let result = apply_request_tags(self.state, &mut self.call_ctx, tags).await;
+        if let Err(error) = &result {
+            record_request_rejection(self.state, &self.call_ctx, error).await;
+        }
+        result
     }
 
     /// The unique request id assigned to this request.
@@ -544,7 +552,18 @@ impl<'a> EndpointPipeline<'a> {
     ///   [`run_pre_call_hooks`]), so callers only need to handle the error —
     ///   no extra cleanup.
     pub async fn pre_call(&mut self) -> Result<Option<Value>, ApiError> {
-        run_pre_call_hooks(&self.state.hooks, &mut self.call_ctx).await
+        let result = run_pre_call_hooks(&self.state.hooks, &mut self.call_ctx).await;
+        if let Err(error) = &result {
+            // The runner already rolled back admission scopes. Observe the
+            // denial without running budget/rate-limit cleanup a second time.
+            let core_error = core_error_from_api(error);
+            if matches!(core_error, oxllm_core::Error::Upstream { .. }) {
+                record_request_rejection(self.state, &self.call_ctx, error).await;
+            } else {
+                record_request_failure(self.state, &self.call_ctx, &core_error).await;
+            }
+        }
+        result
     }
 
     /// Check a deployment's per-minute RPM/TPM limits. Returns `Err(429)` when
@@ -593,15 +612,121 @@ impl<'a> EndpointPipeline<'a> {
     }
 }
 
+fn request_call_context(
+    auth: &AuthUser,
+    model: &str,
+    request_body: Value,
+    tags: &[String],
+) -> CallContext {
+    let request_tags = merge_request_tags(Some(&request_body), tags.iter().map(String::as_str));
+    let end_user_id = extract_end_user_id(&request_body);
+    CallContext {
+        model: model.into(),
+        api_key_hash: auth.key_hash_hex().into(),
+        request_id: request_id(),
+        request_body: std::sync::Arc::new(request_body),
+        key_id: auth
+            .key_id
+            .clone()
+            .or_else(|| auth.is_master.then(|| "master".into())),
+        team_id: auth.team_id.clone(),
+        user_id: auth.user_id.clone(),
+        org_id: auth.org_id.clone(),
+        project_id: auth.project_id.clone(),
+        end_user_id,
+        request_tag: request_tags.first().cloned(),
+        request_tags,
+        is_master: auth.is_master,
+        allowed_cache_controls: auth.allowed_cache_controls.clone(),
+        start_time: Some(
+            HTTP_REQUEST_START
+                .try_with(|start| *start)
+                .unwrap_or_else(|_| std::time::Instant::now()),
+        ),
+        ..Default::default()
+    }
+}
+
+pub(crate) async fn record_request_failure(
+    state: &AppState,
+    ctx: &CallContext,
+    error: &oxllm_core::Error,
+) {
+    let observer = crate::hooks::CostTrackingHook::with_spend_writer(state.spend_tx.clone());
+    oxllm_core::Hook::post_failure(&observer, ctx, error).await;
+}
+
+/// Observe a known local rejection without classifying it as a provider fault
+/// or invoking reservation rollback a second time.
+pub(crate) async fn record_request_rejection(
+    state: &AppState,
+    ctx: &CallContext,
+    error: &ApiError,
+) {
+    record_request_failure(
+        state,
+        ctx,
+        &oxllm_core::Error::PreCallCheckFailed(error.message.clone()),
+    )
+    .await;
+}
+
+/// Snapshot the authoritative budget-window counter after unary settlement.
+/// Unlimited/untracked keys omit the header rather than report a false zero.
+pub(crate) async fn stamp_key_spend_header(
+    response: &mut Response,
+    state: &AppState,
+    ctx: &CallContext,
+) {
+    if ctx.is_master
+        || (ctx.max_budget.is_none() && state.config.oxllm_settings.max_budget.is_none())
+    {
+        return;
+    }
+    if let Some(spend) = state
+        .cache
+        .counter_value(&crate::hooks::spend_keys::spend_key(&ctx.api_key_hash))
+        .await
+        .filter(|spend| spend.is_finite() && *spend >= 0.0)
+    {
+        set_header(response, "x-oxllm-key-spend", &spend.to_string());
+    }
+}
+
+/// Admission-boundary ACL check: no reservations or prompt processing have run.
+/// The denied request still receives the same attribution as a routed request.
+pub(crate) async fn check_request_model_acl(
+    state: &AppState,
+    auth: &AuthUser,
+    model: &str,
+    request_body: &Value,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
+    let result = check_model_acl(
+        auth,
+        model,
+        auth.key_models.as_deref(),
+        auth.team_models.as_deref(),
+        auth.user_models.as_deref(),
+    );
+    if let Err(error) = &result {
+        let tags = extract_tags(headers, Some(request_body));
+        let ctx = request_call_context(auth, model, request_body.clone(), &tags);
+        record_request_rejection(state, &ctx, error).await;
+    }
+    result
+}
+
 /// Free-function form of post-success handling for spawned tasks that own
 /// their state and call context (e.g. the streaming task).
 ///
 /// Computes cost from `usage`, builds a [`ResponseSummary`], runs the
 /// post-success hooks, and returns the cost (if any).
 ///
-/// `body_cost` is the cost-only fallback (aggregator `usage.cost`, or resolved
-/// deployment pricing when a stream reports an unpriced public alias) when
-/// the caller has **no cacheable response body** to pass as `body`. It feeds only the cost
+/// `body_cost` is the provider-reported receipt (aggregator `usage.cost`) when
+/// the caller has **no cacheable response body** to pass as `body`. Concrete
+/// deployment pricing remains a fallback in the shared resolver, not a receipt.
+/// This field feeds only the cost
 /// fallback chain, never [`ResponseSummary::body`]: `CacheHook::post_success`
 /// stores `body` verbatim, so a synthetic `{"usage":{"cost":…}}` fragment
 /// passed as `body` would be served as the next identical request's cached
@@ -1342,7 +1467,10 @@ async fn apply_customer_context(
                 }
                 if let Some(ref blocklist) = limits.model_blocklist {
                     if !blocklist.is_empty()
-                        && blocklist.iter().any(|pat| glob_match(pat, &call_ctx.model))
+                        && blocklist.iter().any(|pat| {
+                            pat == crate::auth::MODELS_ACL_DENY_ALL
+                                || glob_match(pat, &call_ctx.model)
+                        })
                     {
                         return Err(ApiError::forbidden(format!(
                             "Model '{}' is blocked for end-user '{end_user_id}'",
@@ -1473,7 +1601,7 @@ pub fn check_model_acl(
         return Ok(());
     }
     if let Some(models) = key_models {
-        if !models.is_empty() && !models.iter().any(|m| glob_match(m, model)) {
+        if !model_policy_allows(models, model) {
             // L5: do NOT echo the configured allowed-model list back to the
             // client — that leaks the full model ACL to anyone who can issue
             // a request, including attackers probing for valid model names.
@@ -1483,20 +1611,30 @@ pub fn check_model_acl(
         }
     }
     if let Some(models) = team_models {
-        if !models.is_empty() && !models.iter().any(|m| glob_match(m, model)) {
+        if !model_policy_allows(models, model) {
             return Err(ApiError::forbidden(format!(
                 "Model '{model}' is not allowed for this key's team."
             )));
         }
     }
     if let Some(models) = user_models {
-        if !models.is_empty() && !models.iter().any(|m| glob_match(m, model)) {
+        if !model_policy_allows(models, model) {
             return Err(ApiError::forbidden(format!(
                 "Model '{model}' is not allowed for this key's user."
             )));
         }
     }
     Ok(())
+}
+
+fn model_policy_allows(models: &[String], model: &str) -> bool {
+    if models
+        .iter()
+        .any(|pattern| pattern == crate::auth::MODELS_ACL_DENY_ALL)
+    {
+        return false;
+    }
+    models.is_empty() || models.iter().any(|pattern| glob_match(pattern, model))
 }
 
 /// Simple glob matcher supporting `*` wildcards. A `*` matches any sequence
@@ -1930,6 +2068,70 @@ mod tests {
         assert_eq!(pipeline.call_ctx.model, "gpt-4o");
         assert!(!pipeline.call_ctx.request_id.is_empty());
         assert!(!pipeline.call_ctx.cache_hit);
+    }
+
+    #[test]
+    fn fail_closed_model_policy_is_unconditionally_denied_for_every_scope() {
+        let auth = AuthUser::open();
+        let marker = "\0oxllm-acl-deny-all";
+        let policy = vec![marker.to_owned(), "*".to_owned()];
+        for model in ["gpt-4o", marker] {
+            for (key, team, user) in [
+                (Some(policy.as_slice()), None, None),
+                (None, Some(policy.as_slice()), None),
+                (None, None, Some(policy.as_slice())),
+            ] {
+                assert_eq!(
+                    check_model_acl(&auth, model, key, team, user)
+                        .unwrap_err()
+                        .status,
+                    axum::http::StatusCode::FORBIDDEN
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bounded_tag_normalization_is_idempotent_and_preserves_header_capacity() {
+        let body = json!({"tags":(0..15).map(|index| format!("{index:02}{} x", "a".repeat(125))).collect::<Vec<_>>()});
+        let mut headers = HeaderMap::new();
+        headers.insert(TAG_HEADER, HeaderValue::from_static("header"));
+        let tags = extract_tags(&headers, Some(&body));
+        assert_eq!(tags.len(), MAX_REQUEST_TAGS);
+        assert_eq!(tags.last().map(String::as_str), Some("header"));
+        assert_eq!(
+            merge_request_tags(None, tags.iter().map(String::as_str)),
+            tags
+        );
+        let state = state_with_in_memory_cache();
+        let pipeline = EndpointPipeline::for_request_with_tags(
+            &state,
+            &AuthUser::open(),
+            "gpt-4o",
+            body,
+            &tags,
+        )
+        .await
+        .unwrap();
+        assert_eq!(pipeline.call_ctx.request_tags, tags);
+    }
+
+    #[tokio::test]
+    async fn master_key_spend_omission_does_not_depend_on_an_absent_counter() {
+        let mut state = state_with_in_memory_cache();
+        std::sync::Arc::make_mut(&mut state.config)
+            .oxllm_settings
+            .max_budget = Some(1.0);
+        let mut ctx = CallContext::for_test("gpt-4o");
+        let key = crate::hooks::spend_keys::spend_key(&ctx.api_key_hash);
+        state.cache.incr(&key, 0.5, None).await.unwrap();
+        ctx.is_master = true;
+        let mut response = Response::new(axum::body::Body::empty());
+        stamp_key_spend_header(&mut response, &state, &ctx).await;
+        assert!(response.headers().get("x-oxllm-key-spend").is_none());
+        ctx.is_master = false;
+        stamp_key_spend_header(&mut response, &state, &ctx).await;
+        assert_eq!(response.headers()["x-oxllm-key-spend"], "0.5");
     }
 
     #[tokio::test]

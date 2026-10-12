@@ -707,7 +707,17 @@ mod tests {
             let entry = fixture.spend_rx.recv().await.unwrap();
             assert_eq!(entry.status.as_deref(), Some("partial"));
             assert_eq!(entry.total_tokens, reported_usage.then_some(5));
-            assert!(entry.cost.is_none());
+            assert_eq!(entry.cost.is_some(), reported_usage);
+            if let Some(cost) = entry.cost {
+                assert!(
+                    (cost - ACTUAL_COST).abs() < 1e-12,
+                    "reported partial cost must match router settlement"
+                );
+            }
+            assert!(
+                fixture.spend_rx.try_recv().is_err(),
+                "one terminal realtime record"
+            );
             tokio::time::timeout(Duration::from_secs(3), peer)
                 .await
                 .unwrap()

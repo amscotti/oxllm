@@ -11,9 +11,22 @@ use crate::error::ApiError;
 use crate::state::SharedState;
 
 use super::{
-    db_err, load_db, map_create_err, random_id, require_master, truncate_scope_list,
-    validate_budget_duration, validate_limits, validate_non_empty_name,
+    db_err, load_db, map_create_err, models_match_stored_policy, random_id, require_master,
+    truncate_scope_list, validate_budget_duration, validate_limits, validate_non_empty_name,
 };
+
+fn team_scope_error(error: anyhow::Error) -> ApiError {
+    match error.downcast_ref::<oxllm_db::ScopeLinkError>() {
+        Some(
+            error @ oxllm_db::ScopeLinkError::MissingScope {
+                entity: oxllm_db::ScopeEntity::Team | oxllm_db::ScopeEntity::User,
+                ..
+            },
+        ) => ApiError::not_found(error.to_string()),
+        Some(error) => ApiError::bad_request(error.to_string()),
+        None => db_err(error),
+    }
+}
 
 /// Request body for `POST /team/add`.
 #[derive(Debug, Deserialize)]
@@ -145,9 +158,9 @@ pub async fn delete_team(
     let (state, db) = load_db(&shared, &auth).await?;
 
     let deleted = db
-        .delete_team_and_detach(&req.team_id)
+        .delete_team_scoped(&req.team_id)
         .await
-        .map_err(db_err)?;
+        .map_err(team_scope_error)?;
     if !deleted.deleted {
         return Err(ApiError::not_found(format!(
             "team '{}' not found",
@@ -239,7 +252,9 @@ pub async fn update_team(
     } else if req.tpm.is_some() {
         record.tpm = req.tpm;
     }
-    if let Some(v) = req.models {
+    if let Some(v) = req.models
+        && !models_match_stored_policy(record.models.as_deref(), &v)
+    {
         record.models = serialize_models(Some(v));
     }
     record.updated_at = oxllm_db::now_iso();
@@ -353,19 +368,6 @@ pub async fn member_add(
     require_master(&auth)?;
     let (state, db) = load_db(&shared, &auth).await?;
 
-    if db.get_team(&req.team_id).await.map_err(db_err)?.is_none() {
-        return Err(ApiError::not_found(format!(
-            "team '{}' not found",
-            req.team_id
-        )));
-    }
-    if db.get_user(&req.user_id).await.map_err(db_err)?.is_none() {
-        return Err(ApiError::not_found(format!(
-            "user '{}' not found",
-            req.user_id
-        )));
-    }
-
     let n = reassign_user_keys(&state, &db, &req.user_id, None, Some(&req.team_id)).await?;
     invalidate_cache_key(&state, &format!("vk_team:{}", req.team_id)).await;
     Ok(Json(json!({ "status": "ok", "keys_affected": n })).into_response())
@@ -399,19 +401,6 @@ pub async fn member_delete(
     require_master(&auth)?;
     let (state, db) = load_db(&shared, &auth).await?;
 
-    if db.get_team(&req.team_id).await.map_err(db_err)?.is_none() {
-        return Err(ApiError::not_found(format!(
-            "team '{}' not found",
-            req.team_id
-        )));
-    }
-    if db.get_user(&req.user_id).await.map_err(db_err)?.is_none() {
-        return Err(ApiError::not_found(format!(
-            "user '{}' not found",
-            req.user_id
-        )));
-    }
-
     let n = reassign_user_keys(&state, &db, &req.user_id, Some(&req.team_id), None).await?;
     invalidate_cache_key(&state, &format!("vk_team:{}", req.team_id)).await;
     Ok(Json(json!({ "status": "ok", "keys_affected": n })).into_response())
@@ -434,14 +423,11 @@ async fn reassign_user_keys(
     new_team: Option<&str>,
 ) -> Result<u64, ApiError> {
     let now = oxllm_db::now_iso();
-    let mut hashes = db
-        .list_key_hashes_for_user(user_id, filter_team)
+    let mutation = db
+        .set_team_for_user_keys_scoped(user_id, filter_team, new_team, &now)
         .await
-        .map_err(db_err)?;
-    let affected = db
-        .set_team_for_user_keys(user_id, filter_team, new_team, &now)
-        .await
-        .map_err(db_err)?;
+        .map_err(team_scope_error)?;
+    let mut hashes = mutation.key_hashes;
 
     // Invalidate only AFTER the bulk UPDATE has committed. Otherwise a miss
     // can refill the old team assignment during the select/update window.
@@ -464,7 +450,7 @@ async fn reassign_user_keys(
     for hash in hashes {
         invalidate_cache_key(state, &format!("vk:{hash}")).await;
     }
-    Ok(affected)
+    Ok(mutation.affected)
 }
 
 // ---------------------------------------------------------------------------
@@ -501,13 +487,13 @@ pub async fn team_model_add(
         .map_err(db_err)?
         .ok_or_else(|| ApiError::not_found(format!("team '{}' not found", req.team_id)))?;
 
-    let mut current = parse_models_json(record.models.as_deref());
+    let mut current = parse_models_json(record.models.as_deref())?;
     for m in normalize_models(&req.models) {
         if !current.iter().any(|x| x == &m) {
             current.push(m);
         }
     }
-    record.models = serialize_models(Some(current.clone()));
+    record.models = serialize_model_delta(&current)?;
     record.updated_at = oxllm_db::now_iso();
     let updated = db.update_team(&record).await.map_err(db_err)?;
     if !updated {
@@ -545,11 +531,11 @@ pub async fn team_model_delete(
         .ok_or_else(|| ApiError::not_found(format!("team '{}' not found", req.team_id)))?;
 
     let remove: Vec<String> = normalize_models(&req.models);
-    let current: Vec<String> = parse_models_json(record.models.as_deref())
+    let current: Vec<String> = parse_models_json(record.models.as_deref())?
         .into_iter()
         .filter(|m| !remove.iter().any(|r| r == m))
         .collect();
-    record.models = serialize_models(Some(current.clone()));
+    record.models = serialize_model_delta(&current)?;
     record.updated_at = oxllm_db::now_iso();
     let updated = db.update_team(&record).await.map_err(db_err)?;
     if !updated {
@@ -568,17 +554,35 @@ pub async fn team_model_delete(
     .into_response())
 }
 
-fn parse_models_json(raw: Option<&str>) -> Vec<String> {
-    let Some(s) = raw else {
-        return Vec::new();
+fn parse_models_json(raw: Option<&str>) -> Result<Vec<String>, ApiError> {
+    let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return Ok(Vec::new());
     };
-    match serde_json::from_str::<Vec<String>>(s) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(raw = %s, error = %e, "corrupt models JSON column, treating as empty");
-            Vec::new()
-        }
+    let invalid = || {
+        ApiError::bad_request(
+            "stored team model policy requires an explicit replacement with /team/update",
+        )
+    };
+    let models = serde_json::from_str::<Vec<String>>(raw).map_err(|_| invalid())?;
+    if models
+        .iter()
+        .any(|model| model == crate::auth::MODELS_ACL_DENY_ALL)
+    {
+        return Err(invalid());
     }
+    Ok(models)
+}
+
+/// Preserve the exact existing patterns during incremental edits. Empty is
+/// still unrestricted; nonempty stored patterns are not normalized into a
+/// different policy by an unrelated add/delete operation.
+fn serialize_model_delta(models: &[String]) -> Result<Option<String>, ApiError> {
+    if models.is_empty() {
+        return Ok(None);
+    }
+    serde_json::to_string(models)
+        .map(Some)
+        .map_err(|_| ApiError::internal("unable to encode team model policy"))
 }
 
 fn normalize_models(models: &[String]) -> Vec<String> {
@@ -619,12 +623,12 @@ fn serialize_models(models: Option<Vec<String>>) -> Option<String> {
 
 #[cfg(all(test, feature = "db"))]
 mod tests {
-    use super::{normalize_models, parse_models_json, serialize_models};
+    use super::{normalize_models, parse_models_json, serialize_model_delta, serialize_models};
 
     #[test]
     fn parse_and_serialize_roundtrip() {
         let raw = serialize_models(Some(vec!["gpt-4o".into(), "claude-*".into()]));
-        let parsed = parse_models_json(raw.as_deref());
+        let parsed = parse_models_json(raw.as_deref()).unwrap();
         assert_eq!(parsed, vec!["gpt-4o", "claude-*"]);
     }
 
@@ -636,20 +640,25 @@ mod tests {
         );
     }
 
-    // C27/LOW: a corrupt `models` JSON column must not panic or silently
-    // overwrite the intended list — it should be treated as an empty base so
-    // the merge proceeds deterministically. (The corresponding `tracing::warn!`
-    // is not asserted here; it is exercised via the integration suite.)
     #[test]
-    fn parse_models_json_treats_corrupt_input_as_empty() {
-        assert!(parse_models_json(None).is_empty());
-        assert!(parse_models_json(Some("")).is_empty());
-        assert!(parse_models_json(Some("not-json")).is_empty());
-        assert!(parse_models_json(Some("[1,2,3]")).is_empty());
+    fn parse_models_json_requires_explicit_repair_of_corrupt_or_denied_policies() {
+        assert!(parse_models_json(None).unwrap().is_empty());
+        assert!(parse_models_json(Some("  ")).unwrap().is_empty());
+        assert!(parse_models_json(Some("not-json")).is_err());
+        assert!(parse_models_json(Some("[1,2,3]")).is_err());
+        assert!(parse_models_json(Some("[\"\\u0000oxllm-acl-deny-all\"]")).is_err());
         assert_eq!(
-            parse_models_json(Some(r#"["gpt-4o"]"#)),
+            parse_models_json(Some(r#"["gpt-4o"]"#)).unwrap(),
             vec!["gpt-4o".to_string()]
         );
+    }
+
+    #[test]
+    fn incremental_serialization_preserves_existing_literal_policy_patterns() {
+        let patterns = vec!["  ".to_owned(), " model ".to_owned(), "gpt-*".to_owned()];
+        let raw = serialize_model_delta(&patterns).unwrap().unwrap();
+        assert_eq!(parse_models_json(Some(&raw)).unwrap(), patterns);
+        assert!(serialize_model_delta(&[]).unwrap().is_none());
     }
 
     // C27/LOW: clear_rpm / clear_tpm on UpdateTeamRequest default to false so

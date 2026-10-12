@@ -5,6 +5,58 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+### Provider and accounting corrections, 2026-10-11
+
+- Close independently reproduced review gaps in receiptless JSON/SSE pricing,
+  transient partial-ledger backpressure, dangling-project error status, Mantle
+  alias parity, Converse file-data validation, realtime status policies and
+  sanitized-zero receipt-only pricing.
+- Correct published token/cache rates, context/output limits, Flex/ultrafast
+  tiers and eight model cards across existing provider namespaces. Flatten
+  direct Sonnet 4.5 pricing at its corrected 200k input ceiling and retire two
+  bare Bedrock IDs that AWS cannot invoke.
+- Preserve Converse tool-result images, documents, references and ordering;
+  omit unsupported stop sequences for Grok and GPT 5.6+ families.
+- Lift leading system/developer content during Claude token counting after the
+  caller's system prefix, retaining cache controls and hosted authentication.
+- Use OpenRouter measured cost receipts ahead of fallback catalog estimates.
+  Preserve operator price overrides, including fully free receipt-only replies.
+- Retry known transient spend-batch rollbacks with bounded backoff and stable
+  event IDs; retain the commit-ambiguity boundary and once-only accounting.
+- Serialize native key/team/project mutations and scope deletion so ownership
+  validation cannot race attachment, reparenting, reassignment or removal.
+- Classify exact `cyber_policy` errors as HTTP 400 policy rejections. Preserve
+  pre-content fallback and post-commit termination, and honor explicit cooldown
+  policies without treating ordinary client stream errors as deployment faults;
+  classified context-window/content-policy errors keep counting toward
+  configured cooldown policies.
+- Select the MongoDB Voyage endpoint from resolved `al-` credentials on
+  embeddings, rerank and native relays, preserving explicit API bases.
+- Isolate real filesystem-watcher regressions and wait for directory-registration
+  barriers before exercising reload behavior.
+
+### Round-4 functional corrections
+
+- Consume and persist top-level request tags alongside metadata/header tags,
+  stripping all gateway tag carriers from provider bodies.
+- Keep zero retry aliases independent of cooldown thresholds; generic request
+  400/422s no longer cool healthy deployments under global/category policies.
+- Normalize proven additive Vertex Gemini reasoning usage for JSON and SSE so
+  completion/TPM/client counts and billing agree without double folding.
+- Accept key RPM/TPM limit aliases, reject unknown/conflicting fields before
+  mutation, and return typed model policies and persisted spend on key reads.
+- Record attributed zero-cost failure/denial rows without bodies or duplicate
+  terminal/partial entries; expose global cap and tracked unary chat/embedding
+  key-spend snapshots.
+- Close review gaps in embedding-cache spend headers, early-denial header tags,
+  rerank/native control validation, corrupt key-policy read-back, inconsistent
+  Vertex zero-output usage, and lossless admin model-policy editing. Preserve
+  HTTP transport rejection statuses and selected-model failure attribution.
+- Preserve corrupt team/user/customer policies across incremental/admin edits,
+  normalize end-user attribution consistently, retain known realtime partial
+  cost, audit pre-upgrade rejections, and apply proof-gated Gemini accounting
+  on both compatible Google surfaces. Harden async ledger regression waits.
+
 ### Gateway compatibility and observability
 
 - Qualify Vertex OpenAI-compatible Gemini selectors with `google/`, authenticate

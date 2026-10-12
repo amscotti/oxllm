@@ -65,13 +65,7 @@ pub async fn responses(
         .and_then(Value::as_str)
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| ApiError::bad_request("missing required field: 'model'"))?;
-    crate::pipeline::check_model_acl(
-        &auth,
-        model,
-        auth.key_models.as_deref(),
-        auth.team_models.as_deref(),
-        auth.user_models.as_deref(),
-    )?;
+    crate::pipeline::check_request_model_acl(&state, &auth, model, &request_body, &headers).await?;
 
     // `input` is
     // required by the Responses API — without it the converter produces an

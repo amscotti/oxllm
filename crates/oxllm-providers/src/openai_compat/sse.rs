@@ -139,9 +139,10 @@ fn named_error_status(s: &str) -> Option<u16> {
         "rate_limit_exceeded" | "rate_limit" | "rate_limit_error" | "insufficient_quota" => {
             Some(429)
         }
-        "invalid_request_error" | "context_length_exceeded" | "content_policy_violation" => {
-            Some(400)
-        }
+        "invalid_request_error"
+        | "context_length_exceeded"
+        | "content_policy_violation"
+        | "cyber_policy" => Some(400),
         "invalid_api_key" | "invalid_api_key_error" => Some(401),
         "model_not_found" | "model_not_found_error" => Some(404),
         _ => None,
@@ -151,6 +152,19 @@ fn named_error_status(s: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_error_frames_preserve_the_client_error_status() {
+        for field in ["code", "type"] {
+            let mut error = serde_json::json!({"message":"request declined"});
+            error[field] = serde_json::json!("cyber_policy");
+            let chunk = format!("data: {}\n\n", serde_json::json!({"error":error}));
+            assert!(matches!(
+                parse_openai_stream_chunk(&chunk),
+                Err(oxllm_core::Error::Upstream { status: 400, .. })
+            ));
+        }
+    }
 
     #[test]
     fn empty_chunk_returns_none() {

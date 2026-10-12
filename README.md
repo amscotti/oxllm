@@ -273,9 +273,10 @@ realtime, images, audio, rerank, and moderations.
 | Header | Direction | Description |
 |--------|-----------|-------------|
 | `x-oxllm-session-id` | request | Sticky routing key (`session_affinity`). `x-litellm-session-id` is the fallback when this header is absent or empty. The pin has no TTL. |
-| `x-oxllm-tag` | request | Tag(s) for `tag_based` routing and per-tag spend budgets; comma-separated list also accepted. The request body `metadata.tags` array is an alternative carrier — both merge. |
+| `x-oxllm-tag` | request | Tags for routing and per-tag budgets. Body `tags`, body `metadata.tags`, then comma-separated header values merge in that order. |
 | `x-oxllm-request-id` | response | Unique request id |
 | `x-oxllm-response-cost` | response | Computed cost (USD) when available |
+| `x-oxllm-key-spend` | response | Tracked chat/embedding budget-window spend snapshot after unary settlement; omitted for untracked keys and live streams |
 | `x-oxllm-cache-hit` | response | `true` when served from response cache |
 | `x-oxllm-fallback-used` | response | Fallback model name when a fallback served the request |
 | `x-oxllm-router-strategy` | response | Strategy that picked the deployment (e.g. `simple_shuffle`) |
@@ -286,6 +287,13 @@ realtime, images, audio, rerank, and moderations.
 
 - Per-request cost calculation from a vendored price table (input/output/cache
   token rates).
+- OpenRouter and Perplexity measured `usage.cost` receipts take precedence over
+  catalog estimates when no deployment price override is configured. Fully free
+  overrides remain zero for receipt-only replies; local cards still support
+  admission estimates, previews and missing/invalid-receipt fallback.
+- Receiptless JSON/SSE billing uses the reported serving-model card before
+  concrete-deployment fallback. Mantle bare aliases share their canonical
+  prices, limits and service/context tiers.
 - Service-specific pricing for `priority`, `flex`, and `ultrafast` requests,
   including long-context and cache rates. Billing uses the served tier reported
   by the provider, including explicit standard downgrades; `fast` uses a
@@ -300,12 +308,16 @@ realtime, images, audio, rerank, and moderations.
 - Per-key, per-team, and per-user budgets with configurable reset windows
  (`budget_duration: 30d`).
 - RPM/TPM rate limits with atomic reservation (no overcommit under concurrency).
+- Budgets reserve estimated cost before an upstream call. A zero budget blocks
+  new spend; an omitted budget is unlimited. Response-cache hits bypass spend
+  reservation. Deployment pricing overrides remain authoritative.
 
 ### Request tagging (routing + per-application budgets)
 
-Requests carry tags two ways (merged, deduplicated): the request body
-`metadata.tags` array and the `x-oxllm-tag` header (a comma-separated list
-also works). One shared production key can serve many applications, each
+Requests carry tags in the top-level `tags` array, `metadata.tags` array, and
+the `x-oxllm-tag` header (a comma-separated list also works), merged in that
+order and deduplicated. Gateway tags are removed from provider bodies.
+One shared production key can serve many applications, each
 identified by its tag.
 
 - **Routing** (`routing_strategy: tag_based`): deployments advertise tags
@@ -356,6 +368,10 @@ Build with **`--features db`** and set `general_settings.database_url`:
 - **Keys / teams / users** — CRUD via management REST endpoints.
 - **Spend logs** — one row per request (model, tokens, cost, latency, key/team).
 - **Batched spend writer** — background flush, no DB write on the hot path.
+- Known transient database rollbacks retry the same event IDs up to four attempts;
+  ambiguous commits and permanent errors retain their terminal behavior.
+- Terminal partial-stream/realtime records can wait up to 250 ms for queue
+  capacity; continued saturation/closure is counted as an observable drop.
 - SQLite for zero-config local dev; Postgres for production.
 
 The root crate has no default Cargo features: a plain `cargo build` does not
@@ -369,11 +385,44 @@ leaves the current policy unchanged. Use
 `clear_allowed_cache_controls: true` on update to remove the restriction.
 Authentication validates cached key/scope snapshots against current DB records,
 so completed policy changes cannot be undone by a late cache refill.
+Key creation/update also accepts `rpm_limit`/`tpm_limit` as aliases of native
+`rpm`/`tpm`. Unknown or duplicate fields fail with 400 before mutation; unsupported
+key `metadata`, `tags`, and permission fields are not silently discarded.
+Info/list/update return `models` as a JSON array or null and omit the key hash.
+Corrupt stored model policies use authentication's fail-closed deny-all policy
+on read-back and remain available for explicit repair. Unsupported request
+content types retain HTTP 415; malformed JSON and key fields return 400.
+Incremental team model add/delete refuses unreadable or deny-all policies;
+`/team/update` provides the explicit replacement path. Admin team/user edits
+preserve effective deny-all for unreadable stored policies. Corrupt customer
+blocklists block every model until explicitly replaced.
+Full key/team/user updates preserve an identical stored literal model array,
+so an unrelated save cannot trim a whitespace-bearing pattern into a broader
+wildcard. Explicitly changed replacements keep native normalization semantics.
+Their `spend` field is an asynchronously persisted total from retained logs,
+distinct from the current-window `x-oxllm-key-spend` budget snapshot.
+Key blocking/unblocking and rotation are available at `/key/block`,
+`/key/unblock`, and `/key/rotate`, using `key_id`.
+
+Native key attachments must match an owning project's team; ownerless projects
+remain shareable. Key edits, bulk team moves, project reparenting and affected
+scope deletions validate and commit atomically, with cache invalidation afterwards.
 
 Spend rollups (`/spend/keys`, `/spend/by-model`, `/spend/users`, `/spend/teams`,
 `/spend/organizations`, `/spend/tags`) support `limit` and `offset`. Replies
 include `has_more` and `next_offset`; limits select complete aggregated groups,
 rather than limiting the spend rows included in their totals.
+Inference-pipeline model ACL/customer denials, admission-hook rejections, and
+terminal upstream failures record `status: "failure"`, zero cost, request
+identity and tags. This includes the chat/embedding API bridges and hooked
+native/provider-prefixed routes. Local token-counter estimates and model
+discovery do not use this spend observer. Prompts, responses and upstream
+error bodies are not stored. Success,
+failure and partial-stream reporting share one terminal record claim.
+`/global/spend` includes the configured global `max_budget` (null when unset).
+End-user attribution uses trimmed, nonblank request `user` values for both
+successful requests and early denials. Realtime partial rows retain known
+reported cost; unpriced or unreported usage remains unknown.
 
 `POST /spend/calculate` previews the same provider/tier/deployment rates used by
 inference, without an upstream call. It accepts `model`, standard or native

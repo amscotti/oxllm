@@ -156,6 +156,19 @@ deployment reserves the nominal $0.01 floor plus the known infrastructure fee;
 canonical fee-only cards reserve their effective fee once.
 JSON headers, SSE settlement, spend records and exporters use the same result.
 
+OpenRouter and Perplexity finite, nonnegative `usage.cost` receipts are
+authoritative over local catalog rates when no deployment price override is
+configured; a measured zero is a valid charge. Explicit rate overrides and
+pre-computed cost overrides retain precedence. An override with every effective
+rate and context tier set to zero remains free when only a receipt is reported,
+without inventing token counts. Nonzero cache/tier prices still require their
+usage counters; existing best-effort receipt fallback remains available when
+local cost cannot be computed. Static OpenRouter cards remain available for
+admission estimates, cost previews and missing/invalid-receipt fallback.
+Only measured receipts enter the receipt channel. Receiptless JSON/SSE requests
+use the serving-model card before the concrete-deployment fallback, so a locally
+computed fallback cannot override another reported model's price.
+
 `general_settings.http_force_ipv4: true` restricts the shared upstream and
 image-download clients to IPv4 through DNS filtering and IPv4 local binding.
 The general-settings `force_ipv4` alias and legacy
@@ -201,9 +214,23 @@ The internal-server-error category also covers Anthropic overload status 529;
 explicit numeric status policies retain precedence. Streamed Anthropic timeout
 and not-found frames preserve HTTP 504 and 404 respectively.
 `BadRequestErrorRetries` and `AuthenticationErrorRetries` accept only zero.
-Their zero allowed-fails mappings opt those statuses into immediate fallback;
-zero disables same-deployment retries while allowing sibling/configured
-failover. Other request-content errors remain terminal unless explicitly opted in.
+Their aliases set retry counts only and never inject allowed-fails thresholds.
+Zero disables same-deployment retries. Deployment-fault 401/403/404 recovery
+still uses authorized siblings/configured fallback groups. Generic 400/422
+request errors do not cool deployments under global thresholds or retry
+categories; an explicit per-status `allowed_fails_policy` remains an operator
+opt-in to that cooldown/failover behavior.
+Upstream-classified context-window and content-policy errors retain their
+specific retry/fallback paths. Exact `cyber_policy` codes/types are policy
+rejections (400); generic invalid-prompt errors are not promoted to that class.
+Committed native error frames retain their wire bytes, including nested
+`response.failed` errors. Terminal relayed SSE errors use the same explicit
+per-status cooldown opt-in as other client failures; classified
+context-window/content-policy errors keep their dedicated cooldown path.
+Realtime upstream 409 rejections count as retryable faults; actual upstream
+400/422s count only with an explicit status policy. Local malformed-client,
+configuration and transform errors remain outside those policies. Realtime 424
+failed-dependency observations retain their existing treatment.
 Explicit numeric retry entries win over aliases. Nonzero content-policy
 retry parity is not established by the zero-retry compatibility tests.
 Exhausted deployments are excluded for the remainder of the current request,
@@ -223,7 +250,7 @@ same-deployment retries. Request `num_retries` must be an integer from 0 through
 10; larger values return 400 before provider calls. Trusted server/deployment
 retry policies retain their configured budgets. The one-shot thinking-signature
 repair is included in `x-oxllm-max-retries` and the attempted-retry count.
-Gateway controls, including cache selectors and `metadata.tags`, are removed
+Gateway controls, including cache selectors, top-level `tags` and `metadata.tags`, are removed
 from final provider bodies after configured overrides and allowed-parameter
 restoration. Raw bodies are validated before Messages/Responses/counting
 conversion; opt-in fallback status summaries survive API bridges.
@@ -260,6 +287,14 @@ Vertex Gemini chat and OpenAI-compatible embeddings send `google/<model>` as
 the publisher-qualified selector. Configured bare IDs, `google/<model>` and
 `publishers/google/models/<model>` are accepted. Native Vertex Claude routes
 use an Anthropic publisher URL with a single model-id segment.
+Direct Gemini and Vertex Gemini JSON/SSE usage is normalized when the endpoint proves that reasoning
+was counted additively: `total = prompt + completion + reasoning`. Reasoning
+is folded into completion once, retaining its detail count, so client usage,
+TPM and output billing agree. Integer prompt/total counters are required; a
+missing completion counter is recoverable when the remaining counters prove
+its value. Already-normalized, inconsistent or unknown usage is not folded
+speculatively. Completion zero is inserted for measured zero output only when
+reasoning is absent or zero.
 
 Vertex multi-regions `us` and `eu` use `aiplatform.us.rep.googleapis.com` and
 `aiplatform.eu.rep.googleapis.com`; `global` and regional hosts retain their
@@ -277,8 +312,10 @@ Foundry Claude deployments. System prompts and native tool definitions are
 forwarded, null fields are omitted, and malformed tool lists fail before any
 provider request. OpenAI `image_url` blocks are normalized to Anthropic image
 sources, including images nested in tool results. Counts incur no generation
-spend. Vertex removes `@default`/snapshot suffixes only for counting and calls
-the publisher's `count-tokens:rawPredict` endpoint. Set
+spend. A leading system/developer message run follows the caller's top-level
+system prefix, preserving text order and cache controls. Later system reminders
+retain their position. Vertex removes `@default`/snapshot suffixes only for
+counting and calls the publisher's `count-tokens:rawPredict` endpoint. Set
 `vertex_count_tokens_location` when counting uses a different region; otherwise
 the deployment location applies, with `us-east5` when no location is configured.
 The stable Anthropic counting API does not need a token-counting beta header;
@@ -344,9 +381,27 @@ the native body, then the invocation token-count header, then text estimation
 when metering is absent. Mantle token scopes follow an official custom base's
 host region so an ambient region cannot create a mismatched token.
 
+Converse omits `stopSequences` for Grok and numeric GPT 5.6+ families, using
+known regional/resource IDs or declared underlying-model hints for opaque
+profiles. Tool-result images remain nested on supported families and become
+sibling image blocks on GPT; tool IDs, status, cache boundaries and ordering
+are retained. Image-only/empty results receive nonempty text, and tool references
+carry their tool names. Unsupported remote or malformed image sources return
+an error rather than losing content.
+
+Voyage credentials whose resolved bearer starts with `al-` select
+`https://ai.mongodb.com/v1` for embeddings/rerank and the corresponding origin
+for native relays. Endpoint selection uses the authentication snapshot; explicit
+operator `api_base` values always win and native paths/queries are retained.
+
 A database model row whose `model_name` matches a YAML deployment is skipped;
-the YAML deployment is the one that is served. Spend logs flush every 60
-seconds. The Postgres pool allows at most 20 connections;
+the YAML deployment is the one that is served. The background spend writer
+drains received entries in bounded batches and flushes remaining work at
+shutdown; its periodic flush tick defaults to 60 seconds. Known pre-commit
+PostgreSQL serialization/deadlock/lock-timeout and SQLite BUSY/LOCKED failures
+reuse the same event IDs across four total attempts, with 25/50/100 ms backoff
+(175 ms maximum added sleep per batch). Permanent errors and commit-time
+ambiguity bypass those retries. The Postgres pool allows at most 20 connections;
 `database_connection_pool_limit` does not tune this pool. Session affinity is
 a stateless hash of the session id and has no TTL; changes to group membership
 can remap sessions. `optional_pre_call_checks: [session_affinity]` selects this
@@ -423,6 +478,7 @@ additive compatibility aliases with the same values; native clients use only
 | `x-oxllm-max-retries` | Effective retry budget when the serving deployment needed a policy retry |
 | `x-oxllm-fallback-errors` | Bounded status summaries when `include_fallback_errors: true` was requested |
 | `x-oxllm-response-duration-ms` | Total time from HTTP request admission to response-header construction |
+| `x-oxllm-key-spend` | Tracked chat/embedding key's current budget-window counter after unary settlement; may include other in-flight reservations |
 | `x-oxllm-upstream-duration-ms` | Sum of upstream attempts, including failed attempts |
 | `x-oxllm-overhead-duration-ms` | Total time outside upstream attempts, including backoff and response conversion |
 
@@ -431,6 +487,14 @@ transformed streams); complete generation
 duration is available from final telemetry. Upstream `x-ratelimit-*` headers
 are passed through from the serving leg. Local per-principal quota headers take
 precedence when both provide the same header.
+
+Key-spend snapshots use the same counter backend as budget enforcement. Redis
+counters are shared across replicas; local in-memory counters are per replica,
+including the counter layer used with blob response caches. Cache hits expose
+the tracked counter without adding spend. Removing both key and global caps
+omits the header even if a previous counter remains. An absent counter during
+reset or a failed counter read also omits it. Live upstream streams omit the
+snapshot; buffered cached SSE replays can expose the tracked counter.
 
 Configure a unique `model_info.id` for durable identities across restarts and
 replicas. Otherwise oxllm generates a UUID and preserves it across in-process
@@ -451,6 +515,58 @@ Schema version 16 also records nullable `requested_model` and `model_group`.
 Both log endpoints accept `requested_model=requested-alias` or
 `model_group=serving-alias`, with filtered totals on the v1 endpoint. These
 identities remain separate from the provider-model field used to compute spend.
+Inference-pipeline model ACL/customer denials, tag-budget lookup rejections,
+admission-hook rejections and terminal upstream failures queue a zero-cost
+`status: failure` row with request/model/key
+identity and tags. The error body, prompt and response are not persisted; use
+`request_id` to correlate structured logs. Partial streams retain their existing
+cost and `partial` status. Shared terminal claims prevent duplicate rows across
+request/stream context clones. API totals count these recorded requests, with
+no monetary charge for denied/failed requests.
+The integrated ACL boundaries include chat, embeddings, their translated API
+bridges, rerank, hooked-native routes and provider-prefixed endpoints, including
+nested batch model checks. Local token-counter estimates, model discovery,
+unauthenticated middleware/extractor errors and explicit unmetered raw routes
+are outside this spend-audit scope. Before deployment selection, provider
+identity is unknown; selected deployments retain their native provider/model
+identity even when configured without a provider prefix. Known local ACL and
+customer rejections are labeled as pre-call checks in structured logs.
+Realtime routing/concrete-selector/pricing rejections before upgrade are also
+observed before any provider connection. Reported partial realtime cost is
+preserved consistently with router settlement; missing usage is not converted
+to invented tokens or cost. End-user IDs are trimmed before every attribution
+path, and whitespace-only IDs are absent.
+
+Native key/project creation and updates, bulk user-key team moves, project
+reparenting and affected scope deletions share a database graph lock. Owned
+projects require matching key teams; ownerless projects permit sharing. A
+conflicting bulk move or reparent rejects the entire mutation. PostgreSQL uses
+an exclusive transaction-scoped advisory lock with fresh `READ COMMITTED`
+reads; SQLite reserves its writer with `BEGIN IMMEDIATE`, including independent
+pools. Metadata edits load their current row inside the lock, and authentication
+cache invalidation uses identities returned after commit. Low-level import and
+fixture primitives retain their existing unchecked scope-link behavior.
+
+`/key/info`, `/key/list`, and `/key/update` return typed `models` arrays (null
+for unrestricted keys) and a `spend` total from retained, persisted logs. The
+total can lag a response until the asynchronous writer inserts its record, and
+retention can remove older history. It is not the resetting budget-window
+counter. Invalid stored model JSON returns the same nonempty deny-all policy
+used by authentication, so a damaged row can still be inspected and repaired
+without breaking key listing or returning an error after an unrelated update.
+`/global/spend` also returns the configured `max_budget`, or null when unset.
+Team model add/delete refuses unreadable stored policies and the reserved
+deny-all marker until an explicit `/team/update` replacement. Incremental
+edits preserve existing literal patterns rather than re-normalizing them into
+a different policy. Admin team/user forms keep corrupt stored policy read-back
+as escaped deny-all JSON, preserving enforcement during unrelated edits.
+Corrupt customer blocklists are interpreted as block-all, including for master
+traffic and fallback groups; `/customer/update` can explicitly replace them.
+Full key/team/user updates compare a supplied array with the decoded stored
+literal policy before normalization. Identical arrays preserve the original
+column, including whitespace-bearing patterns; intentionally changed
+replacements retain the existing validation/normalization and explicit-clear
+contracts.
 
 #### Compatibility boundaries
 

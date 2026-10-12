@@ -55,6 +55,34 @@ pub fn tags_json(tags: &[String]) -> Option<String> {
     (!tags.is_empty()).then(|| serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string()))
 }
 
+/// Partial-session settlement runs after the response pump terminates. Give a
+/// transiently full writer one bounded opportunity to accept its claimed row;
+/// never manufacture a zero-cost failure row or enqueue the partial twice.
+pub(crate) async fn queue_partial_spend(tx: &mpsc::Sender<SpendEntry>, entry: SpendEntry) {
+    let entry = match tx.try_send(entry) {
+        Ok(()) => return,
+        Err(mpsc::error::TrySendError::Full(entry)) => entry,
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            tracing::warn!("spend writer closed; dropping partial spend entry");
+            crate::metrics::record_spend_dropped("closed", 1);
+            return;
+        }
+    };
+    // Bound extra settlement latency and retain the bounded channel. Ordinary
+    // SpendWriter::queue and request-path hooks remain immediate best-effort.
+    match tokio::time::timeout(std::time::Duration::from_millis(250), tx.reserve()).await {
+        Ok(Ok(permit)) => permit.send(entry),
+        Ok(Err(_)) => {
+            tracing::warn!("spend writer closed during partial settlement; dropping entry");
+            crate::metrics::record_spend_dropped("closed", 1);
+        }
+        Err(_) => {
+            tracing::warn!("spend writer remained full during partial settlement; dropping entry");
+            crate::metrics::record_spend_dropped("full", 1);
+        }
+    }
+}
+
 /// A handle to the batched spend writer. Cloning is cheap (it shares the
 /// channel sender).
 #[derive(Clone)]
@@ -101,6 +129,15 @@ pub const DEFAULT_CHANNEL_CAPACITY: usize = 10_000;
 /// channel. The receiver returns to its shutdown/select loop between batches.
 #[cfg(feature = "db")]
 const MAX_FLUSH_BATCH_SIZE: usize = 1_000;
+
+/// Three retries after the initial attempt, with at most 175 ms of added
+/// backoff per batch. The final shutdown drain uses the same finite budget.
+#[cfg(feature = "db")]
+const BATCH_RETRY_BACKOFF: [std::time::Duration; 3] = [
+    std::time::Duration::from_millis(25),
+    std::time::Duration::from_millis(50),
+    std::time::Duration::from_millis(100),
+];
 
 /// Create a [`SpendWriter`] and spawn its background drain task against `db`.
 ///
@@ -278,7 +315,7 @@ async fn insert_batch(db: &std::sync::Arc<oxllm_db::Database>, batch: Vec<SpendE
         .map(oxllm_db::SpendLogEvent::new)
         .collect();
 
-    match db.insert_spend_events(&events).await {
+    match insert_events_with_retry(&events, |events| db.insert_spend_events(events)).await {
         Ok(inserted) => {
             tracing::debug!(
                 count = n,
@@ -289,7 +326,7 @@ async fn insert_batch(db: &std::sync::Arc<oxllm_db::Database>, batch: Vec<SpendE
         Err(e) => {
             if should_retry_per_row(&e) {
                 tracing::warn!(
-                    error = %e,
+                    error_class = ?classify_spend_insert_error(&e),
                     count = n,
                     "batch insert failed on transport error pre-commit; \
                      falling back to idempotent per-row inserts"
@@ -297,7 +334,7 @@ async fn insert_batch(db: &std::sync::Arc<oxllm_db::Database>, batch: Vec<SpendE
                 for event in &events {
                     if let Err(e) = db.insert_spend_events(std::slice::from_ref(event)).await {
                         tracing::warn!(
-                            error = %e,
+                            error_class = ?classify_spend_insert_error(&e),
                             "failed to insert spend log (per-row fallback)"
                         );
                         crate::metrics::record_spend_dropped("batch_error", 1);
@@ -305,15 +342,97 @@ async fn insert_batch(db: &std::sync::Arc<oxllm_db::Database>, batch: Vec<SpendE
                 }
             } else {
                 tracing::error!(
-                    error = %e,
+                    error_class = ?classify_spend_insert_error(&e),
                     count = n,
-                    "batch insert failed; no per-row retry for a commit, pool, \
-                     or non-transient database error. \
+                    "batch insert failed; rollback retries exhausted or not eligible. \
+                     No per-row retry for commit, pool, or database errors. \
                      The full batch is counted under reason=batch_error."
                 );
                 crate::metrics::record_spend_dropped("batch_error", n as u64);
             }
         }
+    }
+}
+
+/// Only static error classes are logged: database messages can contain row
+/// values, SQL or connection credentials.
+#[cfg(feature = "db")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpendInsertFailure {
+    TransientDatabase(&'static str),
+    PreCommitTransport,
+    AmbiguousCommit,
+    PoolUnavailable,
+    PermanentDatabase,
+    Other,
+}
+
+#[cfg(feature = "db")]
+fn classify_spend_insert_error(err: &anyhow::Error) -> SpendInsertFailure {
+    // Check the wrapper first, even if its source carries a retryable code.
+    // The writer deliberately does not retry any commit-time failure.
+    if err.downcast_ref::<oxllm_db::CommitFailed>().is_some() {
+        return SpendInsertFailure::AmbiguousCommit;
+    }
+    match err.downcast_ref::<sqlx::Error>() {
+        Some(sqlx::Error::Database(error)) => match error.code().as_deref() {
+            Some("40001") => SpendInsertFailure::TransientDatabase("40001"),
+            Some("40P01") => SpendInsertFailure::TransientDatabase("40P01"),
+            Some("55P03") => SpendInsertFailure::TransientDatabase("55P03"),
+            // SQLite reports numeric extended result codes, not SQLSTATEs.
+            // BUSY includes RECOVERY, SNAPSHOT and TIMEOUT; LOCKED includes
+            // SHAREDCACHE and VTAB. A fresh transaction can recover these.
+            Some("5" | "261" | "517" | "773") => {
+                SpendInsertFailure::TransientDatabase("sqlite_busy")
+            }
+            Some("6" | "262" | "518") => SpendInsertFailure::TransientDatabase("sqlite_locked"),
+            _ => SpendInsertFailure::PermanentDatabase,
+        },
+        Some(sqlx::Error::Io(_)) => SpendInsertFailure::PreCommitTransport,
+        Some(sqlx::Error::PoolClosed | sqlx::Error::PoolTimedOut) => {
+            SpendInsertFailure::PoolUnavailable
+        }
+        _ => SpendInsertFailure::Other,
+    }
+}
+
+/// Retry only known pre-commit database failures after the DB layer has
+/// discarded the failed transaction. Every attempt borrows the same events;
+/// neither UUID generation nor per-row fallback can reset this retry budget.
+/// Execution time remains governed by the existing database/pool timeouts;
+/// canceling a write here could introduce commit ambiguity.
+#[cfg(feature = "db")]
+async fn insert_events_with_retry<'a, F, Fut>(
+    events: &'a [oxllm_db::SpendLogEvent],
+    mut insert: F,
+) -> anyhow::Result<usize>
+where
+    F: FnMut(&'a [oxllm_db::SpendLogEvent]) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<usize>>,
+{
+    let mut retries = 0;
+    loop {
+        let error = match insert(events).await {
+            Ok(inserted) => return Ok(inserted),
+            Err(error) => error,
+        };
+        let failure = classify_spend_insert_error(&error);
+        if !matches!(failure, SpendInsertFailure::TransientDatabase(_)) {
+            return Err(error);
+        }
+        let Some(backoff) = BATCH_RETRY_BACKOFF.get(retries) else {
+            return Err(error);
+        };
+        tracing::warn!(
+            error_class = ?failure,
+            count = events.len(),
+            attempt = retries + 1,
+            max_attempts = BATCH_RETRY_BACKOFF.len() + 1,
+            backoff_ms = backoff.as_millis() as u64,
+            "retrying spend batch after transient pre-commit database failure"
+        );
+        retries += 1;
+        tokio::time::sleep(*backoff).await;
     }
 }
 
@@ -341,16 +460,453 @@ async fn insert_batch(db: &std::sync::Arc<oxllm_db::Database>, batch: Vec<SpendE
 /// against duplicate accounting independently of this retry policy.
 #[cfg(feature = "db")]
 fn should_retry_per_row(err: &anyhow::Error) -> bool {
-    if err.downcast_ref::<oxllm_db::CommitFailed>().is_some() {
-        return false;
-    }
-    matches!(err.downcast_ref::<sqlx::Error>(), Some(sqlx::Error::Io(_)))
+    classify_spend_insert_error(err) == SpendInsertFailure::PreCommitTransport
 }
 
 #[cfg(all(test, feature = "db"))]
 mod tests {
     use super::*;
+    use sqlx::error::DatabaseError;
     use std::time::Duration;
+
+    #[derive(Debug)]
+    struct ReportedDatabaseError(Option<&'static str>);
+
+    impl std::fmt::Display for ReportedDatabaseError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.message())
+        }
+    }
+
+    impl std::error::Error for ReportedDatabaseError {}
+
+    impl sqlx::error::DatabaseError for ReportedDatabaseError {
+        fn message(&self) -> &str {
+            "row contains private-payload and postgres://user:private-password@localhost/db"
+        }
+
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            self.0.map(std::borrow::Cow::Borrowed)
+        }
+
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> sqlx::error::ErrorKind {
+            sqlx::error::ErrorKind::Other
+        }
+    }
+
+    fn reported_database_error(code: Option<&'static str>) -> anyhow::Error {
+        sqlx::Error::Database(Box::new(ReportedDatabaseError(code))).into()
+    }
+
+    fn retry_test_events() -> Vec<oxllm_db::SpendLogEvent> {
+        // Matching request IDs are distinct events, not an idempotency key.
+        (0..2)
+            .map(|_| {
+                oxllm_db::SpendLogEvent::new(
+                    serde_json::from_value(serde_json::json!({
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "request_id": "same-request-id",
+                        "model": "test-model",
+                        "provider": "test-provider",
+                        "cost": 0.25,
+                        "end_user_id": "retry-customer",
+                        "tags": "[\"retry-tag\"]",
+                    }))
+                    .unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn batch_retry_classifies_only_known_rollback_codes() {
+        for (code, class) in [
+            ("40001", "40001"),
+            ("40P01", "40P01"),
+            ("55P03", "55P03"),
+            ("5", "sqlite_busy"),
+            ("261", "sqlite_busy"),
+            ("517", "sqlite_busy"),
+            ("773", "sqlite_busy"),
+            ("6", "sqlite_locked"),
+            ("262", "sqlite_locked"),
+            ("518", "sqlite_locked"),
+        ] {
+            let error = reported_database_error(Some(code)).context("insert failed");
+            assert_eq!(
+                classify_spend_insert_error(&error),
+                SpendInsertFailure::TransientDatabase(class),
+                "code {code} must retry the whole rolled-back transaction"
+            );
+            assert!(
+                !should_retry_per_row(&error),
+                "code {code} is not transport I/O"
+            );
+        }
+        for code in [
+            None,
+            Some("23505"),
+            Some("23503"),
+            Some("23514"),
+            Some("42601"),
+            Some("42P01"),
+            Some("57014"),
+            Some("08006"),
+            Some("8"),
+            Some("10"),
+            Some("13"),
+            Some("19"),
+            Some("1811"),
+            Some("40001extra"),
+            Some("55p03"),
+        ] {
+            assert_eq!(
+                classify_spend_insert_error(&reported_database_error(code)),
+                SpendInsertFailure::PermanentDatabase,
+                "unlisted code {code:?} must not retry"
+            );
+        }
+    }
+
+    #[test]
+    fn batch_retry_distinguishes_transport_pool_and_ambiguous_commit() {
+        let error = anyhow::Error::from(sqlx::Error::Io(std::io::Error::other("disconnected")));
+        assert_eq!(
+            classify_spend_insert_error(&error),
+            SpendInsertFailure::PreCommitTransport
+        );
+        assert!(should_retry_per_row(&error));
+        for error in [sqlx::Error::PoolClosed, sqlx::Error::PoolTimedOut] {
+            assert_eq!(
+                classify_spend_insert_error(&error.into()),
+                SpendInsertFailure::PoolUnavailable
+            );
+        }
+        // Neither an outer context nor a retryable source can bypass the
+        // deliberate commit-ambiguity boundary.
+        for source in [
+            sqlx::Error::Io(std::io::Error::other("reset at commit")),
+            sqlx::Error::Database(Box::new(ReportedDatabaseError(Some("40001")))),
+            sqlx::Error::Database(Box::new(ReportedDatabaseError(Some("5")))),
+        ] {
+            let error =
+                anyhow::Error::from(oxllm_db::CommitFailed(source)).context("commit failed");
+            assert_eq!(
+                classify_spend_insert_error(&error),
+                SpendInsertFailure::AmbiguousCommit
+            );
+            assert!(!should_retry_per_row(&error));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_retry_recovers_with_same_event_ids_and_capped_backoff() {
+        let events = retry_test_events();
+        assert_ne!(events[0].event_id, events[1].event_id);
+        let mut attempts = Vec::new();
+        let mut failures = ["40001", "40P01", "55P03"].into_iter();
+        let start = tokio::time::Instant::now();
+        let inserted = insert_events_with_retry(&events, |batch| {
+            assert!(std::ptr::eq(batch.as_ptr(), events.as_ptr()));
+            attempts.push(
+                batch
+                    .iter()
+                    .map(|event| event.event_id.clone())
+                    .collect::<Vec<_>>(),
+            );
+            std::future::ready(match failures.next() {
+                Some(code) => Err(reported_database_error(Some(code))),
+                None => Ok(batch.len()),
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(inserted, 2);
+        assert_eq!(attempts.len(), 4);
+        assert!(attempts.iter().all(|ids| ids == &attempts[0]));
+        assert_eq!(start.elapsed(), Duration::from_millis(175));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_retry_exhaustion_is_bounded_without_resetting_the_budget() {
+        let events = retry_test_events();
+        let mut attempts = 0;
+        let start = tokio::time::Instant::now();
+        let error = insert_events_with_retry(&events, |_| {
+            attempts += 1;
+            // Changing transient classes must not restart the retry budget.
+            let code = if attempts % 2 == 0 { "40001" } else { "55P03" };
+            std::future::ready(Err(reported_database_error(Some(code))))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(attempts, 4);
+        assert_eq!(start.elapsed(), Duration::from_millis(175));
+        assert_eq!(
+            classify_spend_insert_error(&error),
+            SpendInsertFailure::TransientDatabase("40001")
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_retry_stops_immediately_for_non_retryable_failures() {
+        let events = retry_test_events();
+        for error in [
+            reported_database_error(Some("23514")),
+            sqlx::Error::PoolClosed.into(),
+            sqlx::Error::PoolTimedOut.into(),
+            sqlx::Error::Io(std::io::Error::other("pre-commit transport failure")).into(),
+            anyhow::Error::from(oxllm_db::CommitFailed(sqlx::Error::Database(Box::new(
+                ReportedDatabaseError(Some("40P01")),
+            )))),
+        ] {
+            let expected = classify_spend_insert_error(&error);
+            let mut error = Some(error);
+            let mut attempts = 0;
+            let start = tokio::time::Instant::now();
+            let outcome = insert_events_with_retry(&events, |_| {
+                attempts += 1;
+                std::future::ready(match error.take() {
+                    Some(error) => Err(error),
+                    None => Ok(2),
+                })
+            })
+            .await;
+            assert_eq!(classify_spend_insert_error(&outcome.unwrap_err()), expected);
+            assert_eq!(attempts, 1);
+            assert_eq!(start.elapsed(), Duration::ZERO);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_retry_stops_if_a_later_attempt_becomes_permanent_or_ambiguous() {
+        let events = retry_test_events();
+        for terminal in [
+            reported_database_error(Some("23505")),
+            anyhow::Error::from(oxllm_db::CommitFailed(sqlx::Error::Io(
+                std::io::Error::other("ambiguous commit"),
+            ))),
+        ] {
+            let expected = classify_spend_insert_error(&terminal);
+            let mut failures = [reported_database_error(Some("40001")), terminal].into_iter();
+            let mut attempts = 0;
+            let start = tokio::time::Instant::now();
+            let error = insert_events_with_retry(&events, |_| {
+                attempts += 1;
+                std::future::ready(Err(failures.next().expect("no third attempt")))
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(classify_spend_insert_error(&error), expected);
+            assert_eq!(attempts, 2);
+            assert_eq!(start.elapsed(), Duration::from_millis(25));
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn batch_retry_logs_safe_classes_without_database_payloads() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let events = retry_test_events();
+        let mut attempts = 0;
+        let (outcome, log) = crate::security::capture_test_logs(|| {
+            runtime.block_on(insert_events_with_retry(&events, |_| {
+                attempts += 1;
+                std::future::ready(Err(reported_database_error(Some("55P03"))))
+            }))
+        });
+        assert!(outcome.is_err());
+        // The retry budget and backoff are pinned independently. Inspect the
+        // captured output for static error classes rather than requiring an
+        // exact log-line count from a concurrency-sensitive test capture.
+        assert_eq!(attempts, 4);
+        assert!(log.contains("retrying spend batch"));
+        assert!(log.contains("55P03"));
+        assert!(!log.contains("private-payload"));
+        assert!(!log.contains("private-password"));
+    }
+
+    async fn sqlite_contention_fixture() -> (tempfile::TempDir, std::sync::Arc<oxllm_db::Database>)
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("spend.db");
+        let url = format!("sqlite://{}?mode=rwc&cache=private", path.display());
+        let db = oxllm_db::Database::connect(&url).await.unwrap();
+        db.migrate().await.unwrap();
+        let now = oxllm_db::now_iso();
+        db.create_customer(&oxllm_db::CustomerRecord {
+            end_user_id: "retry-customer".into(),
+            alias: None,
+            email: None,
+            max_budget: None,
+            spend: 0.0,
+            budget_duration: None,
+            blocked: false,
+            model_blocklist: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .await
+        .unwrap();
+        db.create_tag(&oxllm_db::TagRecord {
+            name: "retry-tag".into(),
+            description: None,
+            models: None,
+            model_info: None,
+            spend: Some(0.0),
+            max_budget: None,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+        // Configure every connection in the four-connection file pool so
+        // SQLite surfaces contention immediately instead of hiding retries
+        // inside its default five-second busy handler.
+        let mut connections = Vec::new();
+        for _ in 0..4 {
+            let mut connection = db.pool().acquire().await.unwrap();
+            sqlx::query("PRAGMA busy_timeout = 0")
+                .execute(&mut *connection)
+                .await
+                .unwrap();
+            connections.push(connection);
+        }
+        drop(connections);
+        (directory, db)
+    }
+
+    #[tokio::test]
+    async fn sqlite_busy_batch_retry_persists_logs_and_counters_once() {
+        let (_directory, db) = sqlite_contention_fixture().await;
+        let events = retry_test_events();
+        let mut holder = db.pool().begin().await.unwrap();
+        sqlx::query("UPDATE customers SET spend = spend WHERE end_user_id = 'retry-customer'")
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let mut holder = Some(holder);
+        let mut attempts = 0;
+        let inserted = insert_events_with_retry(&events, |batch| {
+            attempts += 1;
+            let holder = holder.take();
+            let db = &db;
+            async move {
+                let result = db.insert_spend_events(batch).await;
+                if let Some(holder) = holder {
+                    let class = result.as_ref().err().map(classify_spend_insert_error);
+                    holder.rollback().await.unwrap();
+                    assert_eq!(
+                        class,
+                        Some(SpendInsertFailure::TransientDatabase("sqlite_busy")),
+                        "the first write must fail with a real contention error"
+                    );
+                }
+                result
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(attempts, 2);
+        assert_eq!(inserted, 2);
+        let mut stored: Vec<(String,)> = sqlx::query_as("SELECT event_id FROM spend_logs")
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+        stored.sort();
+        let mut expected: Vec<_> = events
+            .iter()
+            .map(|event| (event.event_id.clone(),))
+            .collect();
+        expected.sort();
+        assert_eq!(stored, expected, "durable UUIDs must survive the retry");
+        // Replay the exact events: logs, tag memberships and counters must
+        // stay single-charged, including calls with matching request IDs.
+        assert_eq!(
+            insert_events_with_retry(&events, |events| db.insert_spend_events(events))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(db.count_spend(None, None).await.unwrap(), 2);
+        let memberships: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM spend_log_tags")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(memberships.0, 2);
+        assert_eq!(
+            db.get_customer("retry-customer")
+                .await
+                .unwrap()
+                .unwrap()
+                .spend,
+            0.5
+        );
+        assert_eq!(
+            db.get_tag("retry-tag").await.unwrap().unwrap().spend,
+            Some(0.5)
+        );
+        db.pool().close().await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn sqlite_busy_batch_exhaustion_counts_each_drop_once() {
+        let _ = crate::metrics::install();
+        let (_directory, db) = sqlite_contention_fixture().await;
+        let mut holder = db.pool().begin().await.unwrap();
+        sqlx::query("UPDATE customers SET spend = spend WHERE end_user_id = 'retry-customer'")
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let entry: SpendEntry = serde_json::from_value(serde_json::json!({
+            "timestamp": "2026-01-01T00:00:00Z",
+            "model": "test-model",
+            "provider": "test-provider",
+            "cost": 0.25,
+            "end_user_id": "retry-customer",
+            "request_tags": "[\"retry-tag\"]",
+        }))
+        .unwrap();
+        let before = dropped_count("batch_error");
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(2),
+            insert_batch(&db, vec![entry.clone(), entry]),
+        )
+        .await;
+        holder.rollback().await.unwrap();
+        outcome.expect("contention retries must be bounded");
+        assert_eq!(dropped_count("batch_error") - before, 2);
+        assert_eq!(db.count_spend(None, None).await.unwrap(), 0);
+        assert_eq!(
+            db.get_customer("retry-customer")
+                .await
+                .unwrap()
+                .unwrap()
+                .spend,
+            0.0
+        );
+        assert_eq!(
+            db.get_tag("retry-tag").await.unwrap().unwrap().spend,
+            Some(0.0)
+        );
+        db.pool().close().await;
+    }
 
     /// Parse the current value of `oxllm_spend_entries_dropped_total{reason=...}`
     /// out of the rendered exposition text (0 when the series is absent).
@@ -711,8 +1267,8 @@ mod tests {
 
     #[tokio::test]
     async fn should_retry_per_row_rejects_database_error() {
-        // A database error (syntax, constraint, etc.) proves the statement
-        // reached the DB — retrying would risk double-counting.
+        // Syntax/constraint errors are permanent. Known rollback/transient
+        // codes qualify for whole-batch retries, never per-row fallback.
         let db = oxllm_db::Database::connect("sqlite::memory:")
             .await
             .expect("connect");

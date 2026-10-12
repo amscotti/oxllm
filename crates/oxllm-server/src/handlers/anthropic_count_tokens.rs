@@ -127,8 +127,13 @@ pub(crate) async fn count_at_provider(
     let mut native = oxllm_providers::anthropic::AnthropicProvider
         .transform_request(&input, &native_deployment)
         .map_err(ApiError::from)?;
-    if let Some(system) = request.get("system").filter(|value| !value.is_null()) {
-        native["system"] = system.clone();
+    if let Some(system) = oxllm_providers::anthropic::count_tokens::merge_system(
+        request.get("system"),
+        native.get("system"),
+    )
+    .map_err(ApiError::from)?
+    {
+        native["system"] = system;
     }
     if let Some(tools) = request.get("tools").and_then(Value::as_array)
         && tools.iter().all(|tool| tool.get("function").is_none())
@@ -175,4 +180,171 @@ pub(crate) async fn count_at_provider(
             ApiError::internal("provider token-count response is missing input_tokens")
         })?;
     Ok(Some((tokens, tokenizer)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::MockServer;
+    use serde_json::{Value, json};
+
+    const HOSTED_COUNTERS: [(&str, &str, &str, &str, &str, &str); 3] = [
+        (
+            "anthropic/claude-sonnet-5-5",
+            "/v1",
+            "/v1/messages/count_tokens",
+            "claude-sonnet-5-5",
+            "x-api-key",
+            "synthetic-key",
+        ),
+        (
+            "azure_ai/claude-sonnet-5-5",
+            "/anthropic/v1",
+            "/anthropic/v1/messages/count_tokens",
+            "claude-sonnet-5-5",
+            "x-api-key",
+            "synthetic-key",
+        ),
+        (
+            "vertex_ai/claude-haiku-5-5@default",
+            "",
+            "/v1/projects/project/locations/us-east5/publishers/anthropic/models/count-tokens:rawPredict",
+            "claude-haiku-5-5",
+            "authorization",
+            "Bearer synthetic-key",
+        ),
+    ];
+
+    fn state(model: &str, api_base: &str) -> SharedState {
+        let config = crate::config::parse_config_str(&format!(
+            r#"
+model_list:
+  - model_name: counted
+    oxllm_params:
+      model: {model}
+      api_base: {api_base}
+      api_key: synthetic-key
+      vertex_project: project
+      vertex_location: global
+      vertex_count_tokens_location: us-east5
+general_settings:
+  allow_private_api_base: true
+router_settings:
+  num_retries: 0
+"#,
+        ))
+        .unwrap();
+        let state =
+            crate::state::AppState::with_registry(config, oxllm_providers::default_registry())
+                .unwrap();
+        std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(state))
+    }
+
+    fn request(system: Value) -> Value {
+        json!({
+            "model": "counted",
+            "system": system,
+            "messages": [
+                {"role": "system", "content": "Lift 1", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+                {"role": "system", "content": [{"type": "text", "text": "Lift 2", "cache_control": {"type": "ephemeral"}}]},
+                {"role": "user", "content": "hello"},
+            ],
+            "tools": [{"name": "lookup", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral"}}],
+        })
+    }
+
+    fn expected(request: &Value, model: &str) -> Value {
+        let mut system = match &request["system"] {
+            Value::String(text) if !text.is_empty() => vec![json!({"type": "text", "text": text})],
+            Value::Array(blocks) => blocks.clone(),
+            _ => Vec::new(),
+        };
+        system.extend([
+            json!({"type": "text", "text": "Lift 1", "cache_control": {"type": "ephemeral", "ttl": "1h"}}),
+            json!({"type": "text", "text": "Lift 2", "cache_control": {"type": "ephemeral"}}),
+        ]);
+        json!({
+            "model": model,
+            "system": system,
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": request["tools"],
+        })
+    }
+
+    #[tokio::test]
+    async fn native_count_tokens_lifts_system_and_preserves_hosted_urls_and_auth() {
+        for (model, base_path, path, wire_model, header, credential) in HOSTED_COUNTERS {
+            let upstream = MockServer::start_async().await;
+            let state = state(model, &upstream.url(base_path));
+            let input = request(json!([{
+                "type": "text", "text": "Caller prefix",
+                "cache_control": {"type": "ephemeral"},
+            }]));
+            let expected = expected(&input, wire_model);
+            let mock = upstream
+                .mock_async(|when, then| {
+                    when.method(httpmock::Method::POST)
+                        .path(path)
+                        .header(header, credential)
+                        .json_body_obj(&expected);
+                    then.status(200).json_body(json!({"input_tokens": 73}));
+                })
+                .await;
+            let response = count_tokens(
+                State(state),
+                Extension(AuthUser::open()),
+                HeaderMap::new(),
+                Bytes::from(input.to_string()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK, "{model}");
+            let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["input_tokens"], 73);
+            mock.assert_hits_async(1).await;
+        }
+    }
+
+    #[cfg(feature = "platform-apis")]
+    #[tokio::test]
+    async fn utility_count_tokens_merges_caller_system_before_extracted_content_on_all_hosts() {
+        for (model, base_path, path, wire_model, header, credential) in HOSTED_COUNTERS {
+            let upstream = MockServer::start_async().await;
+            let state = state(model, &upstream.url(base_path));
+            for caller in [
+                json!("Caller prefix"),
+                json!([{"type": "text", "text": "Caller prefix", "cache_control": {"type": "ephemeral"}}]),
+                Value::Null,
+            ] {
+                let input = request(caller);
+                let original = input.clone();
+                let expected = expected(&input, wire_model);
+                let mock = upstream
+                    .mock_async(|when, then| {
+                        when.method(httpmock::Method::POST)
+                            .path(path)
+                            .header(header, credential)
+                            .json_body_obj(&expected);
+                        then.status(200).json_body(json!({"input_tokens": 73}));
+                    })
+                    .await;
+                let result =
+                    count_at_provider(&state.load_full(), &AuthUser::open(), &input, "counted")
+                        .await
+                        .unwrap();
+                let tokenizer = if model.starts_with("vertex_ai/") {
+                    "vertex_ai_partner_models"
+                } else {
+                    "anthropic"
+                };
+                assert_eq!(result, Some((73, tokenizer)), "{model}: {input}");
+                assert_eq!(input, original);
+                mock.assert_hits_async(1).await;
+                mock.delete_async().await;
+            }
+        }
+    }
 }

@@ -375,21 +375,43 @@ pub async fn handle_realtime_upgrade(
     // Pre-upgrade metering: rate-limit/budget pre-call + deployment RPM/TPM.
     // Rejects before we open the upstream WS or upgrade the client.
     let request_body = serde_json::json!({ "model": model, "stream": true });
-    let mut pipeline =
-        crate::pipeline::EndpointPipeline::for_request(&state, &auth, model, request_body).await?;
-    let selected = pick_realtime_deployment(&state, model, session_id, &tags)?;
+    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_tags(
+        &state,
+        &auth,
+        model,
+        request_body,
+        &tags,
+    )
+    .await?;
+    let selected = match pick_realtime_deployment(&state, model, session_id, &tags) {
+        Ok(selected) => selected,
+        Err(error) => {
+            crate::pipeline::record_request_rejection(&state, &pipeline.call_ctx, &error).await;
+            return Err(error);
+        }
+    };
     // Reserve at pick, before any other await can let least-busy select this
     // deployment as idle. The original identity remains stable for wildcards.
     let routing = RealtimeRoutingGuard::new(state.clone(), &selected, model);
-    let deployment = routing::concrete_deployment(&selected, model)?;
-    crate::pipeline::prepare_deployment_pricing(
+    let deployment = match routing::concrete_deployment(&selected, model) {
+        Ok(deployment) => deployment,
+        Err(error) => {
+            crate::pipeline::record_request_rejection(&state, &pipeline.call_ctx, &error).await;
+            return Err(error);
+        }
+    };
+    if let Err(error) = crate::pipeline::prepare_deployment_pricing(
         &state,
         &mut pipeline.call_ctx,
         &deployment,
         &serde_json::json!({"model":model}),
     )
     .await
-    .map_err(ApiError::from)?;
+    {
+        let error = ApiError::from(error);
+        crate::pipeline::record_request_rejection(&state, &pipeline.call_ctx, &error).await;
+        return Err(error);
+    }
     pipeline.apply_request_tags(&tags).await?;
     let admission_state = state.clone();
     let admission_deployment = deployment.clone();
@@ -604,7 +626,6 @@ async fn settle_realtime_session(
     if let Some(error) = failure {
         // As in chat, an upstream fault refunds the key reservation. Keep a
         // partial ledger record when the provider had already reported usage.
-        crate::pipeline::post_failure(state, call_ctx, &error).await;
         if outcome.usage.is_some() || outcome.unmetered_output {
             record_partial_realtime(
                 state,
@@ -612,8 +633,12 @@ async fn settle_realtime_session(
                 model,
                 provider_slug,
                 outcome.usage.as_ref(),
-            );
+            )
+            .await;
         }
+        // Preserve the partial record first; failure hooks still refund the
+        // reservation, while the cost observer skips its claimed terminal row.
+        crate::pipeline::post_failure(state, call_ctx, &error).await;
     } else if outcome.unmetered_output {
         crate::pipeline::release_concurrency(state, call_ctx).await;
         record_partial_realtime(
@@ -622,7 +647,8 @@ async fn settle_realtime_session(
             model,
             provider_slug,
             outcome.usage.as_ref(),
-        );
+        )
+        .await;
         tracing::warn!(
             request_id = %call_ctx.request_id,
             reservation_retained = ?call_ctx.budget_estimate,
@@ -642,13 +668,23 @@ async fn settle_realtime_session(
     }
 }
 
-fn record_partial_realtime(
+async fn record_partial_realtime(
     state: &crate::state::AppState,
     call_ctx: &oxllm_core::CallContext,
     model: &str,
     provider: &str,
     usage: Option<&UsageSummary>,
 ) {
+    if !call_ctx.claim_spend_record() {
+        return;
+    }
+    let cost =
+        crate::hooks::cost_fallback::resolve_cost(call_ctx, model, usage, None, None, provider);
+    tracing::info!(event = "spend", status = "partial", request_id = %call_ctx.request_id,
+        model, provider, cost, cost_known = cost.is_some(), key_id = call_ctx.key_id.as_deref(),
+        prompt_tokens = usage.map(|usage| usage.prompt_tokens),
+        completion_tokens = usage.map(|usage| usage.completion_tokens),
+        "partial realtime spend recorded");
     let Some(tx) = &state.spend_tx else {
         return;
     };
@@ -664,7 +700,7 @@ fn record_partial_realtime(
         prompt_tokens: usage.map(|u| tokens(u.prompt_tokens)),
         completion_tokens: usage.map(|u| tokens(u.completion_tokens)),
         total_tokens: usage.map(|u| tokens(u.total_tokens)),
-        cost: None,
+        cost,
         key_id: call_ctx.key_id.clone(),
         team_id: call_ctx.team_id.clone(),
         user_id: call_ctx.user_id.clone(),
@@ -676,17 +712,7 @@ fn record_partial_realtime(
             .start_time
             .map(|s| i64::try_from(s.elapsed().as_millis()).unwrap_or(i64::MAX)),
     };
-    match tx.try_send(entry) {
-        Ok(()) => {}
-        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-            tracing::warn!("spend writer full; dropping partial realtime entry");
-            crate::metrics::record_spend_dropped("full", 1);
-        }
-        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-            tracing::warn!("spend writer closed; dropping partial realtime entry");
-            crate::metrics::record_spend_dropped("closed", 1);
-        }
-    }
+    crate::spend_writer::queue_partial_spend(tx, entry).await;
 }
 
 type UpstreamStream =
@@ -1431,6 +1457,208 @@ mod tests {
         let spend_key = "spend:abc".to_string();
         let _ = state.cache.incr(&spend_key, 0.01, None).await;
         (state, spend_key)
+    }
+
+    #[tokio::test]
+    async fn realtime_partial_failure_records_once_and_still_refunds_the_key() {
+        for end in [
+            SessionEnd::UpstreamError(oxllm_core::Error::Network("closed".into())),
+            SessionEnd::TaskAborted,
+        ] {
+            let (state, spend_key) = state_with_reservation().await;
+            let mut state = std::sync::Arc::try_unwrap(state)
+                .ok()
+                .expect("sole test owner");
+            let (tx, mut ledger) = tokio::sync::mpsc::channel(8);
+            state.spend_tx = Some(tx.clone());
+            let probe = std::sync::Arc::new(SettlementProbe::default());
+            state.hooks = vec![
+                std::sync::Arc::new(crate::hooks::BudgetHook::new(
+                    state.cache.clone(),
+                    Some(1.0),
+                    "30d",
+                )),
+                std::sync::Arc::new(crate::hooks::CostTrackingHook::with_spend_writer(Some(tx))),
+                probe.clone(),
+            ];
+            let ctx = oxllm_core::CallContext {
+                budget_estimate: Some(0.01),
+                ..oxllm_core::CallContext::for_test("gpt-4o-realtime")
+            };
+            let usage = UsageSummary {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+                ..Default::default()
+            };
+            settle_realtime_session(
+                &state,
+                &ctx,
+                "gpt-4o-realtime",
+                "openai",
+                "dep-key",
+                Ok(SessionOutcome {
+                    usage: Some(usage.clone()),
+                    unmetered_output: false,
+                    end,
+                }),
+            )
+            .await;
+            let entry = ledger.try_recv().unwrap();
+            assert_eq!(entry.status.as_deref(), Some("partial"));
+            assert_eq!(entry.total_tokens, Some(15));
+            assert_eq!(entry.request_id.as_ref(), Some(&ctx.request_id));
+            assert!(
+                ledger.try_recv().is_err(),
+                "a realtime session has one terminal audit row"
+            );
+            assert_eq!(probe.failures.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert!(state.cache.counter_value(&spend_key).await.unwrap().abs() < 1e-12);
+            record_partial_realtime(
+                &state,
+                &ctx.clone(),
+                "gpt-4o-realtime",
+                "openai",
+                Some(&usage),
+            )
+            .await;
+            assert!(
+                ledger.try_recv().is_err(),
+                "cloned contexts share realtime reporting claims"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn realtime_partial_survives_transient_ledger_backpressure_and_refunds() {
+        let (state, spend_key) = state_with_reservation().await;
+        let mut state = std::sync::Arc::try_unwrap(state).ok().unwrap();
+        let (tx, mut ledger) = tokio::sync::mpsc::channel(1);
+        tx.try_send(
+            serde_json::from_value(serde_json::json!({
+                "timestamp":"2026-10-11T00:00:00Z","model":"filler","provider":"test"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        state.spend_tx = Some(tx.clone());
+        state.hooks = vec![
+            std::sync::Arc::new(crate::hooks::BudgetHook::new(
+                state.cache.clone(),
+                Some(1.0),
+                "30d",
+            )),
+            std::sync::Arc::new(crate::hooks::CostTrackingHook::with_spend_writer(Some(tx))),
+        ];
+        let receiver = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            assert_eq!(ledger.recv().await.unwrap().model, "filler");
+            let row = tokio::time::timeout(std::time::Duration::from_millis(500), ledger.recv())
+                .await
+                .expect("partial record must recover when queue capacity returns")
+                .unwrap();
+            assert!(ledger.try_recv().is_err(), "one terminal ledger row");
+            row
+        });
+        let ctx = oxllm_core::CallContext {
+            budget_estimate: Some(0.01),
+            deployment_model: Some("openai/gpt-4o".into()),
+            ..oxllm_core::CallContext::for_test("gpt-4o-realtime")
+        };
+        settle_realtime_session(
+            &state,
+            &ctx,
+            "gpt-4o-realtime",
+            "openai",
+            "dep-key",
+            Ok(SessionOutcome {
+                usage: Some(UsageSummary {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                    ..Default::default()
+                }),
+                unmetered_output: false,
+                end: SessionEnd::UpstreamError(oxllm_core::Error::Network("closed".into())),
+            }),
+        )
+        .await;
+        let row = receiver.await.unwrap();
+        assert_eq!(row.status.as_deref(), Some("partial"));
+        assert_eq!(row.total_tokens, Some(15));
+        assert!(row.cost.unwrap() > 0.0);
+        assert!(state.cache.counter_value(&spend_key).await.unwrap().abs() < 1e-12);
+    }
+
+    #[tokio::test]
+    async fn realtime_partial_ledger_matches_reported_router_cost() {
+        let (state, spend_key) = state_with_reservation().await;
+        let mut state = std::sync::Arc::try_unwrap(state).ok().unwrap();
+        let (tx, mut ledger) = tokio::sync::mpsc::channel(8);
+        state.spend_tx = Some(tx.clone());
+        let probe = std::sync::Arc::new(SettlementProbe::default());
+        state.hooks = vec![
+            std::sync::Arc::new(crate::hooks::BudgetHook::new(
+                state.cache.clone(),
+                Some(1.0),
+                "30d",
+            )),
+            std::sync::Arc::new(crate::hooks::CostTrackingHook::with_spend_writer(Some(tx))),
+            probe.clone(),
+        ];
+        let deployment = oxllm_core::Deployment {
+            model_name: "priced-session".into(),
+            oxllm_params: OxllmParams {
+                model: "openai/gpt-4o".into(),
+                max_budget: Some(1.0),
+                input_cost_per_token: Some(2e-6),
+                output_cost_per_token: Some(4e-6),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let ctx = oxllm_core::CallContext {
+            budget_estimate: Some(0.01),
+            deployment_pricing: deployment.oxllm_params.pricing_override(),
+            ..oxllm_core::CallContext::for_test("priced-session")
+        };
+        let usage = UsageSummary {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+            ..Default::default()
+        };
+        let dep_key = oxllm_core::router::deployment_key(&deployment);
+        settle_reserved_realtime_session(
+            &state,
+            &ctx,
+            &deployment,
+            "gpt-4o",
+            "openai",
+            &dep_key,
+            Ok(SessionOutcome {
+                usage: Some(usage),
+                unmetered_output: false,
+                end: SessionEnd::UpstreamError(oxllm_core::Error::Network("closed".into())),
+            }),
+            RealtimeRouterBudgetGuard::new(state.cache.clone(), Default::default()),
+        )
+        .await;
+        let row = ledger.try_recv().unwrap();
+        let cost = row
+            .cost
+            .expect("reported priced usage remains in the partial ledger");
+        assert!((cost - 4e-5).abs() < 1e-12);
+        assert_eq!(row.status.as_deref(), Some("partial"));
+        let settled = state
+            .cache
+            .counter_value(&crate::hooks::spend_keys::deployment_spend_key(&dep_key))
+            .await
+            .unwrap();
+        assert!((settled - cost).abs() < 1e-12);
+        assert!(state.cache.counter_value(&spend_key).await.unwrap().abs() < 1e-12);
+        assert_eq!(probe.failures.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(ledger.try_recv().is_err());
     }
 
     #[derive(Default)]

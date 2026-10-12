@@ -1,12 +1,12 @@
 //! `keys` table CRUD: virtual API key records.
 
 use anyhow::Result;
-use sqlx::Row;
+use sqlx::{Any, Executor, Row};
 
-use crate::Database;
 use crate::binds::bind_optional_f64;
 use crate::rows::row_to_key;
 use crate::types::KeyRecord;
+use crate::{Database, KeyTeamMutation};
 
 /// Reject malformed key records before they reach SQL: an empty `key_id` /
 /// `key_hash` would create an unaddressable row (lookups bind the exact id),
@@ -34,8 +34,29 @@ fn validate_key_record(key: &KeyRecord) -> Result<()> {
 }
 
 impl Database {
+    /// Unchecked scope links for imports and fixtures. Native management writes
+    /// must use `create_key_scoped` so scope validation shares the commit.
     pub async fn create_key(&self, key: &KeyRecord) -> Result<()> {
         validate_key_record(key)?;
+        self.create_key_on(key, self.pool()).await
+    }
+
+    /// Create a key only when every parent exists and an owned project's team
+    /// matches the key. Validation and insertion hold the same graph lock.
+    pub async fn create_key_scoped(&self, key: &KeyRecord) -> Result<()> {
+        validate_key_record(key)?;
+        let mut tx = self.begin_scope_links().await?;
+        self.validate_key_scope_links_on(&mut tx, key).await?;
+        self.create_key_on(key, &mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn create_key_on<'e>(
+        &self,
+        key: &KeyRecord,
+        executor: impl Executor<'e, Database = Any>,
+    ) -> Result<()> {
         let q = format!(
             "INSERT INTO keys (key_id, key_hash, key_alias, team_id, user_id, \
  org_id, project_id, max_budget, budget_duration, rpm, tpm, created_at, updated_at, expires_at, \
@@ -77,7 +98,7 @@ impl Database {
             .bind(if key.is_active { 1_i64 } else { 0_i64 })
             .bind(key.models.clone())
             .bind(key.allowed_cache_controls.clone())
-            .execute(self.pool())
+            .execute(executor)
             .await?;
         Ok(())
     }
@@ -98,6 +119,14 @@ impl Database {
     }
 
     pub async fn get_key(&self, key_id: &str) -> Result<Option<KeyRecord>> {
+        self.get_key_on(key_id, self.pool()).await
+    }
+
+    async fn get_key_on<'e>(
+        &self,
+        key_id: &str,
+        executor: impl Executor<'e, Database = Any>,
+    ) -> Result<Option<KeyRecord>> {
         let q = format!(
             "SELECT key_id, key_hash, key_alias, team_id, user_id, \
  org_id, project_id, max_budget, budget_duration, rpm, tpm, created_at, updated_at, expires_at, \
@@ -107,7 +136,7 @@ impl Database {
         );
         let row = sqlx::query(&q)
             .bind(key_id)
-            .fetch_optional(self.pool())
+            .fetch_optional(executor)
             .await?;
         row.map(|r| row_to_key(&r)).transpose()
     }
@@ -160,6 +189,8 @@ impl Database {
     /// `team_id`. Used when a team is deleted so no key is left pointing at a
     /// removed scope (which would otherwise silently drop the team-level
     /// budget / rate enforcement). Returns rows affected.
+    /// This import primitive does not check project ownership; native team
+    /// removal uses `delete_team_scoped` to detach both sides in one commit.
     pub async fn clear_team_on_keys(&self, team_id: &str, updated_at: &str) -> Result<u64> {
         let q = format!(
             "UPDATE keys SET team_id = NULL, updated_at = {} WHERE team_id = {}",
@@ -213,6 +244,8 @@ impl Database {
     /// touched (used by `team/member/add`). When `new_team` is `None` the
     /// key's `team_id` is cleared (set to NULL). Single statement → atomic
     /// and scoped. Returns rows affected.
+    /// Scope links are unchecked for imports and fixtures. Native member
+    /// endpoints use `set_team_for_user_keys_scoped` instead.
     pub async fn set_team_for_user_keys(
         &self,
         user_id: &str,
@@ -242,6 +275,48 @@ impl Database {
         }
         let res = query.execute(self.pool()).await?;
         Ok(res.rows_affected())
+    }
+
+    /// Atomically reassign all matching keys or reject the entire operation.
+    /// Owned projects must agree with the resulting team, including a clear to
+    /// NULL; ownerless projects allow any existing destination team.
+    pub async fn set_team_for_user_keys_scoped(
+        &self,
+        user_id: &str,
+        filter_team: Option<&str>,
+        new_team: Option<&str>,
+        updated_at: &str,
+    ) -> Result<KeyTeamMutation> {
+        let mut tx = self.begin_scope_links().await?;
+        self.validate_user_key_team_links_on(&mut tx, user_id, filter_team, new_team)
+            .await?;
+        let filter = filter_team
+            .map(|_| format!(" AND team_id = {}", self.ph(4)))
+            .unwrap_or_default();
+        let q = format!(
+            "UPDATE keys SET team_id = {}, updated_at = {} WHERE user_id = {}{filter} \
+             RETURNING key_hash",
+            self.ph(1),
+            self.ph(2),
+            self.ph(3)
+        );
+        let mut query = sqlx::query(&q)
+            .bind(new_team)
+            .bind(updated_at)
+            .bind(user_id);
+        if let Some(team_id) = filter_team {
+            query = query.bind(team_id);
+        }
+        let rows = query.fetch_all(&mut *tx).await?;
+        let key_hashes = rows
+            .iter()
+            .map(|row| row.try_get("key_hash"))
+            .collect::<Result<Vec<String>, _>>()?;
+        tx.commit().await?;
+        Ok(KeyTeamMutation {
+            affected: key_hashes.len() as u64,
+            key_hashes,
+        })
     }
 
     /// Fetch just the key hashes for a user's keys, optionally restricted to
@@ -277,17 +352,35 @@ impl Database {
     /// every other mutation on the keys table) so consumers that read
     /// `updated_at` for audit can tell when the key was revoked.
     pub async fn delete_key(&self, key_id: &str, updated_at: &str) -> Result<()> {
+        self.set_key_active(key_id, false, updated_at)
+            .await
+            .map(|_| ())
+    }
+
+    /// Change only the active flag, retaining scope links and model literals.
+    /// Return the committed identity, or None when a concurrent purge won.
+    pub async fn set_key_active(
+        &self,
+        key_id: &str,
+        active: bool,
+        updated_at: &str,
+    ) -> Result<Option<String>> {
+        let mut tx = self.begin_scope_links().await?;
         let q = format!(
-            "UPDATE keys SET is_active = 0, updated_at = {} WHERE key_id = {}",
+            "UPDATE keys SET is_active = {}, updated_at = {} WHERE key_id = {} RETURNING key_hash",
             self.ph(1),
-            self.ph(2)
+            self.ph(2),
+            self.ph(3)
         );
-        sqlx::query(&q)
+        let row = sqlx::query(&q)
+            .bind(if active { 1_i64 } else { 0_i64 })
             .bind(updated_at)
             .bind(key_id)
-            .execute(self.pool())
+            .fetch_optional(&mut *tx)
             .await?;
-        Ok(())
+        let hash = row.map(|row| row.try_get("key_hash")).transpose()?;
+        tx.commit().await?;
+        Ok(hash)
     }
 
     /// Hard-delete: remove the key row permanently. Spend logs are kept.
@@ -301,9 +394,23 @@ impl Database {
     /// [`Self::delete_key`] (soft delete) when the key has historical spend;
     /// reserve `purge_key` for keys with no telemetry attached.
     pub async fn purge_key(&self, key_id: &str) -> Result<()> {
-        let q = format!("DELETE FROM keys WHERE key_id = {}", self.ph(1));
-        sqlx::query(&q).bind(key_id).execute(self.pool()).await?;
-        Ok(())
+        self.purge_key_scoped(key_id).await.map(|_| ())
+    }
+
+    /// Remove a key under the graph lock and return its last committed hash.
+    pub async fn purge_key_scoped(&self, key_id: &str) -> Result<Option<String>> {
+        let mut tx = self.begin_scope_links().await?;
+        let q = format!(
+            "DELETE FROM keys WHERE key_id = {} RETURNING key_hash",
+            self.ph(1)
+        );
+        let row = sqlx::query(&q)
+            .bind(key_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let hash = row.map(|row| row.try_get("key_hash")).transpose()?;
+        tx.commit().await?;
+        Ok(hash)
     }
 
     /// Update key metadata (alias, team, user, org, project, budgets,
@@ -315,6 +422,41 @@ impl Database {
     /// as a stale `200 OK` with the prior record.
     pub async fn update_key(&self, key: &KeyRecord) -> Result<bool> {
         validate_key_record(key)?;
+        self.update_key_on(key, self.pool()).await
+    }
+
+    /// Apply a native metadata mutation to the current row inside the graph
+    /// transaction. Omitted fields retain the latest committed values, not a
+    /// handler's earlier snapshot. Immutable identity fields remain unchanged.
+    /// Low-level `update_key` remains available for imports and fixtures.
+    pub async fn update_key_scoped<F>(&self, key_id: &str, update: F) -> Result<Option<KeyRecord>>
+    where
+        F: FnOnce(&mut KeyRecord),
+    {
+        let mut tx = self.begin_scope_links().await?;
+        let Some(mut key) = self.get_key_on(key_id, &mut *tx).await? else {
+            tx.rollback().await?;
+            return Ok(None);
+        };
+        let identity = (
+            key.key_id.clone(),
+            key.key_hash.clone(),
+            key.created_at.clone(),
+        );
+        update(&mut key);
+        (key.key_id, key.key_hash, key.created_at) = identity;
+        validate_key_record(&key)?;
+        self.validate_key_scope_links_on(&mut tx, &key).await?;
+        self.update_key_on(&key, &mut *tx).await?;
+        tx.commit().await?;
+        Ok(Some(key))
+    }
+
+    async fn update_key_on<'e>(
+        &self,
+        key: &KeyRecord,
+        executor: impl Executor<'e, Database = Any>,
+    ) -> Result<bool> {
         let q = format!(
             "UPDATE keys SET key_alias = {}, team_id = {}, user_id = {}, org_id = {}, \
  project_id = {}, max_budget = {}, budget_duration = {}, rpm = {}, tpm = {}, updated_at = {}, \
@@ -351,42 +493,23 @@ impl Database {
             .bind(key.models.clone())
             .bind(key.allowed_cache_controls.clone())
             .bind(&key.key_id)
-            .execute(self.pool())
+            .execute(executor)
             .await?;
         Ok(res.rows_affected() > 0)
     }
 
     /// Replace the stored key hash (rotate secret). Returns previous hash.
     ///
-    /// The returned `prev_hash` is **best-effort**: under Postgres' default
-    /// READ COMMITTED isolation two concurrent `rotate_key` calls can both
-    /// read the same `prev_hash` before either commits, so one caller
-    /// observes a stale pre-image. The DB still ends up consistent — the
-    /// second `UPDATE` re-reads the row post-commit and produces the correct
-    /// `A → B → C` chain — but the *returned* value lags the actual
-    /// predecessor for the loser of the race. Audit callers that need the
-    /// exact predecessor should not rely on this return value under
-    /// contention.
-    ///
-    /// The read-then-write is wrapped in a transaction. That transaction
-    /// guarantees **no lost write** — exactly one `UPDATE` persists per
-    /// rotation, so the final `key_hash` is always the last-issued hash —
-    /// but it does **not** make the returned `prev_hash` race-free: under
-    /// Postgres READ COMMITTED a plain `SELECT` takes no row lock, so the
-    /// two `SELECT`s can both observe the same `key_hash` before either
-    /// `UPDATE` commits (which is precisely the stale-predecessor window
-    /// above). SQLite / in-memory pools pin a single connection so the
-    /// transactions serialise naturally and the race is Postgres-specific.
-    /// A truly race-free predecessor would require `SELECT … FOR UPDATE`,
-    /// which `sqlx::Any` does not uniformly expose across backends, so the
-    /// documented limitation stands.
+    /// The graph lock serializes this read with native metadata writes, bulk
+    /// moves and deletion. The returned identity is authoritative after commit
+    /// and can be evicted from authentication caches without a stale pre-read.
     pub async fn rotate_key(
         &self,
         key_id: &str,
         new_hash: &str,
         updated_at: &str,
     ) -> Result<Option<String>> {
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_scope_links().await?;
         let select_q = format!("SELECT key_hash FROM keys WHERE key_id = {}", self.ph(1));
         let row = sqlx::query(&select_q)
             .bind(key_id)

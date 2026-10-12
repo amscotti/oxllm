@@ -277,6 +277,7 @@ router_settings:
 }
 
 #[tokio::test]
+#[serial_test::serial(token_counter)]
 async fn invalid_request_controls_are_rejected_before_any_provider_call() {
     let upstream = MockServer::start_async().await;
     let config = parse_config_str(&format!(
@@ -593,6 +594,7 @@ general_settings:
 }
 
 #[tokio::test]
+#[serial_test::serial(token_counter)]
 async fn vertex_partner_token_counting_keeps_system_tools_and_unversioned_models() {
     let upstream = MockServer::start_async().await;
     let config = parse_config_str(&format!(
@@ -664,6 +666,7 @@ router_settings:
 }
 
 #[tokio::test]
+#[serial_test::serial(token_counter)]
 async fn remote_token_count_failures_fall_back_locally_unless_disabled() {
     let upstream = MockServer::start_async().await;
     let config = parse_config_str(&format!(

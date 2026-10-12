@@ -141,6 +141,90 @@ pub struct ProjectRecord {
     pub updated_at: String,
 }
 
+/// Parent scopes whose existence is required by native management writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeEntity {
+    Team,
+    User,
+    Organization,
+    Project,
+}
+
+impl ScopeEntity {
+    pub const fn field_name(self) -> &'static str {
+        match self {
+            Self::Team => "team_id",
+            Self::User => "user_id",
+            Self::Organization => "org_id",
+            Self::Project => "project_id",
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Team => "team",
+            Self::User => "user",
+            Self::Organization => "org",
+            Self::Project => "project",
+        }
+    }
+}
+
+/// A rejected scope mutation. Contains public identities only, never secrets or
+/// driver diagnostics, so HTTP adapters can retain their native error envelopes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeLinkError {
+    MissingScope {
+        entity: ScopeEntity,
+        id: String,
+    },
+    ProjectTeamMismatch {
+        project_id: String,
+        project_team_id: String,
+        key_team_id: Option<String>,
+    },
+    ConflictingProjectKeys {
+        project_id: String,
+        team_id: String,
+    },
+}
+
+impl std::fmt::Display for ScopeLinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingScope { entity, id } => {
+                write!(f, "{} '{id}' not found", entity.name())
+            }
+            Self::ProjectTeamMismatch {
+                project_id,
+                project_team_id,
+                key_team_id,
+            } => write!(
+                f,
+                "project '{project_id}' belongs to team '{project_team_id}', but the key belongs to {}. A key must belong to its project's team",
+                key_team_id.as_deref().unwrap_or("no team")
+            ),
+            Self::ConflictingProjectKeys {
+                project_id,
+                team_id,
+            } => write!(
+                f,
+                "project '{project_id}' has keys outside team '{team_id}'; detach or move those keys before assigning the project to this team"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ScopeLinkError {}
+
+/// The identities affected by a committed bulk team reassignment. Returned only
+/// after commit so callers can invalidate authentication caches safely.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyTeamMutation {
+    pub affected: u64,
+    pub key_hashes: Vec<String>,
+}
+
 /// A model deployment persisted via the management API.
 ///
 /// `oxllm_params` / `model_info` are stored as JSON strings in the DB and

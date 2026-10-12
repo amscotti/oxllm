@@ -92,15 +92,16 @@ pub(crate) async fn chat_completions_inner(
     }
     crate::orchestration::request_controls::validate(&request_body)?;
 
-    crate::pipeline::check_model_acl(
+    crate::pipeline::check_request_model_acl(&state, auth, &model, &request_body, headers).await?;
+    let admission_tags = crate::pipeline::extract_tags(headers, Some(&request_body));
+    let mut pipeline = EndpointPipeline::for_request_with_tags(
+        &state,
         auth,
         &model,
-        auth.key_models.as_deref(),
-        auth.team_models.as_deref(),
-        auth.user_models.as_deref(),
-    )?;
-    let mut pipeline =
-        EndpointPipeline::for_request(&state, auth, &model, request_body.clone()).await?;
+        request_body.clone(),
+        &admission_tags,
+    )
+    .await?;
 
     // Guardrails run after JSON parsing + structural validation but before
     // orchestration, so the masked body is the one serialized into the

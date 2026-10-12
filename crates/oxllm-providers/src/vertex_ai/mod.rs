@@ -396,7 +396,7 @@ impl ChatProvider for VertexProvider {
             AnthropicProvider.transform_response(body, model)
         } else {
             let mut out = body.clone();
-            crate::openai::sanitize_null_tokens(&mut out);
+            crate::gemini_usage::normalize_gemini_usage(&mut out);
             Ok(out)
         }
     }
@@ -407,7 +407,7 @@ impl ChatProvider for VertexProvider {
     /// `TOOL_NAME_MAP` succeeds even after the `.await` on the upstream HTTP
     /// call rescheduled this task onto a different worker thread. Mirrors the
     /// Bedrock and direct-Anthropic overrides. The Gemini branch keeps the
-    /// identity transform (with null-token sanitisation).
+    /// usage normalization without changing the message shape.
     fn transform_response_with_request(
         &self,
         body: &Value,
@@ -457,8 +457,13 @@ impl ChatProvider for VertexProvider {
                 return AnthropicProvider.transform_stream_chunk(chunk);
             }
         }
-        // Default: OpenAI-compat (Gemini on Vertex).
-        parse_openai_stream_chunk(chunk)
+        // Default: OpenAI-compat (Gemini on Vertex), with the same billable
+        // usage invariant as non-streaming responses.
+        let mut parsed = parse_openai_stream_chunk(chunk)?;
+        if let Some(value) = &mut parsed {
+            crate::gemini_usage::normalize_gemini_usage(value);
+        }
+        Ok(parsed)
     }
 
     /// Stateful streaming override. The host's stream pump calls this (not the

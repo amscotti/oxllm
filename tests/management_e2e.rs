@@ -1573,11 +1573,7 @@ async fn key_info_returns_models_field() {
         .expect("ok");
     assert_eq!(info.status(), 200);
     let ib: Value = info.json().await.expect("json");
-    let models = ib["models"].as_str().expect("models is a string");
-    assert!(
-        models.contains("gpt-4o") && models.contains("claude-*"),
-        "models field should preserve patterns, got: {models}"
-    );
+    assert_eq!(ib["models"], json!(["gpt-4o", "claude-*"]));
 
     shutdown(handle).await;
 }

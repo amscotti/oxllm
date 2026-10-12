@@ -88,21 +88,23 @@ pub async fn rerank(
     let mut request_body: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;
     crate::security::check_json_depth(&request_body, crate::security::MAX_JSON_DEPTH)?;
+    crate::orchestration::request_controls::validate(&request_body)?;
     let model = request_body
         .get("model")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ApiError::bad_request("missing 'model'"))?
         .to_string();
 
-    let mut pipeline = crate::pipeline::EndpointPipeline::for_request(
+    let tags = extract_tags(&headers, Some(&request_body));
+    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_tags(
         &app_state,
         &auth,
         &model,
         request_body.clone(),
+        &tags,
     )
     .await?;
     pipeline.call_ctx.cache_namespace = Some("rerank".into());
-    let tags = extract_tags(&headers, Some(&request_body));
     pipeline.apply_request_tags(&tags).await?;
     let guarded = crate::pipeline::guardrails::apply_raw_request_guardrails(
         &app_state,
@@ -294,11 +296,16 @@ pub async fn rerank(
     // window (transform_request, credential resolution, serialization,
     // transport, body limits, response parse — all release on `Err`).
     let outcome: Result<Response, ApiError> = async {
-        let transformed = rerank
-            .transform_request(&request_body, &deployment)
+        let mut provider_request = request_body.clone();
+        crate::orchestration::request_controls::strip_before_transform(&mut provider_request);
+        let mut transformed = rerank
+            .transform_request(&provider_request, &deployment)
             .map_err(ApiError::from)?;
+        crate::orchestration::request_controls::strip(&mut transformed);
         let creds =
             crate::pipeline::passthrough::resolve_credentials(&app_state, &deployment).await?;
+        let endpoint_deployment =
+            crate::orchestration::upstream::deployment_with_resolved_region(&deployment, &creds);
         let auth_headers =
             crate::pipeline::passthrough::provider_auth_headers(provider, &deployment, &creds)?;
         let mut req_headers = reqwest::header::HeaderMap::new();
@@ -322,7 +329,7 @@ pub async fn rerank(
             &app_state,
             &deployment,
             axum::http::Method::POST,
-            &rerank.rerank_url(&deployment),
+            &rerank.rerank_url(&endpoint_deployment),
             axum::body::Bytes::from(serde_json::to_vec(&transformed).map_err(|e| {
                 ApiError::internal(format!("failed to serialize rerank request: {e}"))
             })?),
@@ -672,6 +679,7 @@ pub async fn provider_passthrough(
     };
     if !request_body.is_null() {
         crate::security::check_json_depth(&request_body, crate::security::MAX_JSON_DEPTH)?;
+        crate::orchestration::request_controls::validate(&request_body)?;
     }
 
     let mut query_models =
@@ -726,13 +734,8 @@ pub async fn provider_passthrough(
         false
     };
     if let Some(model) = requested_model.as_deref() {
-        crate::pipeline::check_model_acl(
-            &auth,
-            model,
-            auth.key_models.as_deref(),
-            auth.team_models.as_deref(),
-            auth.user_models.as_deref(),
-        )?;
+        crate::pipeline::check_request_model_acl(&app_state, &auth, model, &request_body, &headers)
+            .await?;
     }
     let model = crate::pipeline::passthrough::resolve_provider_model(
         &app_state,
@@ -740,16 +743,22 @@ pub async fn provider_passthrough(
         requested_model.as_deref(),
     )?;
 
-    let mut pipeline = crate::pipeline::EndpointPipeline::for_request(
+    let tags = extract_tags(&headers, Some(&request_body));
+    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_tags(
         &app_state,
         &auth,
         &model,
         request_body.clone(),
+        &tags,
     )
     .await?;
-    crate::pipeline::passthrough::validate_nested_model_acl(&auth, &request_body)?;
+    if let Err(error) =
+        crate::pipeline::passthrough::validate_nested_model_acl(&auth, &request_body)
+    {
+        crate::pipeline::record_request_rejection(&app_state, &pipeline.call_ctx, &error).await;
+        return Err(error);
+    }
     pipeline.call_ctx.cache_namespace = Some(format!("raw:{method}:{remaining_path}"));
-    let tags = extract_tags(&headers, Some(&request_body));
     let session_id = extract_session_id_with_body(&headers, Some(&request_body));
     pipeline.apply_request_tags(&tags).await?;
     let guarded = crate::pipeline::guardrails::apply_raw_request_guardrails(
@@ -1928,8 +1937,8 @@ mod tests {
 
     // ---- LOW 9: rerank raw-relay stamps both request-id headers -------------
 
-    /// A rerank provider that forwards the request verbatim so the transform
-    /// branch of the rerank handler is exercised end-to-end.
+    /// An identity-shaped rerank provider with input/output control probes so
+    /// the transform branch's gateway boundary is exercised end-to-end.
     struct MockRerank;
 
     impl RerankProvider for MockRerank {
@@ -1954,7 +1963,14 @@ mod tests {
             request: &serde_json::Value,
             _deployment: &Deployment,
         ) -> oxllm_core::error::Result<serde_json::Value> {
-            Ok(request.clone())
+            if crate::orchestration::request_controls::contains(request) {
+                return Err(oxllm_core::Error::Transform(
+                    "gateway controls reached the provider transform".into(),
+                ));
+            }
+            let mut transformed = request.clone();
+            transformed["tags"] = serde_json::json!(["provider-output-probe"]);
+            Ok(transformed)
         }
         fn transform_response(
             &self,
@@ -1975,6 +1991,48 @@ mod tests {
         fn rerank(&self) -> Option<&dyn RerankProvider> {
             Some(self)
         }
+    }
+
+    #[tokio::test]
+    async fn rerank_transform_strips_gateway_controls_before_and_after_provider_shaping() {
+        let server = httpmock::MockServer::start();
+        let wire = server.mock(|when, then| {
+            when.method("POST").path("/rerank").matches(|request| {
+                request
+                    .body
+                    .as_ref()
+                    .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
+                    .is_some_and(|body| {
+                        !crate::orchestration::request_controls::contains(&body)
+                            && body["metadata"]["user_id"] == "kept"
+                    })
+            });
+            then.status(200)
+                .json_body(serde_json::json!({"results":[]}));
+        });
+        let config: ProxyConfig = serde_json::from_value(serde_json::json!({
+            "model_list":[{"model_name":"ranked", "oxllm_params":{
+                "model":"mockrerank/native-rank", "api_key":"synthetic-key", "api_base":server.base_url()
+            }}], "general_settings":{"allow_private_api_base":true}
+        })).unwrap();
+        let mut registry = oxllm_providers::default_registry();
+        registry.register("mockrerank", Arc::new(MockRerank));
+        let shared = shared_from(AppState::with_registry(config, registry).unwrap());
+        let response = rerank(
+            State(shared),
+            Extension(AuthUser::open()),
+            HeaderMap::new(),
+            Bytes::from(
+                serde_json::json!({"model":"ranked", "query":"hello", "documents":["one"],
+                "tags":["body"], "metadata":{"tags":["meta"], "user_id":"kept"},
+                "num_retries":0, "cache":{"use_cache":false}})
+                .to_string(),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        wire.assert_hits(1);
     }
 
     /// The rerank transform branch must forward the upstream debugging

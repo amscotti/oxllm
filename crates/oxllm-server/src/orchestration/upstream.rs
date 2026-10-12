@@ -1053,12 +1053,22 @@ fn deployment_with_transform_settings<'a>(
     }
 }
 
-/// Pure providers do not read process variables. Give Bedrock's URL builder
-/// the same resolved region that the host uses to sign the request.
+/// Provider endpoint defaults use the same resolved credential snapshot as
+/// authentication/signing. Explicit operator base URLs always take precedence.
 pub(crate) fn deployment_with_resolved_region<'a>(
     deployment: &'a Deployment,
     creds: &ResolvedCredentials,
 ) -> std::borrow::Cow<'a, Deployment> {
+    if deployment.provider_slug() == "voyage"
+        && deployment.oxllm_params.api_base.is_none()
+        && creds
+            .best_effort_bearer()
+            .is_some_and(|key| key.starts_with("al-"))
+    {
+        let mut resolved = deployment.clone();
+        resolved.oxllm_params.api_base = Some(oxllm_providers::voyage::MONGODB_VOYAGE_BASE.into());
+        return std::borrow::Cow::Owned(resolved);
+    }
     if deployment.provider_slug() == "bedrock" && deployment.oxllm_params.api_base.is_none() {
         if let ResolvedCredentials::AwsSigV4 { region, .. } = creds {
             let mut resolved = deployment.clone();
@@ -1070,6 +1080,49 @@ pub(crate) fn deployment_with_resolved_region<'a>(
         }
     }
     std::borrow::Cow::Borrowed(deployment)
+}
+
+/// Native relays construct their path before credentials are resolved. Adjust
+/// only the default endpoint's origin, retaining the already-confined path and
+/// query and using the same credential snapshot as authentication.
+pub(crate) fn upstream_url_with_resolved_endpoint<'a>(
+    deployment: &Deployment,
+    creds: &ResolvedCredentials,
+    upstream_url: &'a str,
+) -> Result<std::borrow::Cow<'a, str>, ApiError> {
+    let effective = deployment_with_resolved_region(deployment, creds);
+    if effective.oxllm_params.api_base == deployment.oxllm_params.api_base {
+        return Ok(std::borrow::Cow::Borrowed(upstream_url));
+    }
+    let default_base =
+        crate::pipeline::passthrough::default_base_for_provider(deployment.provider_slug())
+            .ok_or_else(|| ApiError::internal("provider has no default endpoint"))?;
+    let default = url::Url::parse(default_base)
+        .map_err(|_| ApiError::internal("invalid default upstream endpoint"))?;
+    let resolved_base = effective
+        .oxllm_params
+        .api_base
+        .as_deref()
+        .ok_or_else(|| ApiError::internal("resolved upstream endpoint is unavailable"))?;
+    let target = url::Url::parse(resolved_base)
+        .map_err(|_| ApiError::internal("invalid resolved upstream endpoint"))?;
+    let mut resolved =
+        url::Url::parse(upstream_url).map_err(|_| ApiError::internal("invalid upstream URL"))?;
+    if resolved.origin() != default.origin() {
+        return Err(ApiError::internal(
+            "upstream URL does not match its default endpoint",
+        ));
+    }
+    resolved
+        .set_scheme(target.scheme())
+        .map_err(|_| ApiError::internal("invalid resolved endpoint scheme"))?;
+    resolved
+        .set_host(target.host_str())
+        .map_err(|_| ApiError::internal("invalid resolved endpoint host"))?;
+    resolved
+        .set_port(target.port())
+        .map_err(|_| ApiError::internal("invalid resolved endpoint port"))?;
+    Ok(std::borrow::Cow::Owned(resolved.into()))
 }
 
 /// Merge request-derived `anthropic-beta` tags into the header set, joining
@@ -1365,6 +1418,84 @@ pub(crate) fn resolve_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voyage_default_endpoint_uses_resolved_credentials_and_respects_explicit_bases() {
+        let mut deployment: Deployment =
+            serde_json::from_value(json!({"model_name":"embedded", "oxllm_params":{
+                "model":"voyage/voyage-3","api_key":"env/UNRESOLVED_TEST_KEY"
+            }}))
+            .unwrap();
+        let ordinary = ResolvedCredentials::from_key("ordinary-key");
+        let database = ResolvedCredentials::from_key("al-issued-key");
+        for (creds, base) in [
+            (&ordinary, oxllm_providers::voyage::DEFAULT_VOYAGE_BASE),
+            (&database, oxllm_providers::voyage::MONGODB_VOYAGE_BASE),
+        ] {
+            let resolved = deployment_with_resolved_region(&deployment, creds);
+            assert_eq!(
+                oxllm_core::EmbeddingProvider::embedding_url(
+                    &oxllm_providers::voyage::VoyageProvider,
+                    &resolved
+                ),
+                format!("{base}/embeddings")
+            );
+            assert_eq!(
+                oxllm_core::RerankProvider::rerank_url(
+                    &oxllm_providers::voyage::VoyageProvider,
+                    &resolved
+                ),
+                format!("{base}/rerank")
+            );
+        }
+        deployment.oxllm_params.api_base = Some("https://operator.example.test/v1".into());
+        let resolved = deployment_with_resolved_region(&deployment, &database);
+        assert_eq!(
+            resolved.oxllm_params.api_base.as_deref(),
+            Some("https://operator.example.test/v1")
+        );
+        assert_eq!(
+            deployment.oxllm_params.api_key.as_deref(),
+            Some("env/UNRESOLVED_TEST_KEY")
+        );
+    }
+
+    #[test]
+    fn voyage_native_endpoints_keep_paths_queries_and_explicit_operator_bases() {
+        let mut deployment: Deployment = serde_json::from_value(json!({
+            "model_name":"embedded", "oxllm_params":{
+                "model":"voyage/voyage-3", "api_key":"env/UNRESOLVED_TEST_KEY"
+            }
+        }))
+        .unwrap();
+        let issued = ResolvedCredentials::from_key("al-issued-key");
+        let ordinary = ResolvedCredentials::from_key("ordinary-key");
+        for path in ["/v1/embeddings?value=a%2Fb", "/v1/rerank", "/embeddings"] {
+            let original = format!("https://api.voyageai.com{path}");
+            assert_eq!(
+                upstream_url_with_resolved_endpoint(&deployment, &issued, &original).unwrap(),
+                format!("https://ai.mongodb.com{path}")
+            );
+            assert!(matches!(
+                upstream_url_with_resolved_endpoint(&deployment, &ordinary, &original).unwrap(),
+                std::borrow::Cow::Borrowed(_)
+            ));
+        }
+        assert!(
+            upstream_url_with_resolved_endpoint(
+                &deployment,
+                &issued,
+                "https://unrelated.example.test/v1/embeddings"
+            )
+            .is_err()
+        );
+        deployment.oxllm_params.api_base = Some("https://operator.example.test/custom".into());
+        let explicit = "https://operator.example.test/custom/embeddings?value=a%2Fb";
+        assert_eq!(
+            upstream_url_with_resolved_endpoint(&deployment, &issued, explicit).unwrap(),
+            explicit
+        );
+    }
     use oxllm_core::deployment::OxllmParams;
     use oxllm_providers::anthropic::AnthropicProvider;
     use oxllm_providers::openai::OpenAiProvider;

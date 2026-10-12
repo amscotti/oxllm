@@ -4,6 +4,9 @@ use oxllm_core::deployment::{Deployment, OxllmParams};
 use oxllm_core::provider::{ChatProvider, Provider, ResolvedCredentials};
 use serde_json::json;
 
+#[path = "converse_protocol_tests.rs"]
+mod converse_protocol_tests;
+
 fn bedrock_deployment(model: &str) -> Deployment {
     Deployment {
         model_name: "bedrock-claude".to_string(),

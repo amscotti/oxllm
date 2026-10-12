@@ -64,13 +64,7 @@ pub async fn messages(
         .and_then(|v| v.as_str())
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| ApiError::bad_request("missing required field: 'model'"))?;
-    crate::pipeline::check_model_acl(
-        &auth,
-        model,
-        auth.key_models.as_deref(),
-        auth.team_models.as_deref(),
-        auth.user_models.as_deref(),
-    )?;
+    crate::pipeline::check_request_model_acl(&state, &auth, model, &request_body, &headers).await?;
 
     let chat_body = anthropic_to_openai_request(&request_body);
     let chat_bytes = serde_json::to_vec(&chat_body)

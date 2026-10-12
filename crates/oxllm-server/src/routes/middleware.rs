@@ -214,6 +214,7 @@ pub(crate) fn build_proxy_cors(
                 // Oxllm-native transparency headers.
                 axum::http::HeaderName::from_static("x-oxllm-request-id"),
                 axum::http::HeaderName::from_static("x-oxllm-response-cost"),
+                axum::http::HeaderName::from_static("x-oxllm-key-spend"),
                 axum::http::HeaderName::from_static("x-oxllm-total-tokens"),
                 axum::http::HeaderName::from_static("x-oxllm-router-strategy"),
                 axum::http::HeaderName::from_static("x-oxllm-router-decision"),
@@ -584,6 +585,10 @@ mod tests {
         assert!(
             expose.contains("x-oxllm-request-id"),
             "expose-headers must include x-oxllm-request-id, got: {expose}"
+        );
+        assert!(
+            expose.contains("x-oxllm-key-spend"),
+            "expose-headers must include x-oxllm-key-spend, got: {expose}"
         );
         assert!(
             expose.contains("x-ratelimit-remaining-tokens"),

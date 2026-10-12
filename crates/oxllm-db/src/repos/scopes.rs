@@ -15,13 +15,44 @@ pub(super) enum Scope {
 
 impl Database {
     pub(super) async fn delete_scope(&self, scope: Scope, id: &str) -> Result<ScopeDeletion> {
+        self.delete_scope_on_graph(scope, id, false).await
+    }
+
+    /// Native team deletion also validates the keys whose team will be cleared.
+    /// Projects owned by this team become ownerless in the same transaction.
+    pub async fn delete_team_scoped(&self, team_id: &str) -> Result<ScopeDeletion> {
+        self.delete_scope_on_graph(Scope::Team, team_id, true).await
+    }
+
+    async fn delete_scope_on_graph(
+        &self,
+        scope: Scope,
+        id: &str,
+        check_team_links: bool,
+    ) -> Result<ScopeDeletion> {
         let (table, column, detach_projects) = match scope {
             Scope::Organization => ("organizations", "org_id", true),
             Scope::Project => ("projects", "project_id", false),
             Scope::Team => ("teams", "team_id", true),
             Scope::User => ("users", "user_id", false),
         };
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.begin_scope_links().await?;
+        let exists = format!(
+            "SELECT {column} FROM {table} WHERE {column} = {}",
+            self.ph(1)
+        );
+        if sqlx::query(&exists)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_none()
+        {
+            tx.rollback().await?;
+            return Ok(ScopeDeletion::default());
+        }
+        if check_team_links {
+            self.validate_deleted_team_links_on(&mut tx, id).await?;
+        }
         // Identifiers are selected exclusively by Scope, never client input.
         let q = format!("DELETE FROM {table} WHERE {column} = {}", self.ph(1));
         let deleted = sqlx::query(&q)

@@ -42,19 +42,14 @@ pub async fn completions(
 
     crate::security::check_json_depth(&request_body, crate::security::MAX_JSON_DEPTH)?;
     crate::orchestration::request_controls::validate(&request_body)?;
+    let state = shared.load_full();
 
     let model = request_body
         .get("model")
         .and_then(Value::as_str)
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| ApiError::bad_request("missing required field: 'model'"))?;
-    crate::pipeline::check_model_acl(
-        &auth,
-        model,
-        auth.key_models.as_deref(),
-        auth.team_models.as_deref(),
-        auth.user_models.as_deref(),
-    )?;
+    crate::pipeline::check_request_model_acl(&state, &auth, model, &request_body, &headers).await?;
 
     validate_legacy_prompt(&request_body)?;
 
@@ -72,7 +67,6 @@ pub async fn completions(
     let bytes = serde_json::to_vec(&chat_body)
         .map_err(|e| ApiError::internal(format!("failed to serialize chat body: {e}")))?;
 
-    let state = shared.load_full();
     let chat_response = chat_completions_inner(state, &auth, &headers, Bytes::from(bytes)).await?;
     if !chat_response.status().is_success() {
         return Ok(chat_response);
