@@ -182,7 +182,7 @@ curl http://localhost:4000/v1/chat/completions \
 | Mistral | ✅ | ✅ | ✅ | ✅ | — |
 | Cohere | ✅ | ✅ | ✅ | ✅ | — |
 | Azure OpenAI | ✅ | ✅ | ✅ | ✅ | — |
-| Azure AI Foundry | ✅ | ✅ | ✅ (text) | ✅ | ✅ (Claude) |
+| Azure AI Foundry | ✅ | ✅ | ✅ (text + Cohere images) | ✅ | ✅ (Claude) |
 
 oxllm ships **35** provider transforms behind feature flags (all on by
 default) — including the ones above plus Bedrock, Bedrock Mantle, Vertex AI,
@@ -193,8 +193,11 @@ Watsonx, DashScope, Deepgram, ElevenLabs, Meta, Replicate, and Baseten. See
 above cover the most common providers; the others follow the same OpenAI-
 or native-shape contracts.
 
-Foundry uses the `azure_ai/` slug; native Cohere configurations also recognize
-its text-embedding contract. See [the Foundry sample](examples/config.foundry.yaml)
+Foundry uses the `azure_ai/` slug and supports Cohere image data-URI embeddings
+through `/v1/embeddings`, including mixed text/image batches with ordered results
+and summed usage. Native
+Cohere configurations also recognize its text-embedding contract.
+See [the Foundry sample](examples/config.foundry.yaml)
 and [operations guide](docs/operations.md) for authentication overrides,
 IPv4-only transport, Converse history repairs and background Vertex renewal.
 

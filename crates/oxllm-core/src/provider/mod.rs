@@ -5,9 +5,13 @@
 //! functions** — no network, no async.
 
 mod auth;
+mod embedding;
 pub mod realtime;
 
 pub use auth::apply_auth_overrides;
+pub use embedding::{
+    EmbeddingRequest, EmbeddingRequestBatch, EmbeddingRequestPlan, is_base64_data_uri,
+};
 
 pub use realtime::RealtimeProvider;
 
@@ -135,11 +139,29 @@ pub trait ChatProvider: Send + Sync {
 /// Mirrors [`ChatProvider`] but for `POST /v1/embeddings`. All methods are
 /// pure synchronous functions.
 pub trait EmbeddingProvider: Send + Sync {
+    /// Prepare native requests, optionally partitioning different input types.
+    /// Ownership is transferred without copying the parameter source. The host
+    /// applies its outbound policy, authentication and transport afterwards.
+    fn prepare_requests(
+        &self,
+        request: Value,
+        deployment: &Deployment,
+    ) -> Result<EmbeddingRequestPlan> {
+        let url = self.embedding_url_for_request(deployment, &request);
+        let body = self.transform_request(&request, deployment)?;
+        Ok(EmbeddingRequestPlan::Single(EmbeddingRequest {
+            url,
+            body,
+            params: request,
+            allowed_fields: None,
+        }))
+    }
+
     /// Build the upstream embeddings URL for this deployment.
     fn embedding_url(&self, deployment: &Deployment) -> String;
 
-    /// Request-aware URL for wildcard deployments. Fixed deployments use the
-    /// ordinary URL unless the provider overrides this method.
+    /// Request-aware URL for wildcard deployments or input-specific routes.
+    /// Fixed deployments use the ordinary URL unless the provider overrides it.
     fn embedding_url_for_request(&self, deployment: &Deployment, _request: &Value) -> String {
         self.embedding_url(deployment)
     }
@@ -340,6 +362,46 @@ impl ResolvedCredentials {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn ordinary_embedding_plans_move_the_parameter_source_without_a_deep_clone() {
+        struct Ordinary;
+        impl EmbeddingProvider for Ordinary {
+            fn embedding_url(&self, _: &Deployment) -> String {
+                "https://example.test/embeddings".into()
+            }
+            fn apply_auth(
+                &self,
+                _: &Deployment,
+                _: &ResolvedCredentials,
+                _: &mut HashMap<String, String>,
+            ) {
+            }
+            fn transform_request(&self, request: &Value, _: &Deployment) -> Result<Value> {
+                Ok(request.clone())
+            }
+            fn transform_response(&self, body: &Value, _: &str) -> Result<Value> {
+                Ok(body.clone())
+            }
+        }
+        let request =
+            serde_json::json!({"input":["one", "two"], "model":"test-model", "extra":"kept"});
+        let pointer = request["input"][0].as_str().unwrap().as_ptr();
+        let expected = request.clone();
+        let EmbeddingRequestPlan::Single(prepared) = Ordinary
+            .prepare_requests(request, &Deployment::default())
+            .unwrap()
+        else {
+            panic!("ordinary providers are not batched")
+        };
+        assert_eq!(
+            prepared.params["input"][0].as_str().unwrap().as_ptr(),
+            pointer
+        );
+        assert_eq!(prepared.body, expected);
+        assert_eq!(prepared.params, expected);
+        assert!(prepared.allowed_fields.is_none());
+    }
 
     #[test]
     fn best_effort_bearer_returns_some_for_bearer_variants() {

@@ -928,6 +928,7 @@ pub(crate) fn inference_path(path: &str) -> bool {
             | "messages"
             | "messages/count_tokens"
             | "embeddings"
+            | "images/embeddings"
             | "responses"
             | "rerank"
             | "images/generations"

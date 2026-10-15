@@ -7,6 +7,7 @@ in-process against [httpmock](https://docs.rs/httpmock) upstreams unless noted.
 |------|----------------|
 | `chat_e2e.rs` | Chat completions lifecycle |
 | `embeddings_completions_e2e.rs` | Embeddings + legacy completions |
+| `azure_ai_embeddings_e2e.rs` | Foundry Cohere image/text routing, mixed-batch order/usage, scalar inputs, cache/budget settlement and fallback/error contracts |
 | `messages_responses_e2e.rs` | Anthropic Messages + OpenAI Responses |
 | `request_attribution_e2e.rs` | Bounded identities, session/call-id correlation, denial/partial attribution, spend aliases, scoped model errors and free-group admission |
 | `router_e2e.rs` | Routing, retries, fallbacks, wildcards, adaptive bandit routing |

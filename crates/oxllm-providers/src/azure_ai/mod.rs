@@ -1,17 +1,20 @@
-//! Azure AI Foundry chat and text embeddings. Claude uses native Anthropic
-//! messages; other chat models and text embeddings use the OpenAI wire shape.
+//! Azure AI Foundry chat and embeddings. Claude uses native Anthropic messages;
+//! Cohere image embeddings use a separate route from OpenAI-shaped text inputs.
 //! Explicit resource bases, endpoint queries and deployment names are retained.
 
 use std::collections::HashMap;
 
 use oxllm_core::provider::{
-    ChatProvider, EmbeddingProvider, Provider, ProviderId, ResolvedCredentials,
+    ChatProvider, EmbeddingProvider, EmbeddingRequestPlan, Provider, ProviderId,
+    ResolvedCredentials,
 };
 use oxllm_core::{Deployment, Endpoint, Error, Result};
 use serde_json::{Value, json};
 
 use crate::anthropic::AnthropicProvider;
 use crate::openai_compat::OpenAiCompatProvider;
+
+mod embeddings;
 
 const COMPAT: OpenAiCompatProvider = OpenAiCompatProvider::new(
     "azure_ai",
@@ -22,7 +25,7 @@ const COMPAT: OpenAiCompatProvider = OpenAiCompatProvider::new(
     true,
 );
 
-/// Azure AI Foundry adapter for vendor chat and text embeddings.
+/// Azure AI Foundry adapter for vendor chat and embeddings.
 #[derive(Debug, Clone, Default)]
 pub struct AzureAiProvider;
 
@@ -320,8 +323,28 @@ impl ChatProvider for AzureAiProvider {
 }
 
 impl EmbeddingProvider for AzureAiProvider {
+    fn prepare_requests(
+        &self,
+        request: Value,
+        deployment: &Deployment,
+    ) -> Result<EmbeddingRequestPlan> {
+        let resolved = Self::resolved(&request, deployment)?;
+        embeddings::prepare_requests(request, &resolved)
+    }
+
     fn embedding_url(&self, deployment: &Deployment) -> String {
         crate::util::foundry_endpoint_url(deployment, "embeddings", false)
+    }
+
+    fn embedding_url_for_request(&self, deployment: &Deployment, request: &Value) -> String {
+        let Ok(resolved) = Self::resolved(request, deployment) else {
+            return self.embedding_url(deployment);
+        };
+        if embeddings::is_image_request(request, &resolved) {
+            embeddings::image_url(&resolved)
+        } else {
+            self.embedding_url(&resolved)
+        }
     }
 
     fn apply_auth(
@@ -334,11 +357,17 @@ impl EmbeddingProvider for AzureAiProvider {
     }
 
     fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
-        EmbeddingProvider::transform_request(
-            &COMPAT,
-            request,
-            &Self::resolved(request, deployment)?,
-        )
+        let resolved = Self::resolved(request, deployment)?;
+        let request = embeddings::normalize_input(request);
+        if embeddings::is_image_request(&request, &resolved) {
+            return Ok(embeddings::image_body(&request, &resolved));
+        }
+        if embeddings::has_image_input(&request, &resolved) {
+            return Err(Error::BadRequest(
+                "mixed image/text embeddings require separate request batches".into(),
+            ));
+        }
+        EmbeddingProvider::transform_request(&COMPAT, &request, &resolved)
     }
 
     fn transform_response(&self, body: &Value, model: &str) -> Result<Value> {

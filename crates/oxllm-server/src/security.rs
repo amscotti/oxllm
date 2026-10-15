@@ -1139,7 +1139,7 @@ pub async fn read_bounded_bytes(
 /// collected (with the reqwest detail logged server-side only, matching
 /// [`read_bounded_bytes`]'s redaction contract): the upstream status plus a
 /// partial body is more truthful than a generic 500.
-async fn read_error_body_capped(response: reqwest::Response, cap: usize) -> Vec<u8> {
+pub(crate) async fn read_error_body_capped(response: reqwest::Response, cap: usize) -> Vec<u8> {
     let mut buf: Vec<u8> = Vec::with_capacity(cap);
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {

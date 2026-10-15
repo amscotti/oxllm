@@ -899,17 +899,17 @@ async fn test_embeddings_timeout_returns_504() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_embeddings_rejects_oversized_upstream_error_body() {
+async fn test_embeddings_truncates_oversized_upstream_error_body_without_losing_status() {
     let mock = MockServer::start();
     let mut config = make_proxy_config(&mock.base_url(), "emb-big-err", "openai/emb-big-err");
-    // Fail fast: do not retry the bounded-read failure across attempts.
+    // Fail fast: one provider error should remain one bounded response.
     config.oxllm_settings.routing.num_retries = Some(0);
     let handle = start_oxllm(config).await.expect("server start");
 
     let oversized_error_body = "x".repeat(oxllm_server::security::MAX_ERROR_BODY_BYTES * 4);
-    mock.mock(|when, then| {
+    let wire = mock.mock(|when, then| {
         when.method(httpmock::Method::POST).path("/embeddings");
-        then.status(500)
+        then.status(403)
             .header("content-type", "application/json")
             .body(oversized_error_body);
     });
@@ -922,22 +922,22 @@ async fn test_embeddings_rejects_oversized_upstream_error_body() {
         .await
         .expect("request");
 
-    // The streaming bounded read aborts at MAX_ERROR_BODY_BYTES and surfaces a
-    // bounded 5xx instead of hanging or OOMing on the oversized error payload.
-    assert!(
-        resp.status().is_server_error(),
-        "oversized upstream error body must yield a bounded server error, got {}",
-        resp.status()
+    assert_eq!(
+        resp.status(),
+        403,
+        "truncating the body must not replace the provider status"
     );
     let body: Value = resp.json().await.expect("json body");
     let msg = body["error"]["message"]
         .as_str()
         .expect("error message")
         .to_string();
-    assert!(
-        msg.contains("exceeds") && msg.contains("limit"),
-        "error should report the body-size limit, got: {msg}"
+    assert_eq!(
+        msg, "upstream error",
+        "non-JSON provider payloads use a bounded generic message"
     );
+    assert_eq!(body["error"]["type"], "permission_error");
+    wire.assert_hits(1);
 
     let _ = handle.shutdown_tx.send(());
 }

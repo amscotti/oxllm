@@ -119,7 +119,7 @@ pub(crate) fn uses_foundry_inference(deployment: &Deployment) -> bool {
             .is_some_and(is_foundry_base)
 }
 
-/// Build Foundry chat, native Anthropic, or text-embedding URLs, retaining
+/// Build Foundry chat, native Anthropic, or embedding URLs, retaining
 /// explicit query versions and normalizing full operation paths for reuse.
 #[cfg(any(feature = "cohere", feature = "azure_ai"))]
 pub(crate) fn foundry_endpoint_url(
@@ -142,6 +142,7 @@ pub(crate) fn foundry_endpoint_url(
     for suffix in [
         "/messages/count_tokens",
         "/chat/completions",
+        "/images/embeddings",
         "/embeddings",
         "/embed",
         "/messages",

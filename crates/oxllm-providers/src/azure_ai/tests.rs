@@ -279,6 +279,298 @@ fn embeddings_are_openai_shaped_and_keep_dimensions_and_usage() {
 }
 
 #[test]
+fn image_embeddings_use_a_distinct_route_and_a_native_allowlisted_body() {
+    let mut deployment = deployment(
+        "embed-v-4-0",
+        "https://resource.services.ai.azure.com/models/embeddings/",
+    );
+    deployment.oxllm_params.api_version = Some("2024-05-01-preview".into());
+    let request = json!({
+        "model":"alias", "input":["data:image/png;base64,aGVsbG8="],
+        "input_type":"image", "dimensions":512, "encoding_format":"float",
+        "user":"test-user", "metadata":{"ignored":true}
+    });
+    assert_eq!(
+        AzureAiProvider.embedding_url_for_request(&deployment, &request),
+        "https://resource.services.ai.azure.com/models/images/embeddings?api-version=2024-05-01-preview"
+    );
+    let body =
+        EmbeddingProvider::transform_request(&AzureAiProvider, &request, &deployment).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "model":"embed-v-4-0", "input":[{"image":"data:image/png;base64,aGVsbG8="}],
+            "dimensions":512, "encoding_format":"float"
+        })
+    );
+}
+
+#[test]
+fn image_embedding_urls_normalize_full_paths_and_preserve_query_versions() {
+    let request = json!({"input":"data:image/png;base64,YWJj"});
+    for base in [
+        "https://resource.services.ai.azure.com",
+        "https://resource.services.ai.azure.com/models/",
+        "https://resource.services.ai.azure.com/models/embeddings",
+        "https://resource.services.ai.azure.com/models/images/embeddings/",
+        "https://resource.services.ai.azure.com/models/chat/completions",
+    ] {
+        let configured = deployment("embed-v-4-0", base);
+        assert_eq!(
+            AzureAiProvider.embedding_url_for_request(&configured, &request),
+            "https://resource.services.ai.azure.com/models/images/embeddings?api-version=2024-05-01-preview",
+            "{base}"
+        );
+        assert_eq!(
+            AzureAiProvider.embedding_url(&configured),
+            "https://resource.services.ai.azure.com/models/embeddings",
+            "text defaults must not change for {base}"
+        );
+    }
+    for base in [
+        "https://resource.services.ai.azure.com/models/images/embeddings/?api-version=existing&trace=kept#fragment",
+        "https://resource.services.ai.azure.com/models/embeddings?api-version=existing&trace=kept#fragment",
+    ] {
+        let mut configured = deployment("embed-v-4-0", base);
+        configured.oxllm_params.api_version = Some("configured".into());
+        assert_eq!(
+            AzureAiProvider.embedding_url_for_request(&configured, &request),
+            "https://resource.services.ai.azure.com/models/images/embeddings?api-version=existing&trace=kept#fragment"
+        );
+    }
+    let mut configured = deployment(
+        "embed-v-4-0",
+        "https://gateway.example.test/prefix/models/images/embeddings?trace=kept#fragment",
+    );
+    configured.oxllm_params.api_version = Some("version with +&=#%?".into());
+    assert_eq!(
+        AzureAiProvider.embedding_url_for_request(&configured, &request),
+        "https://gateway.example.test/prefix/models/images/embeddings?trace=kept&api-version=version%20with%20%2B%26%3D%23%25%3F#fragment"
+    );
+}
+
+#[test]
+fn mixed_embedding_batches_are_disjoint_and_move_native_inputs_without_copying() {
+    let configured = deployment(
+        "embed-v-4-0",
+        "https://resource.services.ai.azure.com/models",
+    );
+    let request = json!({"model":"alias", "input":[
+        "data:image/png;base64,YWJj", "first text", "data:image/jpeg;base64,/9j/", "second text"
+    ], "dimensions":256, "encoding_format":"base64", "input_type":"image"});
+    let image_pointer = request["input"][0].as_str().unwrap().as_ptr();
+    let text_pointer = request["input"][1].as_str().unwrap().as_ptr();
+    let EmbeddingRequestPlan::Batched(batches) = AzureAiProvider
+        .prepare_requests(request, &configured)
+        .unwrap()
+    else {
+        panic!("mapped plan")
+    };
+    assert_eq!(batches.len(), 2);
+    assert_eq!(batches[0].input_indices, vec![1, 3]);
+    assert_eq!(
+        batches[0].upstream.body["input"],
+        json!(["first text", "second text"])
+    );
+    assert_eq!(batches[1].input_indices, vec![0, 2]);
+    let body = &batches[1].upstream.body;
+    assert_eq!(
+        body["input"][0]["image"].as_str().unwrap().as_ptr(),
+        image_pointer
+    );
+    assert_eq!(
+        batches[0].upstream.body["input"][0]
+            .as_str()
+            .unwrap()
+            .as_ptr(),
+        text_pointer
+    );
+    assert_eq!(
+        body,
+        &json!({"model":"embed-v-4-0", "input":[
+        {"image":"data:image/png;base64,YWJj"}, {"image":"data:image/jpeg;base64,/9j/"}
+    ], "dimensions":256, "encoding_format":"base64"})
+    );
+    assert!(matches!(
+        AzureAiProvider.prepare_requests(
+            json!({"input":["data:image/png;base64,YWJj", 123]}),
+            &configured
+        ),
+        Err(Error::BadRequest(_))
+    ));
+}
+
+#[test]
+fn scalar_and_pure_embedding_inputs_need_only_one_batch() {
+    let configured = deployment(
+        "embed-v-4-0",
+        "https://resource.services.ai.azure.com/models",
+    );
+    for input in [
+        json!("data:image/png;base64,YWJj"),
+        json!(["data:image/png;base64,YWJj"]),
+        json!(["data:image/png;base64,YWJj", "data:image/jpeg;base64,/9j/"]),
+    ] {
+        let request = json!({"input":input});
+        let EmbeddingRequestPlan::Batched(batches) = AzureAiProvider
+            .prepare_requests(request, &configured)
+            .unwrap()
+        else {
+            panic!("mapped plan")
+        };
+        assert_eq!(batches.len(), 1);
+        assert!(!batches[0].input_indices.is_empty());
+        let body = &batches[0].upstream.body;
+        assert!(
+            body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|input| input.get("image").is_some())
+        );
+    }
+    let request = json!({"input":"ordinary text"});
+    let EmbeddingRequestPlan::Single(prepared) = AzureAiProvider
+        .prepare_requests(request, &configured)
+        .unwrap()
+    else {
+        panic!("single plan")
+    };
+    let body = prepared.body;
+    assert_eq!(body["input"], json!(["ordinary text"]));
+    let request = json!({"input":["Dog", "aGVsbG8=", "", "data:image/png;base64,invalid!"]});
+    assert!(matches!(
+        AzureAiProvider
+            .prepare_requests(request.clone(), &configured)
+            .unwrap(),
+        EmbeddingRequestPlan::Single(_)
+    ));
+    assert_eq!(
+        EmbeddingProvider::transform_request(&AzureAiProvider, &request, &configured).unwrap()["input"],
+        request["input"]
+    );
+}
+
+#[test]
+fn cohere_image_selection_uses_concrete_models_and_explicit_base_model_hints() {
+    let request = json!({"model":"azure_ai/embed-v-4-0", "input":["data:image/png;base64,YWJj"]});
+    for model in [
+        "embed-v-4-0",
+        "Cohere-embed-v4",
+        "cohere/embed-v4.0",
+        "embed-english-v3.0",
+        "*",
+    ] {
+        let configured = deployment(model, "https://resource.services.ai.azure.com/models");
+        assert!(
+            AzureAiProvider
+                .embedding_url_for_request(&configured, &request)
+                .contains("/images/embeddings?"),
+            "{model}"
+        );
+        let EmbeddingRequestPlan::Batched(batches) = AzureAiProvider
+            .prepare_requests(request.clone(), &configured)
+            .unwrap()
+        else {
+            panic!("mapped plan")
+        };
+        assert_eq!(batches.len(), 1);
+        assert!(
+            !batches[0].upstream.body["model"]
+                .as_str()
+                .unwrap()
+                .contains('*')
+        );
+    }
+    let mut configured = deployment(
+        "private-deployment",
+        "https://resource.services.ai.azure.com/models",
+    );
+    configured.model_info = Some(oxllm_core::deployment::ModelInfo {
+        base_model: Some("cohere/embed-v4.0".into()),
+        ..Default::default()
+    });
+    assert!(
+        AzureAiProvider
+            .embedding_url_for_request(&configured, &request)
+            .contains("/images/embeddings?")
+    );
+    assert_eq!(
+        EmbeddingProvider::transform_request(&AzureAiProvider, &request, &configured).unwrap()["model"],
+        "private-deployment"
+    );
+    configured.model_info = None;
+    configured
+        .oxllm_params
+        .extra
+        .insert("base_model".into(), json!("cohere/embed-v4.0"));
+    assert!(
+        AzureAiProvider
+            .embedding_url_for_request(&configured, &request)
+            .contains("/images/embeddings?")
+    );
+    for model in [
+        "text-embedding-3-large",
+        "custom-embedding",
+        "embed-vision-v1",
+    ] {
+        let configured = deployment(model, "https://resource.services.ai.azure.com/models");
+        assert_eq!(
+            AzureAiProvider.embedding_url_for_request(&configured, &request),
+            AzureAiProvider.embedding_url(&configured)
+        );
+        assert!(matches!(
+            AzureAiProvider
+                .prepare_requests(request.clone(), &configured)
+                .unwrap(),
+            EmbeddingRequestPlan::Single(_)
+        ));
+        assert_eq!(
+            EmbeddingProvider::transform_request(&AzureAiProvider, &request, &configured).unwrap()
+                ["input"],
+            request["input"]
+        );
+    }
+}
+
+#[test]
+fn image_embeddings_retain_documented_auth_and_explicit_credential_overrides() {
+    let mut configured = deployment(
+        "embed-v-4-0",
+        "https://resource.services.ai.azure.com/models",
+    );
+    for (creds, expected) in [
+        (
+            ResolvedCredentials::from_key("key"),
+            HashMap::from([("api-key".into(), "key".into())]),
+        ),
+        (
+            ResolvedCredentials::AzureAd {
+                token: "entra".into(),
+            },
+            HashMap::from([("authorization".into(), "Bearer entra".into())]),
+        ),
+    ] {
+        let mut headers = HashMap::new();
+        EmbeddingProvider::apply_auth(&AzureAiProvider, &configured, &creds, &mut headers);
+        assert_eq!(headers, expected);
+    }
+    configured.oxllm_params.auth_header = Some("x-custom-key".into());
+    configured.oxllm_params.auth_scheme = Some("Token".into());
+    let mut headers = HashMap::new();
+    EmbeddingProvider::apply_auth(
+        &AzureAiProvider,
+        &configured,
+        &ResolvedCredentials::from_key("key"),
+        &mut headers,
+    );
+    assert_eq!(
+        headers,
+        HashMap::from([("x-custom-key".into(), "Token key".into())])
+    );
+}
+
+#[test]
 fn entra_tokens_and_deployment_auth_overrides_use_one_credential_header() {
     let mut deployment = deployment("grok", "https://resource.services.ai.azure.com/models");
     let mut headers = HashMap::new();

@@ -5,6 +5,21 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+### Azure Cohere image embeddings
+
+- Enforce the native image option allow-list after deployment allow/body overrides,
+  preserve opaque image payloads during PII masking and retain provider status on
+  oversized error bodies. Bound mixed attempts by one deadline and response budget.
+- Prepare owned native batches with an explicit single/batched contract, avoiding
+  added whole-request clones and repeated base64 decoding. Add wildcard, native
+  passthrough, text-failure, override and concurrent-accounting regressions.
+- Route Cohere image data-URI inputs on `azure_ai/` deployments to Foundry's
+  image embedding endpoint with the concrete model, API version and allow-listed
+  options. Accept scalar strings without changing text-batch requests.
+- Split mixed text/image inputs without forwarding images to the text endpoint,
+  validate/reorder response indices and sum per-batch usage before settlement.
+  Keep existing retry/fallback behavior and cache only complete responses.
+
 ### Request compatibility and session attribution
 
 - Reject oversized end-user/customer identities before admission and omit unsafe

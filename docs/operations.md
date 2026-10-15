@@ -123,7 +123,7 @@ provider-authenticated passthrough paths with API-key/bearer credentials; AWS
 signing remains owned by the signer.
 
 `azure_ai/` serves Foundry native Claude messages, compatible vendor chat and
-text embeddings. Configure the resource or full endpoint in `api_base`; existing
+text/image embeddings. Configure the resource or full endpoint in `api_base`; existing
 query strings are preserved and explicit `api_version` fills an absent
 `api-version` query. Native Claude Messages routes use `x-api-key`. Compatible
 vendor routes on unified `.services.ai.azure.com` resources use `api-key`;
@@ -132,6 +132,63 @@ deployments also recognize unified Foundry hosts, or `api_type: azure_ai` for
 custom gateways, and send `input` to `/models/embeddings`. Azure ML
 `llm_provider-num_tokens` headers are honored for embedding usage and cost.
 See [the Foundry configuration sample](../examples/config.foundry.yaml).
+
+On the translated `/v1/embeddings` endpoint, Cohere embedding models such as
+`azure_ai/embed-v-4-0` accept image data-URI inputs. These use
+`/models/images/embeddings` with `input: [{"image": "data:..."}]` and the
+resolved deployment's `model`. Only `dimensions` and `encoding_format` are
+forwarded as image options; this native allow-list is enforced after
+`allowed_openai_params` and `extra_body`, so neither can restore incompatible
+options such as Cohere's `input_type: image`. Supported dimensions/encoding
+overrides and configured headers still apply per leg. Opaque deployment names
+can declare `model_info.base_model: cohere/embed-v4.0` to select
+the same image behavior without changing their wire model name. Other model
+families remain on the text embedding route.
+
+Image detection requires a case-sensitive `data:` prefix and canonical standard
+base64 comprising the entire payload after the first comma. It intentionally
+does not require a particular media type or a `;base64` marker, matching migration
+behavior for well-formed data URIs. Malformed multi-comma payloads are stricter:
+the complete remainder must validate, not just its first segment. Malformed
+payloads and bare base64 strings remain text. Media/content validation is upstream-owned.
+All `azure_ai/` scalar string inputs, including non-Cohere models, are wrapped
+into one-item arrays. Existing text-array requests and other providers retain
+their wire shapes. Canonical image data URIs with safe `data:image/...` headers
+are opaque to regex PII masking; ordinary text and malformed data-like prose
+remain masked. Mixed inputs are split into non-empty text-only and image-only
+batches, never forwarding image data to
+the text route. Results are validated and reordered by original input index;
+known usage is summed after applying each response's Azure ML token header.
+Pure batches use one upstream call. Image URLs default to
+`api-version=2024-05-01-preview` only when neither an explicit query nor a
+deployment version supplies it; text URL defaults are unchanged.
+
+Batching stays inside one logical request's retry/fallback, reservation and
+cache lifecycle. Only a complete response is cached or returned as success;
+an upstream batch failure remains an error. Legs run sequentially so a failed
+text leg does not launch an image call. All legs in an attempt share one timeout
+deadline and a 50 MiB response budget; oversize upstream success or combined
+responses return 502. Large output batches can require fewer inputs or fewer
+dimensions even when the input data fits the request-body limit. Oversized error
+bodies are truncated while retaining the provider's status/backoff headers.
+
+Retries/fallbacks can restart the complete logical request and repeat an already
+successful leg. As with other unary retries, gateway spend reflects the completed
+successful attempt, not discarded failed-attempt work; a provider may bill that
+work separately. Router RPM/in-flight admission counts logical deployment picks,
+not individual HTTP legs or same-deployment retries, while successful TPM uses
+the sum of all legs. Size provider limits conservatively for mixed traffic and
+retries; upstream 429/backoff signals are retained.
+
+Provider-prefixed passthrough routes remain native: they do not classify or split
+inputs. With an `api_base` ending in `/models`, for example, use
+`/azure_ai/images/embeddings?api-version=...` with the native image body, or use
+`/v1/embeddings` for automatic translation. Native image embeddings require a
+model selector just like native text embeddings.
+
+The [Azure image request schema](https://github.com/Azure/azure-rest-api-specs/blob/main/specification/ai/data-plane/ModelInference/models/image_embeddings.tsp)
+defines the native body; [the service authentication contract](https://github.com/Azure/azure-rest-api-specs/blob/main/specification/ai/data-plane/ModelInference/main.tsp)
+permits shared-key `api-key` and Entra Bearer authentication on this route.
 
 Azure OpenAI deployments identified by GPT-5/GPT-6/o-series names
 translate `max_tokens` to `max_completion_tokens`; an explicit modern limit

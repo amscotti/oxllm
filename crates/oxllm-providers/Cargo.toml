@@ -55,6 +55,7 @@ replicate = ["openai_compat"]
 meta = ["openai_compat"]
 baseten = ["openai_compat"]
 [dev-dependencies]
+base64.workspace = true
 criterion = { version = "0.5", default-features = false }
 
 [[test]]

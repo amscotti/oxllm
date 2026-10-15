@@ -24,7 +24,7 @@ model_list:
       api_base: os.environ/AZURE_AI_COHERE_API_BASE
       api_key: os.environ/AZURE_AI_COHERE_API_KEY
       api_version: 2024-05-01-preview
-      # Native cohere/ deployments can instead set api_type: azure_ai.
+      # Image inputs use azure_ai/. For text, cohere/ can set api_type: azure_ai.
 
 # For explicit Entra tokens, replace api_key with azure_ad_token. Shared keys
 # use x-api-key for native Claude and api-key for compatible unified routes.

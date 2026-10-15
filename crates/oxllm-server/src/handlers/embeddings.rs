@@ -8,6 +8,10 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use oxllm_core::UsageSummary;
+use oxllm_core::provider::{
+    EmbeddingProvider, EmbeddingRequest, EmbeddingRequestPlan, ResolvedCredentials,
+    is_base64_data_uri,
+};
 use serde_json::Value;
 
 use crate::auth::AuthUser;
@@ -21,6 +25,8 @@ use crate::state::SharedState;
 
 /// Default embeddings request timeout (seconds).
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
+
+mod batches;
 
 /// Embeddings handler.
 ///
@@ -151,7 +157,7 @@ pub(crate) async fn embeddings_inner_with_headers(
             let state = state.clone();
             let deployment = deployment.clone();
             let body = body.clone();
-            async move { call_upstream(&state, &deployment, &body).await }
+            async move { call_upstream(&state, &deployment, body).await }
         },
     )
     .await;
@@ -186,19 +192,52 @@ pub(crate) async fn embeddings_inner_with_headers(
 async fn call_upstream(
     state: &crate::state::AppState,
     deployment: &oxllm_core::Deployment,
-    request_body: &Value,
+    request_body: Value,
+) -> Result<UnaryUpstreamResponse, ApiError> {
+    let timeout_secs = crate::orchestration::request_controls::seconds(&request_body, "timeout")
+        .or(deployment.oxllm_params.timeout)
+        .unwrap_or_else(|| {
+            state
+                .config
+                .oxllm_settings
+                .request_timeout
+                .map(|t| t as f64)
+                .unwrap_or(DEFAULT_TIMEOUT_SECS as f64)
+        });
+    let deadline = tokio::time::Instant::now() + sanitize_timeout_secs(timeout_secs);
+    tokio::time::timeout_at(
+        deadline,
+        call_upstream_inner(state, deployment, request_body, deadline),
+    )
+    .await
+    .map_err(|_| ApiError::gateway_timeout())?
+}
+
+struct EmbeddingCall<'a> {
+    state: &'a crate::state::AppState,
+    deployment: &'a oxllm_core::Deployment,
+    embeddings: &'a dyn EmbeddingProvider,
+    creds: ResolvedCredentials,
+    response_model: String,
+    estimated_input_tokens: u64,
+    deadline: tokio::time::Instant,
+}
+
+async fn call_upstream_inner(
+    state: &crate::state::AppState,
+    deployment: &oxllm_core::Deployment,
+    mut request_body: Value,
+    deadline: tokio::time::Instant,
 ) -> Result<UnaryUpstreamResponse, ApiError> {
     let provider = state
         .registry
         .resolve_for_deployment(deployment)
-        .cloned()
         .ok_or_else(|| {
             ApiError::upstream(
                 500,
                 format!("unsupported provider: '{}'", deployment.provider_slug()),
             )
         })?;
-
     let embeddings = provider.embeddings().ok_or_else(|| {
         ApiError::upstream(
             500,
@@ -208,7 +247,38 @@ async fn call_upstream(
             ),
         )
     })?;
-
+    let response_model = if deployment.oxllm_params.model.contains('*') {
+        let prefix = format!("{}/", deployment.provider_slug());
+        let requested = request_body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or(&deployment.oxllm_params.model);
+        format!(
+            "{prefix}{}",
+            requested.strip_prefix(&prefix).unwrap_or(requested)
+        )
+    } else {
+        deployment.oxllm_params.model.clone()
+    };
+    let estimated_input_tokens = if deployment.provider_slug() == "bedrock" {
+        match request_body.get("input") {
+            Some(Value::String(text)) => oxllm_core::tokens::estimate_tokens(text, &response_model),
+            Some(Value::Array(items)) => {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .fold(0u64, |total, text| {
+                        total.saturating_add(oxllm_core::tokens::estimate_tokens(
+                            text,
+                            &response_model,
+                        ))
+                    })
+            }
+            _ => 0,
+        }
+    } else {
+        0
+    };
     let creds = state
         .credential_resolver
         .resolve_for(deployment)
@@ -217,22 +287,73 @@ async fn call_upstream(
         .map_err(ApiError::from)?;
     let endpoint_deployment =
         crate::orchestration::upstream::deployment_with_resolved_region(deployment, &creds);
-    let url = embeddings.embedding_url_for_request(&endpoint_deployment, request_body);
-    // Transform errors are request-level (every sibling would fail the same
-    // way), so map them to a 4xx status so the executor classifies them as
-    // client errors and does not retry.
-    let mut request = request_body.clone();
-    crate::orchestration::request_controls::strip_before_transform(&mut request);
+    crate::orchestration::request_controls::strip_before_transform(&mut request_body);
     crate::orchestration::upstream::remove_additional_params(
-        &mut request,
+        &mut request_body,
         deployment.oxllm_params.additional_drop_params.as_deref(),
     );
-    let mut transformed = embeddings
-        .transform_request(&request, deployment)
+    let input_count = match request_body.get("input") {
+        Some(Value::Array(input)) => input.len(),
+        Some(Value::String(_)) => 1,
+        _ => 0,
+    };
+    let plan = embeddings
+        .prepare_requests(request_body, &endpoint_deployment)
         .map_err(transform_error_to_bad_request)?;
+    let call = EmbeddingCall {
+        state,
+        deployment,
+        embeddings,
+        creds,
+        response_model,
+        estimated_input_tokens,
+        deadline,
+    };
+    match plan {
+        EmbeddingRequestPlan::Single(request) => {
+            Ok(
+                call_upstream_batch(&call, request, crate::security::MAX_RESPONSE_BODY_BYTES)
+                    .await?
+                    .0,
+            )
+        }
+        EmbeddingRequestPlan::Batched(batches) => {
+            batches::validate_plan(&batches, input_count)?;
+            let mut remaining = crate::security::MAX_RESPONSE_BODY_BYTES;
+            let mut responses = Vec::with_capacity(batches.len());
+            // Sequential execution avoids spending the image leg's quota after
+            // a text failure. Both legs share one deadline and response budget.
+            for batch in batches {
+                let (response, bytes) =
+                    call_upstream_batch(&call, batch.upstream, remaining).await?;
+                remaining = remaining.saturating_sub(bytes);
+                responses.push((batch.input_indices, response));
+            }
+            batches::combine(responses, input_count)
+        }
+    }
+}
+
+/// Send one provider-selected batch through the ordinary bounded/authenticated
+/// transport. Retry, reservation and cache hooks still see one logical request.
+async fn call_upstream_batch(
+    call: &EmbeddingCall<'_>,
+    request: EmbeddingRequest,
+    response_cap: usize,
+) -> Result<(UnaryUpstreamResponse, usize), ApiError> {
+    let state = call.state;
+    let deployment = call.deployment;
+    let embeddings = call.embeddings;
+    let creds = &call.creds;
+    let EmbeddingRequest {
+        url,
+        body: mut transformed,
+        params,
+        allowed_fields,
+    } = request;
     crate::orchestration::upstream::restore_allowed_params(
         &mut transformed,
-        &request,
+        &params,
         deployment.oxllm_params.allowed_openai_params.as_deref(),
         Some(&["model", "input", "encoding_format", "dimensions"]),
     );
@@ -242,14 +363,21 @@ async fn call_upstream(
         deployment.oxllm_params.additional_drop_params.as_deref(),
         deployment.oxllm_params.extra_body.as_ref(),
     );
+    drop(params);
+    if let Some(allowed) = allowed_fields
+        && let Some(body) = transformed.as_object_mut()
+    {
+        body.retain(|field, _| allowed.contains(&field.as_str()));
+    }
 
     let mut headers = HashMap::new();
-    embeddings.apply_auth(deployment, &creds, &mut headers);
-    oxllm_core::provider::apply_auth_overrides(deployment, &creds, &mut headers);
+    embeddings.apply_auth(deployment, creds, &mut headers);
+    oxllm_core::provider::apply_auth_overrides(deployment, creds, &mut headers);
     crate::orchestration::upstream::merge_extra_headers(&mut headers, deployment);
 
     let body_bytes = serde_json::to_vec(&transformed)
         .map_err(|e| ApiError::internal(format!("failed to serialize request body: {e}")))?;
+    drop(transformed);
     // Bedrock signs the exact body bytes. Serialize once, then send those
     // bytes, so the signature matches the payload on the wire.
     if let oxllm_core::provider::ResolvedCredentials::AwsSigV4 {
@@ -257,7 +385,7 @@ async fn call_upstream(
         secret_key,
         session_token,
         region,
-    } = &creds
+    } = creds
     {
         let mut header_pairs: Vec<(String, String)> = headers
             .iter()
@@ -284,22 +412,14 @@ async fn call_upstream(
         headers = header_pairs.into_iter().collect();
     }
 
-    let timeout_secs = crate::orchestration::request_controls::seconds(request_body, "timeout")
-        .or(deployment.oxllm_params.timeout)
-        .unwrap_or_else(|| {
-            state
-                .config
-                .oxllm_settings
-                .request_timeout
-                .map(|t| t as f64)
-                .unwrap_or(DEFAULT_TIMEOUT_SECS as f64)
-        });
-
     let mut req_builder = state
         .http_client
         .post(&url)
         .header("content-type", "application/json")
-        .timeout(sanitize_timeout_secs(timeout_secs))
+        .timeout(
+            call.deadline
+                .saturating_duration_since(tokio::time::Instant::now()),
+        )
         .body(body_bytes);
 
     for (key, value) in &headers {
@@ -326,17 +446,13 @@ async fn call_upstream(
         // signal are silently dropped.
         let headers = response.headers().clone();
         let status_u16 = status.as_u16();
-        // Bound the error body read so a malicious/buggy upstream cannot hang
-        // the handler or exhaust memory streaming back an unbounded error
-        // payload. Stream into a buffer capped at `MAX_ERROR_BODY_BYTES`,
-        // aborting mid-stream on overflow (mirrors the chat error path in
-        // `orchestration/upstream.rs`); the `Content-Length` pre-check inside
-        // `read_bounded_bytes` rejects an honestly-advertised oversized body
-        // before any I/O.
-        let bytes =
-            crate::security::read_bounded_bytes(response, crate::security::MAX_ERROR_BODY_BYTES)
-                .await
-                .map_err(|e| e.with_headers(Some(headers.clone())))?;
+        // Truncate oversized error bodies, retaining the actionable provider
+        // status and retry headers rather than replacing them with a 500.
+        let bytes = crate::security::read_error_body_capped(
+            response,
+            crate::security::MAX_ERROR_BODY_BYTES,
+        )
+        .await;
         let body_text = String::from_utf8_lossy(&bytes).to_string();
         let body: Value = serde_json::from_str(&body_text).unwrap_or(Value::Null);
         let message = body
@@ -366,9 +482,8 @@ async fn call_upstream(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|tokens| *tokens > 0);
-    let bytes =
-        crate::security::read_bounded_bytes(response, crate::security::MAX_RESPONSE_BODY_BYTES)
-            .await?;
+    let bytes = read_embedding_response(response, response_cap, &response_headers).await?;
+    let response_bytes = bytes.len();
     let response_body: Value = serde_json::from_slice(&bytes).map_err(|e| {
         tracing::error!(
             error.kind = "serialization",
@@ -378,51 +493,33 @@ async fn call_upstream(
         ApiError::internal("failed to parse embeddings response as JSON")
     })?;
 
-    let configured_model = &deployment.oxllm_params.model;
-    let response_model = if configured_model.contains('*') {
-        let prefix = format!("{}/", deployment.provider_slug());
-        let requested = request_body
-            .get("model")
-            .and_then(Value::as_str)
-            .unwrap_or(configured_model);
-        format!(
-            "{prefix}{}",
-            requested.strip_prefix(&prefix).unwrap_or(requested)
-        )
-    } else {
-        configured_model.clone()
-    };
     let mut transformed = embeddings
-        .transform_response(&response_body, &response_model)
+        .transform_response(&response_body, &call.response_model)
         .map_err(transform_error_to_bad_request)?;
 
-    // Foundry's Cohere text responses may meter through Azure ML headers.
+    // Foundry's Cohere responses may meter through Azure ML headers.
     // The reported count is authoritative even when the body has usage.
     if let Some(tokens) = foundry_input_tokens {
         transformed["usage"] = serde_json::json!({"prompt_tokens": tokens, "total_tokens": tokens});
     }
 
     if deployment.provider_slug() == "bedrock" && extract_embedding_usage(&transformed).is_none() {
-        let tokens = reported_input_tokens.unwrap_or_else(|| {
-            let model = &deployment.oxllm_params.model;
-            match request_body.get("input") {
-                Some(Value::String(text)) => oxllm_core::tokens::estimate_tokens(text, model),
-                Some(Value::Array(texts)) => {
-                    texts
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .fold(0u64, |total, text| {
-                            total.saturating_add(oxllm_core::tokens::estimate_tokens(text, model))
-                        })
-                }
-                _ => 0,
-            }
-        });
+        let tokens = reported_input_tokens.unwrap_or(call.estimated_input_tokens);
         transformed["usage"] = serde_json::json!({"prompt_tokens": tokens, "total_tokens": tokens});
     }
 
     let usage = extract_embedding_usage(&transformed);
-    Ok((transformed, usage, response_headers))
+    Ok(((transformed, usage, response_headers), response_bytes))
+}
+
+async fn read_embedding_response(
+    response: reqwest::Response,
+    cap: usize,
+    headers: &axum::http::HeaderMap,
+) -> Result<Vec<u8>, ApiError> {
+    crate::security::read_bounded_bytes(response, cap)
+        .await
+        .map_err(|error| ApiError::upstream(502, error.message).with_headers(Some(headers.clone())))
 }
 
 /// Explicit bad requests remain terminal. Adapter/configuration failures may
@@ -509,16 +606,28 @@ fn mask_embeddings_input(pii: &crate::guardrails::PiiGuardrail, body: &mut Value
     };
     match input {
         Value::String(s) => {
-            *s = pii.mask_text(s);
+            mask_embedding_text(pii, s);
         }
         Value::Array(items) => {
             for item in items.iter_mut() {
                 if let Value::String(s) = item {
-                    *s = pii.mask_text(s);
+                    mask_embedding_text(pii, s);
                 }
             }
         }
         _ => {}
+    }
+}
+
+fn mask_embedding_text(pii: &crate::guardrails::PiiGuardrail, text: &mut String) {
+    let opaque_image = text.split_once(',').is_some_and(|(header, _)| {
+        header.starts_with("data:image/")
+            && header
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b":/;=+.-".contains(&byte))
+    }) && is_base64_data_uri(text);
+    if !opaque_image {
+        *text = pii.mask_text(text);
     }
 }
 
@@ -540,6 +649,23 @@ mod tests {
     #[test]
     fn extract_embedding_usage_returns_none_when_missing() {
         assert!(extract_embedding_usage(&serde_json::json!({"data": []})).is_none());
+    }
+
+    #[test]
+    fn pii_masking_preserves_opaque_images_without_exempting_data_like_prose() {
+        let pii = crate::guardrails::PiiGuardrail::default();
+        let image = "data:image/png;base64,/4111111111111111/AA";
+        assert_ne!(
+            pii.mask_text(image),
+            image,
+            "the regression must exercise a real false positive"
+        );
+        let mut body = serde_json::json!({"input":[image, "contact john@example.com", "data:image/png;base64,john@example.com", "data:john@example.com,YWJj"]});
+        mask_embeddings_input(&pii, &mut body);
+        assert_eq!(body["input"][0], image);
+        for index in 1..4 {
+            assert!(body["input"][index].as_str().unwrap().contains("[EMAIL]"));
+        }
     }
 
     #[test]
@@ -604,22 +730,17 @@ mod tests {
         );
     }
 
-    /// The embeddings upstream error-body read must be bounded. The handler
-    /// now streams the body through `security::read_bounded_bytes` (capped at
-    /// `MAX_ERROR_BODY_BYTES`); this test pins the underlying byte-limit
-    /// contract that an oversized body is rejected, and the httpmock-driven
-    /// `read_bounded_bytes_*` tests below exercise the actual streaming
-    /// abort path.
+    /// Success reads reject oversized bodies; error reads instead truncate at
+    /// the smaller error cap while preserving the provider's status.
     #[test]
-    fn upstream_error_body_is_bounded() {
+    fn upstream_success_body_is_bounded() {
         // A body just under the limit is accepted.
         let ok = vec![b' '; crate::security::MAX_RESPONSE_BODY_BYTES];
         assert!(
             crate::security::check_bytes_limit(&ok).is_ok(),
             "body at the limit must be accepted"
         );
-        // One byte over the limit must be rejected — this is the broad guard
-        // the embeddings success/error reads fall back to via `check_content_length`.
+        // Success bodies one byte over the limit must be rejected.
         let mut big = ok.clone();
         big.push(b' ');
         assert!(
@@ -679,7 +800,7 @@ mod tests {
         assert_eq!(u.total_tokens, 7);
     }
 
-    /// `read_bounded_bytes` (shared by the embeddings success and error paths)
+    /// `read_bounded_bytes` (used by the embeddings success path)
     /// must abort mid-stream as soon as the body exceeds the cap, rather than
     /// buffering the whole payload first.
     #[tokio::test]
@@ -701,6 +822,26 @@ mod tests {
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             "streaming abort must surface a bounded error, not hang or OOM"
         );
+    }
+
+    #[tokio::test]
+    async fn oversized_embedding_success_is_a_bounded_upstream_502_not_an_internal_500() {
+        let server = httpmock::MockServer::start_async().await;
+        let wire = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET).path("/embedding");
+                then.status(200).body("x".repeat(128));
+            })
+            .await;
+        let response = reqwest::get(server.url("/embedding")).await.unwrap();
+        let headers = response.headers().clone();
+        let error = read_embedding_response(response, 64, &headers)
+            .await
+            .unwrap_err();
+        assert_eq!(error.status, axum::http::StatusCode::BAD_GATEWAY);
+        assert!(error.message.contains("64"));
+        assert!(error.headers.is_some());
+        wire.assert_hits_async(1).await;
     }
 
     /// `read_bounded_bytes` must return the full body intact when it stays
