@@ -162,6 +162,16 @@ impl ApiError {
         }
     }
 
+    /// Render a terminal, locally unresolved inference model as an invalid
+    /// model parameter. Invoke at the HTTP boundary, after fallback handling;
+    /// resource lookups and genuine provider 404s retain their own semantics.
+    pub(crate) fn for_inference(mut self) -> Self {
+        if self.status == StatusCode::NOT_FOUND && self.code.as_deref() == Some("model_not_found") {
+            self.status = StatusCode::BAD_REQUEST;
+        }
+        self
+    }
+
     /// 429 Too Many Requests.
     pub fn rate_limited(msg: impl Into<String>) -> Self {
         Self {
@@ -509,6 +519,33 @@ mod tests {
         assert_eq!(err.status, StatusCode::NOT_FOUND);
         assert_eq!(err.code.as_deref(), Some("model_not_found"));
         assert!(err.message.contains("gpt-99"));
+    }
+
+    #[test]
+    fn inference_model_errors_preserve_the_local_marker_and_provider_resource_statuses() {
+        let error = ApiError::model_not_found("missing").for_inference();
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(error.code.as_deref(), Some("model_not_found"));
+        assert!(matches!(
+            crate::pipeline::core_error_from_api(&error),
+            oxllm_core::Error::ModelNotFound(_)
+        ));
+        assert_eq!(
+            ApiError::upstream(404, "provider model missing")
+                .for_inference()
+                .status,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            ApiError::not_found("resource missing")
+                .for_inference()
+                .status,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            ApiError::gateway_timeout().for_inference().status,
+            StatusCode::GATEWAY_TIMEOUT
+        );
     }
 
     #[test]

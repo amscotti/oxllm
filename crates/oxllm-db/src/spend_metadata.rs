@@ -19,9 +19,13 @@ const DEPLOYMENT_SPEND_LOG_SELECT_COLS: &str = "id, timestamp, request_id, model
  prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, \
  end_user_id, tag_name, tags, status, latency_ms, deployment_id";
 
-pub(crate) const SPEND_LOG_SELECT_COLS: &str = "id, timestamp, request_id, model, provider, \
+const MODEL_GROUP_SPEND_LOG_SELECT_COLS: &str = "id, timestamp, request_id, model, provider, \
  prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, \
  end_user_id, tag_name, tags, status, latency_ms, deployment_id, requested_model, model_group";
+
+pub(crate) const SPEND_LOG_SELECT_COLS: &str = "id, timestamp, request_id, model, provider, \
+ prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, \
+ end_user_id, tag_name, tags, status, latency_ms, deployment_id, requested_model, model_group, session_id";
 
 const STARTUP_REPAIR_BATCHES: usize = 4;
 
@@ -429,6 +433,22 @@ pub(crate) fn model_group_attribution_statements(style: PlaceholderStyle) -> Vec
     let mut statements = vec![
         format!("ALTER TABLE spend_logs {add} requested_model TEXT"),
         format!("ALTER TABLE spend_logs {add} model_group TEXT"),
+    ];
+    statements.extend(read_view_statements(
+        style,
+        MODEL_GROUP_SPEND_LOG_SELECT_COLS,
+    ));
+    statements
+}
+
+pub(crate) fn session_attribution_statements(style: PlaceholderStyle) -> Vec<String> {
+    let add = match style {
+        PlaceholderStyle::Dollar => "ADD COLUMN IF NOT EXISTS",
+        PlaceholderStyle::Question => "ADD COLUMN",
+    };
+    let mut statements = vec![
+        format!("ALTER TABLE spend_logs {add} session_id TEXT"),
+        "CREATE INDEX IF NOT EXISTS idx_spend_logs_session_timestamp ON spend_logs(session_id, timestamp)".into(),
     ];
     statements.extend(read_view_statements(style, SPEND_LOG_SELECT_COLS));
     statements

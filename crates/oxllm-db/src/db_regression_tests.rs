@@ -43,6 +43,7 @@ fn log(timestamp: &str, request_id: &str) -> SpendLog {
         deployment_id: None,
         requested_model: None,
         model_group: None,
+        session_id: None,
         id: None,
         timestamp: timestamp.into(),
         request_id: Some(request_id.into()),

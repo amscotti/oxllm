@@ -10,17 +10,12 @@
 //!
 //! # Identifier invariant
 //!
-//! Every builder below concatenates its `id` argument after a `:` separator
-//! (e.g. `spend:{api_key_hash}`) with **no escaping**. Callers MUST therefore
-//! pass identifiers that do not themselves contain `:`. This holds today
-//! because the only callers pass an API-key hash (hex, no `:`), a DB id
-//! (numeric), or a model name (validated against `model_list`). A future
-//! caller that puts a raw key id or a user-controlled string with a `:` into
-//! one of these builders would collide counters across scopes and cause the
-//! scheduler to clear the wrong alert scope on reset — `scope_for_spend_key`
-//! parses these keys by `strip_prefix`, so a `team:` inside the id would be
-//! misread as a scope prefix. If that ever becomes a requirement, add escaping
-//! here rather than at the call sites.
+//! The unscoped key builder accepts only an API-key hash (hex, no `:`), so
+//! it cannot collide with named scope prefixes. Typed builders add their
+//! namespace before the opaque identifier. A tag such as `product:demo`
+//! therefore remains distinct from every other scope: reverse lookup strips
+//! the fixed namespace once, retaining the complete identifier. Do not split
+//! scoped identifiers on every separator.
 
 /// Spend counter key for an API key hash: `spend:{api_key_hash}`.
 ///
@@ -54,8 +49,7 @@ pub fn customer_spend_key(end_user_id: &str) -> String {
 
 /// Spend counter key for a request tag: `spend:tag:{tag_name}`.
 ///
-/// `tag_name` must not contain `:` — see the module-level identifier
-/// invariant. Management create rejects names containing `:`.
+/// Tag names are literal, including `:` in `key:value` attribution pairs.
 pub fn tag_spend_key(tag_name: &str) -> String {
     format!("spend:tag:{tag_name}")
 }
@@ -123,13 +117,8 @@ mod tests {
         assert_eq!(provider_spend_key("openai"), "spend:provider:openai");
     }
 
-    /// LOW (C31): pins the identifier invariant documented at the module
-    /// level. The builders do NOT escape or reject a `:` in the id — a colon
-    /// flows through verbatim — which is exactly why callers must never pass
-    /// an id containing `:`. This test documents the current contract so a
-    /// future change to escaping/rejecting is made deliberately, and so the
-    /// collision hazard is visible (a `team:` prefix inside an id would be
-    /// misparsed by `scope_for_spend_key`).
+    /// The unscoped builder requires a key hash; typed builders retain their
+    /// fixed namespace even when the opaque identifier contains separators.
     #[test]
     fn spend_key_does_not_escape_colon_in_id() {
         // A malicious/buggy id carrying a scope prefix is passed through
@@ -138,8 +127,7 @@ mod tests {
         // the team scope and be mis-cleared by the scheduler on reset.
         assert_eq!(spend_key("team:evil"), "spend:team:evil");
         assert_eq!(team_spend_key("x:user:y"), "spend:team:x:user:y");
-        // The hex api-key hash and validated model names that ship today never
-        // contain `:`, so this path is not exercised in production — but the
-        // contract is that a colon is NOT a safe character for these ids.
+        assert_eq!(tag_spend_key("product:demo"), "spend:tag:product:demo");
+        assert_ne!(tag_spend_key("team:demo"), team_spend_key("demo"));
     }
 }

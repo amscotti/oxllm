@@ -124,7 +124,7 @@ pub(crate) fn resolve_cost(
 /// Prove a zero charge across every explicit bucket and context tier. Duration
 /// pricing follows its existing canonical/input/output precedence; otherwise
 /// token pricing wins, even when an inactive duration rate is configured.
-fn pricing_is_free(pricing: &oxllm_core::DeploymentPricing) -> bool {
+pub(crate) fn pricing_is_free(pricing: &oxllm_core::DeploymentPricing) -> bool {
     // Match the core billing rule: negative and non-finite operator rates
     // collapse to zero, including when counters or timing are unavailable.
     let zero = |rate: f64| !rate.is_finite() || rate <= 0.0;

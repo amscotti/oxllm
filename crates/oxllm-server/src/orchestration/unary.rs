@@ -191,21 +191,8 @@ where
         }
     }
 
-    let model_exists = !state
-        .router
-        .deployments_for_model(&state.deployments, model)
-        .is_empty()
-        || !state.router.fallbacks_for(model).is_empty();
-    let err = last_err.unwrap_or_else(|| {
-        if model_exists {
-            ApiError::rate_limited(format!(
-                "all deployments for '{}' are rate-limited or unavailable",
-                crate::error::truncate_model_for_echo(model)
-            ))
-        } else {
-            ApiError::model_not_found(model)
-        }
-    });
+    let err =
+        last_err.unwrap_or_else(|| crate::pipeline::routing::no_available_deployment(state, model));
     post_failure(state, call_ctx, &crate::pipeline::core_error_from_api(&err)).await;
     Err(err)
 }
@@ -473,20 +460,7 @@ where
         }
     }
 
-    let model_exists = !state
-        .router
-        .deployments_for_model(&state.deployments, model)
-        .is_empty();
-    Err(last_err.unwrap_or_else(|| {
-        if model_exists {
-            ApiError::rate_limited(format!(
-                "all deployments for '{}' are rate-limited or unavailable",
-                crate::error::truncate_model_for_echo(model)
-            ))
-        } else {
-            ApiError::model_not_found(model)
-        }
-    }))
+    Err(last_err.unwrap_or_else(|| crate::pipeline::routing::no_available_deployment(state, model)))
 }
 
 /// Whether an error should abort the retry loop (4xx other than 429) or

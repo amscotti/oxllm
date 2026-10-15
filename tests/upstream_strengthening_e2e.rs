@@ -141,6 +141,7 @@ async fn aggregator_receipts_agree_across_json_stream_budget_and_persisted_spend
                 assert!((counter - expected).abs() < 1e-12);
             } else {
                 assert!(reply.headers().get("x-oxllm-key-spend").is_none());
+                assert!(reply.headers().get("x-litellm-key-spend").is_none());
             }
             let body = reply.text().await.unwrap();
             if streaming {

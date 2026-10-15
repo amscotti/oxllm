@@ -233,7 +233,7 @@ pub struct PassthroughRequest<'a> {
     pub query: Option<&'a str>,
     pub body: Bytes,
     pub content_type: Option<&'a str>,
-    /// Sticky session id from `x-oxllm-session-id` (optional).
+    /// Optional normalized sticky-session identity, shared with attribution.
     pub session_id: Option<String>,
     /// Routing tag from `x-oxllm-tag` (optional). Used when
     /// `routing_strategy: tag_based`.
@@ -278,9 +278,13 @@ impl<'a> PassthroughRequest<'a> {
         }
     }
 
-    /// Attach a session id for `session_affinity` routing.
+    /// Attach a session id for `session_affinity` routing and attribution.
+    /// Blank values are absent; others are trimmed and bounded according to
+    /// [`super::normalize_session_id`] and [`super::MAX_SESSION_ID_BYTES`].
     pub fn with_session_id(mut self, session_id: Option<String>) -> Self {
-        self.session_id = session_id;
+        self.session_id = session_id
+            .as_deref()
+            .and_then(crate::pipeline::normalize_session_id);
         self
     }
 
@@ -356,7 +360,13 @@ pub async fn forward_with_mode(
     mode: PassthroughMode,
     req: PassthroughRequest<'_>,
 ) -> Result<Response, ApiError> {
-    match mode {
+    let inference = match &mode {
+        PassthroughMode::HookedRaw { upstream_path } | PassthroughMode::Raw { upstream_path } => {
+            inference_path(upstream_path)
+        }
+        PassthroughMode::Transformed => false,
+    };
+    let result = match mode {
         PassthroughMode::Transformed => Err(ApiError::internal(
             "Transformed passthrough is served by dedicated chat/embeddings handlers",
         )),
@@ -366,7 +376,14 @@ pub async fn forward_with_mode(
         PassthroughMode::Raw { upstream_path } => {
             raw_forward(state, auth, &upstream_path, req).await
         }
-    }
+    };
+    result.map_err(|error| {
+        if inference {
+            error.for_inference()
+        } else {
+            error
+        }
+    })
 }
 
 async fn hooked_raw(
@@ -402,12 +419,14 @@ async fn hooked_raw(
     require_inference_model(upstream_path, effective_model, &request_body)?;
     let resolved_model = resolve_model(state, effective_model, &request_body, req.provider_hint)?;
     let tags = request_tags(&req, &request_body);
-    let mut pipeline = EndpointPipeline::for_request_with_tags(
+    let session_id = request_session_id(&req, &request_body);
+    let mut pipeline = EndpointPipeline::for_request_with_metadata(
         state,
         auth,
         &resolved_model,
         request_body.clone(),
         &tags,
+        session_id.clone(),
     )
     .await?;
     if let Err(error) = validate_nested_model_acl(auth, &request_body) {
@@ -415,7 +434,6 @@ async fn hooked_raw(
         return Err(error);
     }
     pipeline.call_ctx.cache_namespace = Some(format!("raw:{}:{upstream_path}", req.method));
-    let session_id = request_session_id(&req, &request_body);
     pipeline.apply_request_tags(&tags).await?;
     let guarded = crate::pipeline::guardrails::apply_raw_request_guardrails(
         state,
@@ -665,8 +683,8 @@ async fn hooked_raw(
         }
         // Native inference APIs report token/cache/reasoning usage in JSON
         // bodies, not just headers. Recover those counters without changing
-        // the wire response; free utility paths such as count_tokens remain
-        // unmetered. SSE uses the incremental native relay above.
+        // the wire response. Counting replies carry no `usage` object, so
+        // recovery is a no-op for them. SSE uses the native relay above.
         let response_body = if inference_path(upstream_path) || upstream_path.starts_with("threads")
         {
             recover_json_response(&mut resp).await
@@ -838,9 +856,12 @@ fn request_tags(req: &PassthroughRequest<'_>, body: &Value) -> Vec<String> {
 }
 
 fn request_session_id(req: &PassthroughRequest<'_>, body: &Value) -> Option<String> {
-    req.session_id.clone().or_else(|| {
-        crate::pipeline::extract_session_id_with_body(&axum::http::HeaderMap::new(), Some(body))
-    })
+    req.session_id
+        .as_deref()
+        .and_then(crate::pipeline::normalize_session_id)
+        .or_else(|| {
+            crate::pipeline::extract_session_id_with_body(&axum::http::HeaderMap::new(), Some(body))
+        })
 }
 
 pub(crate) fn endpoint_path(path: &str) -> &str {
@@ -905,6 +926,8 @@ pub(crate) fn inference_path(path: &str) -> bool {
             | "completions"
             | "complete"
             | "messages"
+            | "messages/count_tokens"
+            | "embeddings"
             | "responses"
             | "rerank"
             | "images/generations"
@@ -1736,7 +1759,7 @@ pub(crate) fn resolve_deployment_with_tags(
     ctx.tags = tags.to_vec();
     crate::pipeline::routing::apply_default_tag(state, &mut ctx);
     let idx = crate::pipeline::routing::try_pick_deployment_index(state, &ctx)?
-        .ok_or_else(|| ApiError::model_not_found(model))?;
+        .ok_or_else(|| crate::pipeline::routing::no_available_deployment(state, model))?;
     Ok(state.deployments[idx].clone())
 }
 

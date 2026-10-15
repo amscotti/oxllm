@@ -5,6 +5,36 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+### Request compatibility and session attribution
+
+- Reject oversized end-user/customer identities before admission and omit unsafe
+  raw-producer attribution without losing metering events. Bound oversized indexed
+  model labels with a digest after settlement to protect unrelated spend batches.
+- Pin positive session attribution and unavailable-group behavior across translated,
+  native and realtime routes; assert exact API error envelopes, spend-alias omission
+  and preservation of upstream billing receipts.
+- Bound session identities consistently before routing/logging/storage, preventing
+  oversized client values from poisoning PostgreSQL spend batches.
+- Distinguish unavailable configured deployments from invalid model selectors on
+  raw/realtime paths; include native embeddings and counting in selector validation.
+- Strip upstream caller-spend snapshots, validate schema names locally, and pin
+  migration/preparation agreement plus paid-fallback and literal-tag accounting.
+- Accept native plural and legacy tag-header aliases through the shared routing,
+  budget and metering path. Preserve literal `key:value` pairs and allow their
+  tag budgets, with exact alert-scope resets.
+- Translate Responses `text.format` JSON-schema/JSON-object constraints through
+  chat providers for unary and streaming requests, validate malformed formats
+  before upstream calls, and retain schema-sensitive cache identity.
+- Emit call-id and cumulative-spend migration aliases alongside native headers,
+  with consistent conversion, error, cache and CORS behavior.
+- Persist/filter client session identities through additive schema version 17,
+  including failed and partial requests and compatibility with older writers.
+- Index visible Anthropic unary tool calls after internal JSON-helper removal.
+- Return terminal local invalid-model errors as 400 while retaining authorized
+  default fallbacks, resource 404s, provider 404s and gateway timeout semantics.
+- Admit explicitly free deployment groups without the unpriced-alias reservation
+  floor; inherited rates and mixed/paid fallback groups retain budget enforcement.
+
 ### Provider and accounting corrections, 2026-10-11
 
 - Close independently reproduced review gaps in receiptless JSON/SSE pricing,

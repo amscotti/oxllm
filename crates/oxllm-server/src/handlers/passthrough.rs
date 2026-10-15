@@ -96,12 +96,12 @@ pub async fn rerank(
         .to_string();
 
     let tags = extract_tags(&headers, Some(&request_body));
-    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_tags(
+    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_headers(
         &app_state,
         &auth,
         &model,
         request_body.clone(),
-        &tags,
+        &headers,
     )
     .await?;
     pipeline.call_ctx.cache_namespace = Some("rerank".into());
@@ -134,7 +134,7 @@ pub async fn rerank(
     let deployment = match crate::pipeline::passthrough::resolve_deployment_with_tags(
         &app_state,
         &model,
-        extract_session_id_with_body(&headers, Some(&request_body)),
+        pipeline.call_ctx.session_id.clone(),
         &tags,
     ) {
         Ok(d) => d,
@@ -146,7 +146,7 @@ pub async fn rerank(
             pipeline
                 .post_failure(&crate::pipeline::core_error_from_api(&err))
                 .await;
-            return Err(err);
+            return Err(err.for_inference());
         }
     };
     let dep_key = oxllm_core::router::deployment_key(&deployment);
@@ -424,7 +424,7 @@ pub async fn rerank(
             pipeline
                 .post_failure(&crate::pipeline::core_error_from_api(&err))
                 .await;
-            Err(err)
+            Err(err.for_inference())
         }
     }
 }
@@ -737,19 +737,39 @@ pub async fn provider_passthrough(
         crate::pipeline::check_request_model_acl(&app_state, &auth, model, &request_body, &headers)
             .await?;
     }
-    let model = crate::pipeline::passthrough::resolve_provider_model(
+    let inference = crate::pipeline::passthrough::inference_path(&remaining_path);
+    let model = match crate::pipeline::passthrough::resolve_provider_model(
         &app_state,
         &provider_slug,
         requested_model.as_deref(),
-    )?;
+    ) {
+        Ok(model) => model,
+        Err(error) => {
+            if inference {
+                if let Some(model) = requested_model.as_deref() {
+                    crate::pipeline::record_http_request_rejection(
+                        &app_state,
+                        &auth,
+                        model,
+                        &request_body,
+                        &headers,
+                        &error,
+                    )
+                    .await;
+                }
+                return Err(error.for_inference());
+            }
+            return Err(error);
+        }
+    };
 
     let tags = extract_tags(&headers, Some(&request_body));
-    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_tags(
+    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_headers(
         &app_state,
         &auth,
         &model,
         request_body.clone(),
-        &tags,
+        &headers,
     )
     .await?;
     if let Err(error) =
@@ -1008,7 +1028,7 @@ pub async fn provider_passthrough(
             pipeline
                 .post_failure(&crate::pipeline::core_error_from_api(&err))
                 .await;
-            Err(err)
+            Err(if inference { err.for_inference() } else { err })
         }
     }
 }

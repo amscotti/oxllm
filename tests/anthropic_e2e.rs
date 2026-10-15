@@ -1100,7 +1100,7 @@ async fn anthropic_upstream_5xx_propagates() {
 }
 
 #[tokio::test]
-async fn anthropic_model_not_found_returns_404() {
+async fn anthropic_provider_model_not_found_stays_404() {
     let mock = MockServer::start();
     let config = make_proxy_config(&mock.base_url(), "anthropic/claude-3-5-sonnet");
     let (handle, _state) = start_oxllm(config).await.expect("server should start");

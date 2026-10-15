@@ -68,6 +68,11 @@ const SPEND_INDEXES: &[SpendIndex] = &[
         unique: false,
     },
     SpendIndex {
+        name: "idx_spend_logs_session_timestamp",
+        columns: &["session_id", "timestamp"],
+        unique: false,
+    },
+    SpendIndex {
         name: "idx_spend_logs_end_user_id",
         columns: &["end_user_id"],
         unique: false,
@@ -80,6 +85,7 @@ const SPEND_INDEXES: &[SpendIndex] = &[
 ];
 
 const SPEND_COLUMNS: &[(&str, &str)] = &[
+    ("session_id", "TEXT"),
     ("deployment_id", "TEXT"),
     ("requested_model", "TEXT"),
     ("model_group", "TEXT"),
@@ -200,14 +206,24 @@ pub(crate) async fn ensure_event_index_ready(conn: &mut AnyConnection) -> Result
 /// These statements are skipped only after every referenced column/index was
 /// validated during preparation. Other tables and read-view DDL still execute.
 pub(crate) fn prepared_spend_statement(statement: &str) -> bool {
-    statement.starts_with("ALTER TABLE spend_logs ADD COLUMN IF NOT EXISTS ")
-        || statement == "ALTER TABLE spend_logs ALTER COLUMN cost TYPE DOUBLE PRECISION"
+    let compact = statement.split_whitespace().collect::<String>();
+    SPEND_COLUMNS.iter().any(|(name, definition)| {
+        compact
+            == format!("ALTER TABLE spend_logs ADD COLUMN IF NOT EXISTS {name} {definition}")
+                .split_whitespace()
+                .collect::<String>()
+    }) || compact
+        == "ALTER TABLE spend_logs ALTER COLUMN cost TYPE DOUBLE PRECISION"
+            .split_whitespace()
+            .collect::<String>()
         || SPEND_INDEXES.iter().any(|index| {
-            statement.starts_with(&format!("CREATE INDEX IF NOT EXISTS {} ", index.name))
-                || statement.starts_with(&format!(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS {} ",
-                    index.name
-                ))
+            let unique = if index.unique { "UNIQUE " } else { "" };
+            let expected = format!(
+                "CREATE {unique}INDEX IF NOT EXISTS {} ON spend_logs({})",
+                index.name,
+                index.columns.join(", ")
+            );
+            compact == expected.split_whitespace().collect::<String>()
         })
 }
 
@@ -424,5 +440,54 @@ impl Database {
         // No schema version is published here. Concurrent builds and the final
         // atomic DDL/read-view transaction must succeed before serving begins.
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod statement_tests {
+    use super::*;
+    use crate::PlaceholderStyle;
+
+    #[test]
+    fn preparation_only_skips_identical_known_spend_definitions() {
+        assert!(prepared_spend_statement(
+            "ALTER TABLE spend_logs\n ALTER COLUMN cost TYPE\t DOUBLE PRECISION"
+        ));
+        assert!(prepared_spend_statement(
+            "ALTER TABLE spend_logs ADD COLUMN IF NOT EXISTS session_id TEXT"
+        ));
+        assert!(!prepared_spend_statement(
+            "ALTER TABLE spend_logs ADD COLUMN IF NOT EXISTS future_column TEXT"
+        ));
+        assert!(!prepared_spend_statement(
+            "ALTER TABLE spend_logs ADD COLUMN IF NOT EXISTS session_id BIGINT"
+        ));
+        assert!(!prepared_spend_statement(
+            "CREATE INDEX IF NOT EXISTS idx_spend_logs_session_timestamp ON spend_logs(model, timestamp)"
+        ));
+        assert!(!prepared_spend_statement(
+            "CREATE INDEX IF NOT EXISTS idx_spend_logs_session_timestamp ON other_table(session_id, timestamp)"
+        ));
+        assert!(!prepared_spend_statement(
+            "CREATE INDEX IF NOT EXISTS idx_spend_logs_session_timestamp ON spend_logs(session_id, timestamp) WHERE session_id IS NOT NULL"
+        ));
+    }
+
+    #[test]
+    fn all_migrated_spend_columns_and_indexes_match_online_preparation() {
+        // Only PostgreSQL skips online-prepared DDL. SQLite never skips it;
+        // sql_string_tests separately pins equal index lists across backends.
+        for statement in crate::migrate::migration_statements_for(PlaceholderStyle::Dollar) {
+            if statement.starts_with("ALTER TABLE spend_logs ADD COLUMN IF NOT EXISTS ")
+                || ((statement.starts_with("CREATE INDEX IF NOT EXISTS ")
+                    || statement.starts_with("CREATE UNIQUE INDEX IF NOT EXISTS "))
+                    && statement.contains(" ON spend_logs"))
+            {
+                assert!(
+                    prepared_spend_statement(&statement),
+                    "migration/preparation drift: {statement}"
+                );
+            }
+        }
     }
 }

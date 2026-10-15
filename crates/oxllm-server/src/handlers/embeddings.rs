@@ -76,12 +76,17 @@ pub(crate) async fn embeddings_inner_with_headers(
     if let Some(pii) = state.pii_guardrail.as_ref() {
         mask_embeddings_input(pii, &mut request_body);
     }
-    let session_id = crate::pipeline::extract_session_id_with_body(headers, Some(&request_body));
     let tags = crate::pipeline::extract_tags(headers, Some(&request_body));
 
-    let mut pipeline =
-        EndpointPipeline::for_request_with_tags(&state, auth, &model, request_body.clone(), &tags)
-            .await?;
+    let mut pipeline = EndpointPipeline::for_request_with_headers(
+        &state,
+        auth,
+        &model,
+        request_body.clone(),
+        headers,
+    )
+    .await?;
+    let session_id = pipeline.call_ctx.session_id.clone();
     pipeline.call_ctx.cache_namespace = Some("embeddings".into());
     pipeline.apply_request_tags(&tags).await?;
 
@@ -168,7 +173,7 @@ pub(crate) async fn embeddings_inner_with_headers(
             crate::pipeline::stamp_key_spend_header(&mut resp, &state, &pipeline.call_ctx).await;
             Ok(resp)
         }
-        Err(err) => Err(err),
+        Err(err) => Err(err.for_inference()),
     }
 }
 

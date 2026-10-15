@@ -18,6 +18,7 @@ use super::{
 /// Reject end-user ids that break the `spend:customer:{id}` key format
 /// (colon is the scope separator in spend keys / the reset scheduler).
 fn validate_end_user_id(id: &str) -> Result<(), ApiError> {
+    crate::pipeline::validate_end_user_id(id)?;
     if id.contains(':') {
         return Err(ApiError::bad_request(
             "end_user_id must not contain ':' (reserved as a spend-key separator)",

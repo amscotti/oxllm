@@ -445,7 +445,7 @@ async fn try_fallback_chain(
 
     if let Some(e) = last_error {
         super::pipeline_failure(state, call_ctx, &e).await;
-        let mut resp = e.into_response();
+        let mut resp = e.for_inference().into_response();
         if let Some(fb) = last_tried {
             if let Ok(hv) = HeaderValue::from_str(fb) {
                 resp.headers_mut().insert(FALLBACK_HEADER, hv);
@@ -1263,22 +1263,10 @@ async fn try_model_with_retries(
         }
     }
 
-    last_outcome.unwrap_or({
-        // Use the same resolution path as routing (aliases + wildcards), not
-        // exact `model_name == model`, so a cooled-out `*` / alias group is
-        // reported as temporarily unavailable (429) rather than 404.
-        let model_exists = !state
-            .router
-            .deployments_for_model(&state.deployments, model)
-            .is_empty();
-        if model_exists {
-            ModelOutcome::Retryable(ApiError::rate_limited(format!(
-                "all deployments for '{}' are rate-limited or unavailable",
-                crate::error::truncate_model_for_echo(model)
-            )))
-        } else {
-            ModelOutcome::Retryable(ApiError::model_not_found(model))
-        }
+    last_outcome.unwrap_or_else(|| {
+        ModelOutcome::Retryable(crate::pipeline::routing::no_available_deployment(
+            state, model,
+        ))
     })
 }
 

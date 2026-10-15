@@ -375,19 +375,19 @@ pub async fn handle_realtime_upgrade(
     // Pre-upgrade metering: rate-limit/budget pre-call + deployment RPM/TPM.
     // Rejects before we open the upstream WS or upgrade the client.
     let request_body = serde_json::json!({ "model": model, "stream": true });
-    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_tags(
+    let mut pipeline = crate::pipeline::EndpointPipeline::for_request_with_headers(
         &state,
         &auth,
         model,
         request_body,
-        &tags,
+        &headers,
     )
     .await?;
     let selected = match pick_realtime_deployment(&state, model, session_id, &tags) {
         Ok(selected) => selected,
         Err(error) => {
             crate::pipeline::record_request_rejection(&state, &pipeline.call_ctx, &error).await;
-            return Err(error);
+            return Err(error.for_inference());
         }
     };
     // Reserve at pick, before any other await can let least-busy select this
@@ -681,6 +681,7 @@ async fn record_partial_realtime(
     let cost =
         crate::hooks::cost_fallback::resolve_cost(call_ctx, model, usage, None, None, provider);
     tracing::info!(event = "spend", status = "partial", request_id = %call_ctx.request_id,
+        session_id = call_ctx.session_id.as_deref(),
         model, provider, cost, cost_known = cost.is_some(), key_id = call_ctx.key_id.as_deref(),
         prompt_tokens = usage.map(|usage| usage.prompt_tokens),
         completion_tokens = usage.map(|usage| usage.completion_tokens),
@@ -692,6 +693,7 @@ async fn record_partial_realtime(
     let entry = crate::spend_writer::SpendEntry {
         timestamp: jiff::Timestamp::now().to_string(),
         request_id: Some(call_ctx.request_id.clone()),
+        session_id: call_ctx.session_id.clone(),
         model: model.to_string(),
         provider: provider.to_string(),
         deployment_id: call_ctx.deployment_id.clone(),
@@ -960,7 +962,7 @@ fn pick_realtime_deployment(
     ctx.tags = tags.to_vec();
     crate::pipeline::routing::apply_default_tag(state, &mut ctx);
     let idx = crate::pipeline::routing::try_pick_deployment_index(state, &ctx)?
-        .ok_or_else(|| ApiError::model_not_found(model))?;
+        .ok_or_else(|| crate::pipeline::routing::no_available_deployment(state, model))?;
     Ok(state.deployments[idx].clone())
 }
 
@@ -1483,6 +1485,7 @@ mod tests {
             ];
             let ctx = oxllm_core::CallContext {
                 budget_estimate: Some(0.01),
+                session_id: Some("realtime-session".into()),
                 ..oxllm_core::CallContext::for_test("gpt-4o-realtime")
             };
             let usage = UsageSummary {
@@ -1506,6 +1509,7 @@ mod tests {
             .await;
             let entry = ledger.try_recv().unwrap();
             assert_eq!(entry.status.as_deref(), Some("partial"));
+            assert_eq!(entry.session_id.as_deref(), Some("realtime-session"));
             assert_eq!(entry.total_tokens, Some(15));
             assert_eq!(entry.request_id.as_ref(), Some(&ctx.request_id));
             assert!(

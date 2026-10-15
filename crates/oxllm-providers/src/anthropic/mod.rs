@@ -813,6 +813,13 @@ impl ChatProvider for AnthropicProvider {
             message.insert("thinking_blocks".to_string(), Value::Array(thinking_blocks));
         }
         if !tool_calls.is_empty() {
+            // Index only visible calls: text/thinking and the removed JSON
+            // helper are not members of the caller's tool-call array.
+            for (index, call) in tool_calls.iter_mut().enumerate() {
+                if let Some(call) = call.as_object_mut() {
+                    call.insert("index".into(), json!(index));
+                }
+            }
             message.insert("tool_calls".to_string(), Value::Array(tool_calls));
         }
         if !citations.is_empty() {

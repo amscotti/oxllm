@@ -141,6 +141,7 @@ async fn wait_for_spend_count(db: &Database, target: usize) {
 
 fn seeded_log(timestamp: &str, cost: f64, tags: Option<String>) -> oxllm_server::SpendLog {
     oxllm_server::SpendLog {
+        session_id: None,
         deployment_id: None,
         requested_model: None,
         model_group: None,

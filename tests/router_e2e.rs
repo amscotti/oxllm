@@ -2157,7 +2157,7 @@ async fn test_default_fallbacks_not_used_for_known_model() {
 }
 
 #[tokio::test]
-async fn test_unknown_model_without_default_fallbacks_still_404() {
+async fn test_unknown_model_without_default_fallbacks_is_an_invalid_parameter() {
     let mock = MockServer::start();
     let _ok = setup_ok_mock(&mock, "from-model-a", "key-a");
 
@@ -2170,7 +2170,7 @@ async fn test_unknown_model_without_default_fallbacks_still_404() {
     let resp = send_request(&handle, "unknown-model").await;
     assert_eq!(
         resp.status(),
-        404,
+        400,
         "no default_fallbacks configured → the model-not-found error is preserved"
     );
     let body: Value = resp.json().await.expect("json");
@@ -2180,7 +2180,7 @@ async fn test_unknown_model_without_default_fallbacks_still_404() {
 }
 
 #[tokio::test]
-async fn test_default_fallbacks_exhausted_chain_preserves_404() {
+async fn test_default_fallbacks_exhausted_chain_preserves_the_model_error_code() {
     let mock = MockServer::start();
     let _ok = setup_ok_mock(&mock, "from-model-a", "key-a");
 
@@ -2199,7 +2199,7 @@ async fn test_default_fallbacks_exhausted_chain_preserves_404() {
     let (handle, _state) = start_oxllm(config).await.expect("server should start");
 
     let resp = send_request(&handle, "unknown-model").await;
-    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.status(), 400);
     let body: Value = resp.json().await.expect("json");
     assert_eq!(body["error"]["code"], "model_not_found");
 

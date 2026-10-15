@@ -270,7 +270,7 @@ router_settings:
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 404);
+    assert_eq!(response.status(), 400);
     primary.assert_hits_async(4).await;
     rescue.assert_hits_async(1).await;
     proxy.shutdown();

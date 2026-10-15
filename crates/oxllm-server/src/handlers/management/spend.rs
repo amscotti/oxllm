@@ -27,6 +27,8 @@ const DEFAULT_LIMIT: i64 = 100;
 #[derive(Debug, Deserialize)]
 pub struct SpendLogsQuery {
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub requested_model: Option<String>,
     #[serde(default)]
     pub model_group: Option<String>,
@@ -42,8 +44,8 @@ pub struct SpendLogsQuery {
     pub team_id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
-    /// Only rows carrying this request tag (body `metadata.tags` or the
-    /// `x-oxllm-tag` header). Matches any tag in the row's list.
+    /// Only rows carrying this normalized request tag from any body/header
+    /// carrier. Matches any tag in the row's list.
     #[serde(default)]
     pub tag_name: Option<String>,
     #[serde(default)]
@@ -55,6 +57,7 @@ pub struct SpendLogsQuery {
 impl From<&SpendLogsQuery> for oxllm_db::SpendFilter {
     fn from(q: &SpendLogsQuery) -> Self {
         oxllm_db::SpendFilter {
+            session_id: q.session_id.clone(),
             start_date: q.start_date.clone(),
             end_date: q.end_date.clone(),
             key_id: q.key_id.clone(),
@@ -152,6 +155,8 @@ pub async fn spend_total(
 #[derive(Debug, Deserialize, Default)]
 pub struct SpendLogsV2Query {
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub requested_model: Option<String>,
     #[serde(default)]
     pub model_group: Option<String>,
@@ -188,6 +193,7 @@ pub struct SpendLogsV2Query {
 impl From<&SpendLogsV2Query> for oxllm_db::SpendFilter {
     fn from(q: &SpendLogsV2Query) -> Self {
         oxllm_db::SpendFilter {
+            session_id: q.session_id.clone(),
             start_date: q.start_date.clone(),
             end_date: q.end_date.clone(),
             key_id: q.key_id.clone(),
@@ -865,7 +871,7 @@ pub struct SpendTagsQuery {
 /// `GET /spend/tags` — paginated aggregated spend by request tag.
 ///
 /// Groups `spend_logs` by the tags each request carried (body
-/// `metadata.tags` plus the `x-oxllm-tag` header). A multi-tag request
+/// body/metadata arrays plus native/migration headers). A multi-tag request
 /// counts toward EVERY tag it carries, so per-tag sums overlap by design —
 /// each row answers "how much did traffic tagged with me spend". Rows
 /// without tags aggregate under a `null` tag_name.
@@ -1223,6 +1229,7 @@ mod tests {
             deployment_id: None,
             requested_model: None,
             model_group: None,
+            session_id: None,
             id: None,
             timestamp: timestamp.to_string(),
             request_id: Some(format!("r-{timestamp}-{cost}")),
@@ -1255,6 +1262,7 @@ mod tests {
             deployment_id: None,
             requested_model: None,
             model_group: None,
+            session_id: None,
             start_date: None,
             end_date: None,
             key_id: None,

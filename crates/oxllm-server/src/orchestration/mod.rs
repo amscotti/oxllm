@@ -297,10 +297,9 @@ impl<'a> ChatOrchestrator<'a> {
     /// Run the full request lifecycle: cache lookup (short-circuit),
     /// retry/fallback chain, and request-id stamping.
     ///
-    /// `session_id` is the optional sticky-routing id from
-    /// `x-oxllm-session-id` (used when `routing_strategy: session_affinity`).
-    /// `tag` is the optional routing tag from `x-oxllm-tag` (used when
-    /// `routing_strategy: tag_based`).
+    /// `session_id` is the normalized sticky-routing identity from headers or
+    /// body metadata (`routing_strategy: session_affinity`). `tag` is the
+    /// normalized primary request tag (`routing_strategy: tag_based`).
     pub(crate) async fn run(
         mut self,
         model: &str,

@@ -29,6 +29,9 @@ pub(crate) const FIELDS: &[&str] = &[
 const MAX_REQUEST_RETRIES: u32 = 10;
 
 pub(crate) fn validate(request: &Value) -> Result<(), ApiError> {
+    if let Some(id) = request.get("user").and_then(Value::as_str) {
+        crate::pipeline::validate_end_user_id(id)?;
+    }
     if request
         .as_object()
         .is_some_and(|object| object.keys().any(|field| deployment_credential(field)))

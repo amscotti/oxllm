@@ -23,7 +23,7 @@ pub enum RoutingStrategyKind {
     QualityRouter,
     /// Pick deployments based on a `tag` field in the request context. When no
     /// tag is set, falls back to `SimpleShuffle`. The request tag is plumbed
-    /// from the `x-oxllm-tag` header at the gateway edge; deployments
+    /// from normalized body/metadata/header carriers at the gateway edge; deployments
     /// advertise matching tags via `model_info.tags`.
     TagBased,
     /// Pick the deployment with the fewest in-flight requests. Falls back to

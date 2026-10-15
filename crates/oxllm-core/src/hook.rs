@@ -63,6 +63,9 @@ pub struct CallContext {
     pub api_key_hash: String,
     /// A unique request identifier.
     pub request_id: String,
+    /// Opaque client session identity retained for routing and metering
+    /// correlation. Independent of the gateway-generated request identifier.
+    pub session_id: Option<String>,
     /// Shared terminal spend-record claim. Cloned request/stream contexts must
     /// not queue a second success, failure or partial row for the same request.
     pub spend_recorded: Arc<OnceLock<()>>,
@@ -100,12 +103,11 @@ pub struct CallContext {
     /// uses this for the customer spend counter TTL instead of the key's
     /// window.
     pub customer_budget_duration: Option<String>,
-    /// Request tag from the `x-oxllm-tag` header.
-    /// Stamped when the header is present; used for tag budget enforcement
-    /// and durable tag spend attribution. Distinct from the router
-    /// `RequestContext.tag` field only in where it lives — same header value.
+    /// Primary normalized request tag from body/metadata arrays and the
+    /// native/migration header family. Used for routing compatibility,
+    /// budget enforcement and durable attribution.
     pub request_tag: Option<String>,
-    /// Every request tag (request-body `metadata.tags` plus header values).
+    /// Every request tag (body `tags`, `metadata.tags` and normalized headers).
     /// The first element mirrors [`Self::request_tag`]; the full list drives
     /// multi-tag budget reservation (each carried tag with a budget row
     /// accrues this request) and the `spend_logs.tags` JSON column.
@@ -198,6 +200,10 @@ pub struct CallContext {
     /// `post_success` / `post_failure` so token estimation runs once per
     /// request. `None` when no budget reservation was made.
     pub budget_estimate: Option<f64>,
+    /// Admission hint: every configured primary-group deployment carries a
+    /// provably zero-price override. Used only before concrete pricing is
+    /// selected; a paid fallback still requires its normal budget top-up.
+    pub pre_call_pricing_is_free: bool,
     /// Cached prompt-token estimate for the request body. Populated lazily
     /// by the first hook that needs it (e.g. `RateLimitHook` or
     /// `BudgetHook`) and reused by the other so the estimate runs at most

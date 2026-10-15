@@ -272,11 +272,11 @@ realtime, images, audio, rerank, and moderations.
 
 | Header | Direction | Description |
 |--------|-----------|-------------|
-| `x-oxllm-session-id` | request | Sticky routing key (`session_affinity`). `x-litellm-session-id` is the fallback when this header is absent or empty. The pin has no TTL. |
-| `x-oxllm-tag` | request | Tags for routing and per-tag budgets. Body `tags`, body `metadata.tags`, then comma-separated header values merge in that order. |
-| `x-oxllm-request-id` | response | Unique request id |
+| `x-oxllm-session-id` | request | Sticky routing key and durable session attribution, trimmed and bounded to 256 bytes. `x-litellm-session-id` is the fallback when this header is absent or empty. The routing pin has no TTL. |
+| `x-oxllm-tag`, `x-oxllm-tags` | request | Tags for routing, attribution and per-tag budgets; migration aliases `x-litellm-tags` and `x-litellm-tag` are also accepted. |
+| `x-oxllm-request-id` | response | Gateway-generated request id, also emitted as `x-request-id` and `x-litellm-call-id`, including errors and streams |
 | `x-oxllm-response-cost` | response | Computed cost (USD) when available |
-| `x-oxllm-key-spend` | response | Tracked chat/embedding budget-window spend snapshot after unary settlement; omitted for untracked keys and live streams |
+| `x-oxllm-key-spend` | response | Tracked chat/embedding budget-window spend snapshot after unary settlement, also emitted as `x-litellm-key-spend`; omitted for untracked keys and live streams |
 | `x-oxllm-cache-hit` | response | `true` when served from response cache |
 | `x-oxllm-fallback-used` | response | Fallback model name when a fallback served the request |
 | `x-oxllm-router-strategy` | response | Strategy that picked the deployment (e.g. `simple_shuffle`) |
@@ -311,12 +311,21 @@ realtime, images, audio, rerank, and moderations.
 - Budgets reserve estimated cost before an upstream call. A zero budget blocks
   new spend; an omitted budget is unlimited. Response-cache hits bypass spend
   reservation. Deployment pricing overrides remain authoritative.
+- Groups whose effective deployment overrides are entirely free reserve zero
+  before selection. This includes inherited cache rates and every configured
+  context tier; zero base-token rates alone need not make a deployment free.
+  Mixed-price groups retain conservative estimates, and paid fallbacks still
+  require their normal budget top-up.
 
 ### Request tagging (routing + per-application budgets)
 
 Requests carry tags in the top-level `tags` array, `metadata.tags` array, and
-the `x-oxllm-tag` header (a comma-separated list also works), merged in that
-order and deduplicated. Gateway tags are removed from provider bodies.
+headers. The merge order is body tags, metadata tags, `x-oxllm-tag`,
+`x-oxllm-tags`, `x-litellm-tags`, then `x-litellm-tag`. Header values are
+comma-separated and may be repeated; values are trimmed and deduplicated.
+Literal attribution pairs such as `product:demo` remain whole, including when
+creating a tag budget. Requests retain at most 16 tags of 128 bytes each.
+Gateway tags are removed from provider bodies and are not forwarded as headers.
 One shared production key can serve many applications, each
 identified by its tag.
 
@@ -367,6 +376,9 @@ counters). Transient errors are retried with backoff; reads stay fail-open.
 Build with **`--features db`** and set `general_settings.database_url`:
 - **Keys / teams / users** — CRUD via management REST endpoints.
 - **Spend logs** — one row per request (model, tokens, cost, latency, key/team).
+- **Session attribution** — nullable `session_id` on successful, failed and
+  partial request rows, independently of the routing strategy. Filter either
+  spend-log endpoint with `session_id`; historical/older-writer rows remain null.
 - **Batched spend writer** — background flush, no DB write on the hot path.
 - Known transient database rollbacks retry the same event IDs up to four attempts;
   ambiguous commits and permanent errors retain their terminal behavior.
@@ -421,7 +433,11 @@ error bodies are not stored. Success,
 failure and partial-stream reporting share one terminal record claim.
 `/global/spend` includes the configured global `max_budget` (null when unset).
 End-user attribution uses trimmed, nonblank request `user` values for both
-successful requests and early denials. Realtime partial rows retain known
+successful requests and early denials. End-user/customer IDs are limited to 256
+UTF-8 bytes after trimming; oversized inference IDs and new customer IDs return
+400 rather than aliasing a shorter customer. The spend writer drops invalid
+end-user attribution defensively, not the metering event or its settled cost.
+Realtime partial rows retain known
 reported cost; unpriced or unreported usage remains unknown.
 
 `POST /spend/calculate` previews the same provider/tier/deployment rates used by
@@ -564,7 +580,7 @@ When `database_url` is configured, management endpoints are available
 | `/team/add` | POST | Create a team |
 | `/team/list` | GET | List teams |
 | `/user/add` | POST | Create a user |
-| `/spend/logs` | GET | Query spend logs (filter: `key_id`, `team_id`, `model`, `tag_name`, dates) |
+| `/spend/logs` | GET | Query spend logs (filter: `key_id`, `team_id`, `model`, `tag_name`, `session_id`, dates) |
 | `/spend/total` | GET | Total spend summary |
 | `/spend/tags` | GET | Spend aggregated by request tag (multi-tag rows overlap) |
 | `/model/list` | GET | List models with metadata |
@@ -599,6 +615,22 @@ is Anthropic. For native Anthropic content, streaming events and beta-specific
 fields, use `/anthropic/v1/messages` with an Anthropic deployment (Anthropic SDK
 `base_url="http://localhost:4000/anthropic"`). Native features are not automatically
 portable through the translated route. See endpoint tests for exact coverage.
+
+`/v1/responses` translates `text.format` JSON-schema and JSON-object output
+constraints through the shared chat pipeline, including streams. Schema names,
+strictness and descriptions are retained, and formats participate in cache
+identity. Malformed formats return a local 400. SDK response parsers consume
+the returned `output_text` content and input/output token usage.
+Schema names are trimmed and must use 1–64 ASCII letters, digits, underscores
+or hyphens. `text.verbosity` is not translated by the chat bridge.
+
+OpenAI-shaped inference surfaces return HTTP 400 with `code: model_not_found`
+for an unconfigured model after authorized fallback handling; translated
+`/v1/messages` uses the Anthropic 400 `invalid_request_error` envelope.
+Native embeddings and token-counting routes also reject invalid model selectors
+with 400. Configured groups with no available deployment return retryable 429s.
+Resource lookups and genuine provider 404s retain HTTP 404. Gateway request
+deadlines retain HTTP 504 and a timeout message.
 
 ---
 

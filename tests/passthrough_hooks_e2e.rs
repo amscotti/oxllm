@@ -252,13 +252,13 @@ async fn multipart_inference_and_unknown_v1_routes_do_not_guess_credentials() {
         "/v1/audio/translations",
     ] {
         // A multipart body WITH a model field is routed by that model. An
-        // unknown model is a 404 — and must never reach an upstream on a
+        // unknown model is an invalid-parameter 400 and must never use a
         // guessed credential.
         let response = client.post(handle.url(path)).bearer_auth(MASTER_KEY)
             .header("content-type", "multipart/form-data; boundary=test")
             .body("--test\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nunconfigured\r\n--test--\r\n")
             .send().await.unwrap();
-        assert_eq!(response.status(), 404, "{path}");
+        assert_eq!(response.status(), 400, "{path}");
 
         // A multipart body WITHOUT a model field is rejected explicitly
         // rather than silently routed to another deployment.

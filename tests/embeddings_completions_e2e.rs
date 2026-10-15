@@ -132,7 +132,7 @@ async fn test_embeddings_missing_model_returns_400() {
 }
 
 #[tokio::test]
-async fn test_embeddings_unknown_model_returns_404() {
+async fn test_embeddings_unknown_model_returns_400() {
     let mock = MockServer::start();
     let config = make_proxy_config(&mock.base_url(), "known", "openai/known");
     let handle = start_oxllm(config).await.expect("server start");
@@ -145,7 +145,7 @@ async fn test_embeddings_unknown_model_returns_404() {
         .await
         .expect("request");
 
-    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.status(), 400);
     let _ = handle.shutdown_tx.send(());
 }
 

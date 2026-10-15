@@ -198,6 +198,109 @@ async fn assert_accounting(db: &Database, events: i64, cost: f64) -> Result<()> 
 
 #[tokio::test]
 #[serial_test::serial]
+async fn postgres_oversized_session_identity_cannot_poison_unrelated_spend_rows() -> Result<()> {
+    with_postgres_fixture(|db| async move {
+        create_counter_scopes(&db).await?;
+        let long = (0..512u32).map(|value| format!("{:08x}", value.wrapping_mul(0x9e37_79b9))).collect::<String>();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-litellm-session-id", long.parse()?);
+        let session = oxllm_server::pipeline::extract_session_id(&headers).context("session header")?;
+        let entry: SpendEntry = serde_json::from_value(json!({
+            "timestamp":"2026-10-01T00:00:00Z", "request_id":"bounded-session-request",
+            "model":"test-model", "provider":"test-provider", "key_id":"long-session-owner",
+            "session_id":long, "cost":0.25, "end_user_id":"retry-customer", "request_tags":"[\"retry-tag\"]"
+        }))?;
+        let mut other = entry.clone();
+        other.request_id = Some("unrelated-session-request".into());
+        other.key_id = Some("other-owner".into());
+        other.session_id = Some("ordinary-session".into());
+        let drops = dropped_count();
+        let (writer, handle) = spawn_with_shutdown(db.clone(), 3600, 8);
+        writer.queue(entry).await;
+        writer.queue(other).await;
+        tokio::time::timeout(Duration::from_secs(10), handle.shutdown()).await?;
+        drop(writer);
+        assert_accounting(&db, 2, 0.5).await?;
+        let row = db.query_spend_by_request_id("bounded-session-request").await?.context("bounded row")?;
+        ensure!(row.session_id.as_deref() == Some(&long[..256]), "stored session differs from routing identity");
+        ensure!(row.session_id.as_deref() == Some(session.as_str()), "the writer must apply the same normalization as extraction");
+        let other = db.query_spend_by_request_id("unrelated-session-request").await?.context("unrelated row")?;
+        ensure!(other.session_id.as_deref() == Some("ordinary-session"), "unrelated row was changed");
+        ensure!(dropped_count() == drops, "a normalized session must not drop its batch");
+        Ok(())
+    }).await
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn postgres_oversized_end_user_identity_cannot_poison_or_misattribute_a_batch() -> Result<()>
+{
+    with_postgres_fixture(|db| async move {
+        create_counter_scopes(&db).await?;
+        let long = (0..512u32).map(|value| format!("{:08x}", value.wrapping_mul(0x9e37_79b9))).collect::<String>();
+        let oversized: SpendEntry = serde_json::from_value(json!({
+            "timestamp":"2026-10-01T00:00:00Z", "request_id":"oversized-end-user", "model":"test-model",
+            "provider":"test-provider", "key_id":"first-owner", "end_user_id":long, "cost":0.25,
+            "request_tags":"[\"retry-tag\"]"
+        }))?;
+        let mut ordinary = oversized.clone();
+        ordinary.request_id = Some("ordinary-end-user".into());
+        ordinary.key_id = Some("second-owner".into());
+        ordinary.end_user_id = Some("retry-customer".into());
+        let drops = dropped_count();
+        let (writer, handle) = spawn_with_shutdown(db.clone(), 3600, 8);
+        writer.queue(oversized).await;
+        writer.queue(ordinary).await;
+        tokio::time::timeout(Duration::from_secs(10), handle.shutdown()).await?;
+        drop(writer);
+        ensure!(db.count_spend(None, None).await? == 2, "invalid attribution must not discard either metering event");
+        ensure!(db.total_spend(None, None).await? == 0.5, "billed costs must remain intact");
+        let first = db.query_spend_by_request_id("oversized-end-user").await?.context("first row")?;
+        ensure!(first.end_user_id.is_none(), "invalid identity must not be truncated into a different customer");
+        let second = db.query_spend_by_request_id("ordinary-end-user").await?.context("unrelated row")?;
+        ensure!(second.end_user_id.as_deref() == Some("retry-customer"));
+        ensure!(db.get_customer("retry-customer").await?.context("customer")?.spend == 0.25, "only the ordinary customer's event is attributed");
+        ensure!(db.get_tag("retry-tag").await?.context("tag")?.spend == Some(0.5), "tag counters must retain both events");
+        ensure!(dropped_count() == drops);
+        Ok(())
+    }).await
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn postgres_oversized_model_attribution_cannot_poison_unrelated_spend_rows() -> Result<()> {
+    with_postgres_fixture(|db| async move {
+        create_counter_scopes(&db).await?;
+        let long = (0..512u32).map(|value| format!("{:08x}", value.wrapping_mul(0x9e37_79b9))).collect::<String>();
+        let entry: SpendEntry = serde_json::from_value(json!({
+            "timestamp":"2026-10-01T00:00:00Z", "request_id":"oversized-model", "model":long,
+            "provider":"test-provider", "key_id":"first-owner", "end_user_id":"retry-customer", "cost":0.25,
+            "request_tags":"[\"retry-tag\"]"
+        }))?;
+        let mut different = entry.clone();
+        different.request_id = Some("different-model".into());
+        different.model.push('x');
+        let mut ordinary = entry.clone();
+        ordinary.request_id = Some("ordinary-model".into());
+        ordinary.model = "ordinary-model".into();
+        let drops = dropped_count();
+        let (writer, handle) = spawn_with_shutdown(db.clone(), 3600, 8);
+        for entry in [entry, different, ordinary] { writer.queue(entry).await; }
+        tokio::time::timeout(Duration::from_secs(10), handle.shutdown()).await?;
+        drop(writer);
+        assert_accounting(&db, 3, 0.75).await?;
+        let first = db.query_spend_by_request_id("oversized-model").await?.context("first row")?;
+        let different = db.query_spend_by_request_id("different-model").await?.context("different row")?;
+        ensure!(first.model.len() <= 512 && first.model.contains("...#sha256:"), "oversized model attribution must be bounded and marked");
+        ensure!(first.model != different.model, "distinct oversized models must not collapse to the same truncated prefix");
+        ensure!(db.query_spend_by_request_id("ordinary-model").await?.context("ordinary row")?.model == "ordinary-model");
+        ensure!(dropped_count() == drops);
+        Ok(())
+    }).await
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn postgres_transient_spend_rollbacks_recover_without_double_accounting() -> Result<()> {
     for code in ["40001", "40P01", "55P03"] {
         with_postgres_fixture(|db| async move {

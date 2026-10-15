@@ -219,6 +219,14 @@ pub const REQUEST_ID_HEADER: &str = "x-oxllm-request-id";
 /// read the request id without an oxllm-specific header.
 pub const STANDARD_REQUEST_ID_HEADER: &str = "x-request-id";
 
+/// Migration alias for the gateway-generated request correlation identifier.
+pub const LITELLM_CALL_ID_HEADER: &str = "x-litellm-call-id";
+
+/// Gateway-owned cumulative spend snapshot and its migration alias.
+pub const KEY_SPEND_HEADER: &str = "x-oxllm-key-spend";
+pub const LITELLM_KEY_SPEND_HEADER: &str = "x-litellm-key-spend";
+pub(crate) const KEY_SPEND_HEADERS: [&str; 2] = [KEY_SPEND_HEADER, LITELLM_KEY_SPEND_HEADER];
+
 tokio::task_local! {
     /// Gateway-generated correlation id scoped around the entire HTTP request,
     /// including middleware and extractor failures that precede a pipeline.
@@ -234,15 +242,13 @@ pub(crate) fn request_id() -> String {
         .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())
 }
 
-/// Stamp `REQUEST_ID_HEADER` AND `STANDARD_REQUEST_ID_HEADER` on the
-/// response with the given request id. Both headers receive the same value:
-/// oxllm's own clients can read `x-oxllm-request-id`, generic OpenAI clients
-/// read `x-request-id`. Centralised here so every stamp site stays in sync
-/// (the alternative — sprinkling two `set_header` calls at each site — is
-/// the bug H8 was filed against: callers stamped only the oxllm variant).
+/// Stamp the native, standard and migration correlation headers with the same
+/// gateway-generated id. Shared by pipeline responses and the outer middleware
+/// so errors, cache hits and converted/streaming responses stay consistent.
 pub fn stamp_request_id_header(response: &mut Response, request_id: &str) {
     set_header(response, REQUEST_ID_HEADER, request_id);
     set_header(response, STANDARD_REQUEST_ID_HEADER, request_id);
+    set_header(response, LITELLM_CALL_ID_HEADER, request_id);
 }
 
 /// Header name flagging a cache hit.
@@ -293,10 +299,38 @@ pub const SESSION_ID_HEADER: &str = "x-oxllm-session-id";
 /// through to this header, then to the request body.
 pub const LITELLM_SESSION_ID_HEADER: &str = "x-litellm-session-id";
 
+/// Maximum bytes in the normalized session identity used by routing, logging
+/// and persistence. Keeps client-supplied values below database index limits.
+pub const MAX_SESSION_ID_BYTES: usize = 256;
+
+/// Trim and bound a client session identity on a UTF-8 boundary. Oversized
+/// sessions use the same prefix for routing, logging and persistence; blank
+/// values are absent. Applying this function twice leaves the result unchanged.
+pub fn normalize_session_id(raw: &str) -> Option<String> {
+    let id = raw.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let mut end = id.len().min(MAX_SESSION_ID_BYTES);
+    while !id.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(id[..end].trim_end().to_string())
+}
+
 /// Request header carrying a routing tag (`routing_strategy: tag_based`).
 /// Clients send `x-oxllm-tag: canary` to select deployments whose
 /// `model_info.tags` contains `"canary"`.
 pub const TAG_HEADER: &str = "x-oxllm-tag";
+pub const TAGS_HEADER: &str = "x-oxllm-tags";
+pub const LITELLM_TAGS_HEADER: &str = "x-litellm-tags";
+pub const LITELLM_TAG_HEADER: &str = "x-litellm-tag";
+pub const TAG_HEADERS: [&str; 4] = [
+    TAG_HEADER,
+    TAGS_HEADER,
+    LITELLM_TAGS_HEADER,
+    LITELLM_TAG_HEADER,
+];
 
 /// Extract a non-empty session id from `x-oxllm-session-id`, if present.
 pub fn extract_session_id(headers: &HeaderMap) -> Option<String> {
@@ -322,9 +356,7 @@ fn header_session_id(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get(name)
         .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+        .and_then(normalize_session_id)
 }
 
 /// Characters allowed in an Anthropic-derived session id (UUIDs, CLI ids).
@@ -338,13 +370,17 @@ fn anthropic_session_id_from_metadata(body: &Value) -> Option<String> {
     let user_id = body.get("metadata")?.get("user_id")?;
     if let Some(obj) = user_id.as_object() {
         let session = obj.get("session_id")?.as_str()?;
-        return is_anthropic_session_id(session).then(|| session.to_string());
+        return is_anthropic_session_id(session)
+            .then(|| normalize_session_id(session))
+            .flatten();
     }
     let user_id = user_id.as_str()?;
     let marker = "_session_";
     let idx = user_id.rfind(marker)?;
     let session = &user_id[idx + marker.len()..];
-    is_anthropic_session_id(session).then(|| session.to_string())
+    is_anthropic_session_id(session)
+        .then(|| normalize_session_id(session))
+        .flatten()
 }
 
 /// Compatibility accessor for the primary header tag. New handlers should
@@ -370,8 +406,9 @@ pub const MAX_TAG_BYTES: usize = 128;
 /// - the request body's `metadata.tags` array (the standard proxy
 ///   convention — the common case for per-application tagging on a shared
 ///   key), and
-/// - the `x-oxllm-tag` header, which may itself carry a comma-separated
-///   list.
+/// - the `x-oxllm-tag` / `x-oxllm-tags` headers, followed by the migration
+///   aliases `x-litellm-tags` / `x-litellm-tag`. Each header may carry a
+///   comma-separated list and may be repeated.
 ///
 /// All carriers are merged (order-preserving union, deduplicated, trimmed,
 /// non-empty), then bounded to [`MAX_REQUEST_TAGS`] entries of at most
@@ -380,9 +417,9 @@ pub const MAX_TAG_BYTES: usize = 128;
 pub fn extract_tags(headers: &HeaderMap, body: Option<&Value>) -> Vec<String> {
     merge_request_tags(
         body,
-        headers
-            .get_all(TAG_HEADER)
-            .iter()
+        TAG_HEADERS
+            .into_iter()
+            .flat_map(|name| headers.get_all(name).iter())
             .filter_map(|v| v.to_str().ok())
             .flat_map(|raw| raw.split(',')),
     )
@@ -474,6 +511,7 @@ impl<'a> EndpointPipeline<'a> {
     /// When the body carries a non-empty OpenAI `"user"` field and a customer
     /// row exists, also enforces that customer's `blocked` flag and
     /// `model_blocklist` (including for master keys — abuse control).
+    /// Header-derived attribution is available through [`Self::for_request_with_headers`].
     pub async fn for_request(
         state: &'a AppState,
         auth: &AuthUser,
@@ -486,6 +524,8 @@ impl<'a> EndpointPipeline<'a> {
     /// Build a pipeline with normalized header/body tags already available to
     /// ACL and customer-denial reporting. Resolve tag budget limits separately
     /// with [`Self::apply_request_tags`] before running admission hooks.
+    /// Session attribution here comes from body metadata; use
+    /// [`Self::for_request_with_headers`] when HTTP headers are available.
     pub async fn for_request_with_tags(
         state: &'a AppState,
         auth: &AuthUser,
@@ -493,7 +533,38 @@ impl<'a> EndpointPipeline<'a> {
         request_body: Value,
         tags: &[String],
     ) -> Result<Self, ApiError> {
-        let mut call_ctx = request_call_context(auth, model, request_body, tags);
+        Self::for_request_with_metadata(state, auth, model, request_body, tags, None).await
+    }
+
+    /// Construct request attribution before any admission check can reject.
+    pub async fn for_request_with_headers(
+        state: &'a AppState,
+        auth: &AuthUser,
+        model: &str,
+        request_body: Value,
+        headers: &HeaderMap,
+    ) -> Result<Self, ApiError> {
+        let tags = extract_tags(headers, Some(&request_body));
+        let session_id = extract_session_id_with_body(headers, Some(&request_body));
+        Self::for_request_with_metadata(state, auth, model, request_body, &tags, session_id).await
+    }
+
+    /// Header-aware and already-normalized passthrough paths share this entry.
+    pub(crate) async fn for_request_with_metadata(
+        state: &'a AppState,
+        auth: &AuthUser,
+        model: &str,
+        request_body: Value,
+        tags: &[String],
+        session_id: Option<String>,
+    ) -> Result<Self, ApiError> {
+        let mut call_ctx = request_call_context(auth, model, request_body, tags, session_id);
+        if let Some(id) = call_ctx.request_body.get("user").and_then(Value::as_str)
+            && let Err(error) = validate_end_user_id(id)
+        {
+            record_request_rejection(state, &call_ctx, &error).await;
+            return Err(error);
+        }
         call_ctx.set_scope_limits(&auth.scope_limits());
         call_ctx.max_parallel_requests = auth.max_parallel_requests;
         if let Err(error) = check_model_acl(
@@ -513,11 +584,11 @@ impl<'a> EndpointPipeline<'a> {
         Ok(Self { state, call_ctx })
     }
 
-    /// Stamp request-tag budget limits from the `x-oxllm-tag` header value.
+    /// Stamp budget limits for a normalized primary request tag.
     ///
     /// Call after [`Self::for_request`] and before [`Self::pre_call`] so
     /// `BudgetHook` sees `tag_max_budget`. Unknown tags pass through; a DB
-    /// error fails closed when the header is present.
+    /// error fails closed when a tag is present.
     pub async fn apply_request_tag(&mut self, tag: Option<&str>) -> Result<(), ApiError> {
         let result = apply_tag_context(self.state, &mut self.call_ctx, tag).await;
         if let Err(error) = &result {
@@ -552,6 +623,27 @@ impl<'a> EndpointPipeline<'a> {
     ///   [`run_pre_call_hooks`]), so callers only need to handle the error —
     ///   no extra cleanup.
     pub async fn pre_call(&mut self) -> Result<Option<Value>, ApiError> {
+        if !self.call_ctx.is_master
+            && self.call_ctx.deployment_pricing.is_none()
+            && self.call_ctx.pricing_model.is_none()
+        {
+            // Prove the whole configured group free, rather than assuming a
+            // cheap/currently healthy member will serve. This avoids reserving
+            // the unknown-alias floor for explicit zero-price deployments.
+            let deployments = self
+                .state
+                .router
+                .deployments_for_model(&self.state.deployments, &self.call_ctx.model);
+            self.call_ctx.pre_call_pricing_is_free = !deployments.is_empty()
+                && deployments.iter().all(|deployment| {
+                    let mut params = deployment.oxllm_params.clone();
+                    params.model = deployment_pricing_model(deployment, &self.call_ctx.model);
+                    params
+                        .pricing_override()
+                        .as_ref()
+                        .is_some_and(crate::hooks::cost_fallback::pricing_is_free)
+                });
+        }
         let result = run_pre_call_hooks(&self.state.hooks, &mut self.call_ctx).await;
         if let Err(error) = &result {
             // The runner already rolled back admission scopes. Observe the
@@ -617,13 +709,22 @@ fn request_call_context(
     model: &str,
     request_body: Value,
     tags: &[String],
+    session_id: Option<String>,
 ) -> CallContext {
     let request_tags = merge_request_tags(Some(&request_body), tags.iter().map(String::as_str));
     let end_user_id = extract_end_user_id(&request_body);
+    let session_id = session_id
+        .as_deref()
+        .and_then(normalize_session_id)
+        .or_else(|| extract_session_id_with_body(&HeaderMap::new(), Some(&request_body)));
+    if let Some(session_id) = session_id.as_deref() {
+        tracing::Span::current().record("session_id", session_id);
+    }
     CallContext {
         model: model.into(),
         api_key_hash: auth.key_hash_hex().into(),
         request_id: request_id(),
+        session_id,
         request_body: std::sync::Arc::new(request_body),
         key_id: auth
             .key_id
@@ -689,7 +790,10 @@ pub(crate) async fn stamp_key_spend_header(
         .await
         .filter(|spend| spend.is_finite() && *spend >= 0.0)
     {
-        set_header(response, "x-oxllm-key-spend", &spend.to_string());
+        let spend = spend.to_string();
+        for name in KEY_SPEND_HEADERS {
+            set_header(response, name, &spend);
+        }
     }
 }
 
@@ -710,11 +814,25 @@ pub(crate) async fn check_request_model_acl(
         auth.user_models.as_deref(),
     );
     if let Err(error) = &result {
-        let tags = extract_tags(headers, Some(request_body));
-        let ctx = request_call_context(auth, model, request_body.clone(), &tags);
-        record_request_rejection(state, &ctx, error).await;
+        record_http_request_rejection(state, auth, model, request_body, headers, error).await;
     }
     result
+}
+
+/// Attribute a known local HTTP rejection without storing its body or error
+/// text, or resolving admission scopes a second time.
+pub(crate) async fn record_http_request_rejection(
+    state: &AppState,
+    auth: &AuthUser,
+    model: &str,
+    request_body: &Value,
+    headers: &HeaderMap,
+    error: &ApiError,
+) {
+    let tags = extract_tags(headers, Some(request_body));
+    let session_id = extract_session_id_with_body(headers, Some(request_body));
+    let ctx = request_call_context(auth, model, request_body.clone(), &tags, session_id);
+    record_request_rejection(state, &ctx, error).await;
 }
 
 /// Free-function form of post-success handling for spawned tasks that own
@@ -779,6 +897,7 @@ pub(crate) async fn prepare_deployment_pricing(
     deployment: &Deployment,
     request: &Value,
 ) -> oxllm_core::Result<()> {
+    ctx.pre_call_pricing_is_free = false;
     ctx.deployment_id = deployment
         .model_info
         .as_ref()
@@ -1413,24 +1532,33 @@ pub fn set_header(response: &mut Response, name: &'static str, value: &str) {
     }
 }
 
-/// Check if the requested model is allowed by the key/team model ACLs.
-///
-/// - Master-key callers bypass all checks.
-/// - When `key_models` / `team_models` is `None` or empty, no restriction is
-///   applied at that level (backward compatible).
-/// - Both key and team restrictions must pass (the team ceiling is an
-///   intersection, not a union).
-/// - Patterns support `*` wildcards via [`glob_match`] (e.g. `"gpt-4*"`
-///   matches `"gpt-4o"`).
-///
+/// Maximum UTF-8 bytes in an admitted end-user/customer identity. Unlike
+/// session hints, customer identities cannot be truncated without changing
+/// which customer's policy and durable spend the request belongs to.
+pub const MAX_END_USER_ID_BYTES: usize = 256;
+
+pub(crate) fn validate_end_user_id(raw: &str) -> Result<(), ApiError> {
+    if raw.trim().len() > MAX_END_USER_ID_BYTES {
+        return Err(ApiError::bad_request(format!(
+            "user/end_user_id must not exceed {MAX_END_USER_ID_BYTES} bytes after trimming"
+        )));
+    }
+    Ok(())
+}
+
+/// Normalize safe metering attribution. Invalid identities are omitted rather
+/// than aliased to a shorter customer's id; admission separately rejects them.
+pub(crate) fn normalize_end_user_id(raw: &str) -> Option<String> {
+    let id = raw.trim();
+    (!id.is_empty() && id.len() <= MAX_END_USER_ID_BYTES).then(|| id.to_string())
+}
+
 /// Extract the OpenAI end-user id from a request body (`"user"` field).
-/// Returns `None` when missing, non-string, or blank after trim.
+/// Returns `None` when missing, non-string, blank, or over the admitted limit.
 pub fn extract_end_user_id(body: &Value) -> Option<String> {
     body.get("user")
         .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+        .and_then(normalize_end_user_id)
 }
 
 /// Resolve customer limits from the request body `"user"` field and stamp
@@ -1514,9 +1642,9 @@ pub(crate) async fn check_customer_model(
     apply_customer_context(state, &mut fallback).await
 }
 
-/// Resolve tag limits from the `x-oxllm-tag` header value and stamp them
+/// Resolve limits for a normalized primary request tag and stamp them
 /// onto `call_ctx`. Unknown tag names pass through without tag budget
-/// scope. No-op when the header is absent, the `db` feature is off, or no
+/// scope. No-op when the tag is absent, the `db` feature is off, or no
 /// database is configured.
 async fn apply_tag_context(
     state: &AppState,
@@ -1590,6 +1718,8 @@ pub async fn apply_request_tags(
     Ok(())
 }
 
+/// Check the intersection of key/team/user model policies. Master keys bypass
+/// these policies; absent/empty lists are unrestricted and patterns support `*`.
 pub fn check_model_acl(
     auth_user: &AuthUser,
     model: &str,
@@ -2128,10 +2258,17 @@ mod tests {
         ctx.is_master = true;
         let mut response = Response::new(axum::body::Body::empty());
         stamp_key_spend_header(&mut response, &state, &ctx).await;
-        assert!(response.headers().get("x-oxllm-key-spend").is_none());
+        for header in KEY_SPEND_HEADERS {
+            assert!(
+                response.headers().get(header).is_none(),
+                "master response must omit {header}"
+            );
+        }
         ctx.is_master = false;
         stamp_key_spend_header(&mut response, &state, &ctx).await;
-        assert_eq!(response.headers()["x-oxllm-key-spend"], "0.5");
+        for header in KEY_SPEND_HEADERS {
+            assert_eq!(response.headers()[header], "0.5");
+        }
     }
 
     #[tokio::test]
@@ -2646,11 +2783,7 @@ mod tests {
     }
 
     #[test]
-    fn stamp_request_id_header_sets_both_headers() {
-        // H8: every response must carry BOTH `x-oxllm-request-id` (for our
-        // own tooling) AND the standard OpenAI `x-request-id` (for generic
-        // OpenAI clients). The single helper keeps them in sync so future
-        // stamp sites can't regress.
+    fn stamp_request_id_header_sets_all_correlation_aliases() {
         let mut resp = Response::new(axum::body::Body::from(""));
         stamp_request_id_header(&mut resp, "req-xyz");
         assert_eq!(
@@ -2666,6 +2799,70 @@ mod tests {
             Some("req-xyz"),
             "x-request-id (standard OpenAI header) must also be stamped"
         );
+        assert_eq!(
+            resp.headers().get(LITELLM_CALL_ID_HEADER).unwrap(),
+            "req-xyz"
+        );
+    }
+
+    #[tokio::test]
+    async fn free_group_admission_proof_uses_concrete_rates_and_inherited_buckets() {
+        // The gpt-4o cases remain paid through its published cache-read rate,
+        // even with explicit zero base-token rates. The hinted case must
+        // inherit that same bucket before claiming the group free.
+        for (model, hint, free) in [
+            ("openai/unpriced-free-model", None, true),
+            ("openai/gpt-4o", None, false),
+            ("openai/unpriced-profile", Some("openai/gpt-4o"), false),
+        ] {
+            let config = serde_json::from_value(json!({"model_list":[{
+                "model_name":"free-alias", "oxllm_params":{"model":model,
+                    "input_cost_per_token":0.0, "output_cost_per_token":0.0},
+                "model_info":{"base_model":hint}
+            }]}))
+            .unwrap();
+            let state =
+                AppState::with_registry(config, oxllm_providers::default_registry()).unwrap();
+            let mut pipeline = EndpointPipeline {
+                state: &state,
+                call_ctx: CallContext {
+                    max_budget: Some(1.0),
+                    request_body: std::sync::Arc::new(
+                        json!({"model":"free-alias", "max_tokens":5}),
+                    ),
+                    ..CallContext::for_test("free-alias")
+                },
+            };
+            assert!(pipeline.pre_call().await.unwrap().is_none());
+            assert_eq!(
+                pipeline.call_ctx.pre_call_pricing_is_free, free,
+                "{model}, hint={hint:?}"
+            );
+            assert_eq!(
+                pipeline.call_ctx.budget_estimate,
+                Some(if free { 0.0 } else { 0.01 })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_groups_never_receive_a_zero_admission_hint() {
+        let config = serde_json::from_value(json!({"model_list":[
+            {"model_name":"mixed", "oxllm_params":{"model":"openai/unpriced", "input_cost_per_token":0.0, "output_cost_per_token":0.0}},
+            {"model_name":"mixed", "oxllm_params":{"model":"openai/unpriced", "input_cost_per_token":0.0, "output_cost_per_token":0.001}}
+        ]})).unwrap();
+        let state = AppState::with_registry(config, oxllm_providers::default_registry()).unwrap();
+        let mut pipeline = EndpointPipeline {
+            state: &state,
+            call_ctx: CallContext {
+                max_budget: Some(1.0),
+                request_body: std::sync::Arc::new(json!({"model":"mixed", "max_tokens":5})),
+                ..CallContext::for_test("mixed")
+            },
+        };
+        assert!(pipeline.pre_call().await.unwrap().is_none());
+        assert!(!pipeline.call_ctx.pre_call_pricing_is_free);
+        assert_eq!(pipeline.call_ctx.budget_estimate, Some(0.01));
     }
 
     #[tokio::test]
@@ -2708,6 +2905,58 @@ mod tests {
             elapsed.as_millis() < 1000,
             "1000 pipeline constructions should be fast, took {elapsed:?}"
         );
+    }
+
+    #[test]
+    fn session_normalization_is_utf8_safe_idempotent_and_preserves_short_ids() {
+        assert_eq!(
+            normalize_session_id(" short-id ").as_deref(),
+            Some("short-id")
+        );
+        assert!(normalize_session_id("  ").is_none());
+        let id = format!("{}éz", "a".repeat(MAX_SESSION_ID_BYTES - 1));
+        let normalized = normalize_session_id(&id).unwrap();
+        assert_eq!(normalized, "a".repeat(MAX_SESSION_ID_BYTES - 1));
+        assert_eq!(
+            normalize_session_id(&normalized).as_ref(),
+            Some(&normalized)
+        );
+        let spaces = format!("{} remainder", "x".repeat(MAX_SESSION_ID_BYTES - 1));
+        let normalized = normalize_session_id(&spaces).unwrap();
+        assert_eq!(
+            normalize_session_id(&normalized).as_ref(),
+            Some(&normalized)
+        );
+    }
+
+    #[test]
+    fn extracted_session_ids_are_bounded_across_every_carrier() {
+        let long = (0..512u32)
+            .map(|value| format!("{:08x}", value.wrapping_mul(0x9e37_79b9)))
+            .collect::<String>();
+        let expected = &long[..256];
+        for name in [SESSION_ID_HEADER, LITELLM_SESSION_ID_HEADER] {
+            let mut headers = HeaderMap::new();
+            headers.insert(name, HeaderValue::from_str(&format!(" {long} ")).unwrap());
+            assert_eq!(
+                extract_session_id(&headers).as_deref(),
+                Some(expected),
+                "{name}"
+            );
+        }
+        for user_id in [
+            json!({"session_id":long}),
+            json!(format!("user_synthetic_session_{long}")),
+        ] {
+            assert_eq!(
+                extract_session_id_with_body(
+                    &HeaderMap::new(),
+                    Some(&json!({"metadata":{"user_id":user_id}}))
+                )
+                .as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     #[test]
@@ -2841,6 +3090,56 @@ mod tests {
     }
 
     #[test]
+    fn tag_header_aliases_preserve_pairs_repeated_values_and_carrier_order() {
+        for name in TAG_HEADERS {
+            let mut headers = HeaderMap::new();
+            headers.append(
+                name,
+                HeaderValue::from_static(" product:demo, firm:example "),
+            );
+            headers.append(
+                name,
+                HeaderValue::from_static("firm:example, user:synthetic"),
+            );
+            assert_eq!(
+                extract_tags(&headers, None),
+                ["product:demo", "firm:example", "user:synthetic"],
+                "header {name} must retain every literal tag"
+            );
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-litellm-tag",
+            HeaderValue::from_static("legacy-single, shared"),
+        );
+        headers.insert(
+            "x-litellm-tags",
+            HeaderValue::from_static("legacy-plural, shared"),
+        );
+        headers.insert(
+            "x-oxllm-tags",
+            HeaderValue::from_static("native-plural, shared"),
+        );
+        headers.insert(
+            "x-oxllm-tag",
+            HeaderValue::from_static("native-single, shared"),
+        );
+        let body = json!({"tags":["body", "shared"], "metadata":{"tags":["metadata", "shared"]}});
+        assert_eq!(
+            extract_tags(&headers, Some(&body)),
+            [
+                "body",
+                "shared",
+                "metadata",
+                "native-single",
+                "native-plural",
+                "legacy-plural",
+                "legacy-single"
+            ]
+        );
+    }
+
+    #[test]
     fn extract_tags_bounds_count_and_length() {
         let many: Vec<String> = (0..40).map(|i| format!("t{i}")).collect();
         let body = serde_json::json!({"metadata": {"tags": many}});
@@ -2929,6 +3228,21 @@ mod tests {
     // ---- end-user / customer helpers --------------------------------------
 
     #[test]
+    fn extracted_end_user_ids_never_exceed_the_persistence_bound() {
+        let id = "é".repeat(128);
+        assert_eq!(
+            extract_end_user_id(&json!({"user":format!(" {id} ")})).as_deref(),
+            Some(id.as_str())
+        );
+        for id in ["a".repeat(257), format!("{id}x")] {
+            assert!(
+                extract_end_user_id(&json!({"user":id})).is_none(),
+                "an oversized identity must not alias a shorter customer"
+            );
+        }
+    }
+
+    #[test]
     fn extract_end_user_id_reads_body_user() {
         assert_eq!(
             extract_end_user_id(&serde_json::json!({"user": "eu-1"})).as_deref(),
@@ -2949,6 +3263,17 @@ mod tests {
             None,
             "non-string user is ignored"
         );
+    }
+
+    #[tokio::test]
+    async fn pipeline_rejects_oversized_customer_ids_even_without_http_validation() {
+        let state = state_with_in_memory_cache();
+        let body = json!({"model":"gpt-4o", "user":"x".repeat(MAX_END_USER_ID_BYTES + 1)});
+        let error = EndpointPipeline::for_request(&state, &AuthUser::open(), "gpt-4o", body)
+            .await
+            .err()
+            .expect("invalid end-user identity");
+        assert_eq!(error.status, axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

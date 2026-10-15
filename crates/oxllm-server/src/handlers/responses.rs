@@ -88,7 +88,22 @@ pub async fn responses(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let chat_body = responses_to_chat_request(&request_body);
+    let chat_body = match responses_to_chat_request(&request_body) {
+        Ok(body) => body,
+        Err(error) => {
+            let error = ApiError::from(error);
+            crate::pipeline::record_http_request_rejection(
+                &state,
+                &auth,
+                model,
+                &request_body,
+                &headers,
+                &error,
+            )
+            .await;
+            return Err(error);
+        }
+    };
     let chat_bytes = serde_json::to_vec(&chat_body)
         .map_err(|e| ApiError::internal(format!("failed to serialize request: {e}")))?;
 

@@ -18,6 +18,23 @@ pub(crate) fn is_routing_error(error: &ApiError) -> bool {
     error.code.as_deref() == Some(ROUTING_ERROR_CODE)
 }
 
+/// An empty available pool is transient for a configured group, including
+/// aliases/wildcards. Only a configuration miss is an invalid model selector.
+pub(crate) fn no_available_deployment(state: &AppState, model: &str) -> ApiError {
+    if state
+        .router
+        .deployments_for_model(&state.deployments, model)
+        .is_empty()
+    {
+        ApiError::model_not_found(model)
+    } else {
+        ApiError::rate_limited(format!(
+            "all deployments for '{}' are rate-limited or unavailable",
+            crate::error::truncate_model_for_echo(model)
+        ))
+    }
+}
+
 /// Materialize the primary group's default before cloning contexts for other
 /// groups, so an operator-supplied hard default is not lost on fallback.
 pub(crate) fn apply_default_tag(state: &AppState, ctx: &mut RequestContext) {

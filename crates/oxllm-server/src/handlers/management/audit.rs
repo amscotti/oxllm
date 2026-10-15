@@ -57,6 +57,7 @@ impl From<&AuditLogsQuery> for oxllm_db::SpendFilter {
             sort_by: None,
             sort_order: None,
             request_id: None,
+            session_id: None,
         }
     }
 }
@@ -104,6 +105,7 @@ pub async fn list_audit_logs(
                     "deployment_id": log.deployment_id,
                     "requested_model": log.requested_model,
                     "model_group": log.model_group,
+                    "session_id": log.session_id,
                     "cost": log.cost,
                     "prompt_tokens": log.prompt_tokens,
                     "completion_tokens": log.completion_tokens,
@@ -147,6 +149,7 @@ pub async fn get_request_log(
         Some(entry) => Ok(Json(json!({
             "id": entry.id,
             "request_id": entry.request_id,
+            "session_id": entry.session_id,
             "timestamp": entry.timestamp,
             "model": entry.model,
             "provider": entry.provider,
@@ -218,6 +221,7 @@ mod tests {
             id: None,
             requested_model: None,
             model_group: None,
+            session_id: None,
             timestamp: oxllm_db::now_iso(),
             request_id: request_id.map(str::to_string),
             model: "gpt-4o".to_string(),
@@ -384,6 +388,7 @@ mod tests {
             id: None,
             requested_model: None,
             model_group: None,
+            session_id: None,
             timestamp: oxllm_db::now_iso(),
             request_id: Some(request_id.to_string()),
             model: "gpt-4o".to_string(),

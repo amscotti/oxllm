@@ -93,13 +93,12 @@ pub(crate) async fn chat_completions_inner(
     crate::orchestration::request_controls::validate(&request_body)?;
 
     crate::pipeline::check_request_model_acl(&state, auth, &model, &request_body, headers).await?;
-    let admission_tags = crate::pipeline::extract_tags(headers, Some(&request_body));
-    let mut pipeline = EndpointPipeline::for_request_with_tags(
+    let mut pipeline = EndpointPipeline::for_request_with_headers(
         &state,
         auth,
         &model,
         request_body.clone(),
-        &admission_tags,
+        headers,
     )
     .await?;
 
@@ -127,7 +126,7 @@ pub(crate) async fn chat_completions_inner(
         .get("traceparent")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    let session_id = crate::pipeline::extract_session_id_with_body(headers, Some(&request_body));
+    let session_id = pipeline.call_ctx.session_id.clone();
     let tags = crate::pipeline::extract_tags(headers, Some(&request_body));
     pipeline.apply_request_tags(&tags).await?;
 
@@ -150,6 +149,7 @@ pub(crate) async fn chat_completions_inner(
             ),
         )
         .await
+        .map_err(ApiError::for_inference)
 }
 
 /// Apply configured guardrails (PII masking, Presidio, injection detection,

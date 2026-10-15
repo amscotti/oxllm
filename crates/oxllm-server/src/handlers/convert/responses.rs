@@ -30,8 +30,12 @@ fn unix_now() -> u64 {
 // Request conversion: Responses → Chat
 // ---------------------------------------------------------------------------
 
-pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
+pub(crate) fn responses_to_chat_request(req: &Value) -> oxllm_core::Result<Value> {
     let mut out = Map::new();
+
+    if let Some(format) = responses_text_format_to_chat(req)? {
+        out.insert("response_format".into(), format);
+    }
 
     if let Some(model) = req.get("model") {
         out.insert("model".to_string(), model.clone());
@@ -273,7 +277,72 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> Value {
     }
 
     crate::orchestration::request_controls::copy(req, &mut out);
-    Value::Object(out)
+    Ok(Value::Object(out))
+}
+
+/// Preserve output constraints before the request enters provider transforms or
+/// response caching. Invalid constraints are client errors, never plain-text
+/// requests with silently discarded schemas.
+fn responses_text_format_to_chat(req: &Value) -> oxllm_core::Result<Option<Value>> {
+    let invalid = |message: &str| oxllm_core::Error::BadRequest(message.into());
+    let Some(text) = req.get("text").filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let text = text
+        .as_object()
+        .ok_or_else(|| invalid("text must be an object"))?;
+    let Some(format) = text.get("format").filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let format = format
+        .as_object()
+        .ok_or_else(|| invalid("text.format must be an object"))?;
+    match format.get("type").and_then(Value::as_str) {
+        Some("text") => Ok(None),
+        Some("json_object") => Ok(Some(json!({"type":"json_object"}))),
+        Some("json_schema") => {
+            let name = format
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| {
+                    invalid("text.format json_schema requires a non-empty string name")
+                })?;
+            if name.len() > 64
+                || !name.bytes().all(|character| {
+                    character.is_ascii_alphanumeric() || character == b'_' || character == b'-'
+                })
+            {
+                return Err(invalid(
+                    "text.format.name must use 1-64 ASCII letters, digits, underscores or hyphens",
+                ));
+            }
+            let schema = format
+                .get("schema")
+                .filter(|schema| schema.is_object())
+                .ok_or_else(|| invalid("text.format json_schema requires an object schema"))?;
+            let mut settings = Map::new();
+            settings.insert("name".into(), json!(name));
+            settings.insert("schema".into(), schema.clone());
+            if let Some(strict) = format.get("strict").filter(|value| !value.is_null()) {
+                if !strict.is_boolean() {
+                    return Err(invalid("text.format.strict must be a boolean"));
+                }
+                settings.insert("strict".into(), strict.clone());
+            }
+            if let Some(description) = format.get("description").filter(|value| !value.is_null()) {
+                if !description.is_string() {
+                    return Err(invalid("text.format.description must be a string"));
+                }
+                settings.insert("description".into(), description.clone());
+            }
+            Ok(Some(json!({"type":"json_schema", "json_schema":settings})))
+        }
+        _ => Err(invalid(
+            "text.format.type must be text, json_object, or json_schema",
+        )),
+    }
 }
 
 fn normalize_responses_message_content(content: &Value) -> Value {
@@ -1289,6 +1358,77 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn responses_to_chat_request(req: &Value) -> Value {
+        super::responses_to_chat_request(req).expect("valid Responses request")
+    }
+
+    #[test]
+    fn responses_schema_names_are_normalized_and_validated_locally() {
+        let request = |name: &str| {
+            json!({"model":"m", "input":"answer", "text":{"format":{
+                "type":"json_schema", "name":name, "schema":{"type":"object"}
+            }}})
+        };
+        assert_eq!(
+            responses_to_chat_request(&request(" answer "))["response_format"]["json_schema"]["name"],
+            "answer"
+        );
+        assert!(super::responses_to_chat_request(&request(&"a".repeat(64))).is_ok());
+        for name in [
+            " ".to_string(),
+            "two words".to_string(),
+            "é".to_string(),
+            "x/y".to_string(),
+            "a".repeat(65),
+        ] {
+            assert!(
+                matches!(
+                    super::responses_to_chat_request(&request(&name)),
+                    Err(oxllm_core::Error::BadRequest(_))
+                ),
+                "invalid schema name: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_text_formats_are_validated_before_conversion() {
+        for text in [
+            Value::Null,
+            json!({}),
+            json!({"format":null}),
+            json!({"format":{"type":"text"}}),
+        ] {
+            assert!(
+                responses_to_chat_request(&json!({"input":"hello", "text":text}))
+                    .get("response_format")
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            responses_to_chat_request(
+                &json!({"input":"hello", "text":{"format":{"type":"json_object"}}})
+            )["response_format"],
+            json!({"type":"json_object"})
+        );
+        for text in [
+            json!("invalid"),
+            json!({"format":[]}),
+            json!({"format":{}}),
+            json!({"format":{"type":"unsupported"}}),
+            json!({"format":{"type":"json_schema", "name":"answer"}}),
+            json!({"format":{"type":"json_schema", "schema":{}}}),
+            json!({"format":{"type":"json_schema", "name":123, "schema":{}}}),
+            json!({"format":{"type":"json_schema", "name":"answer", "schema":{}, "strict":"true"}}),
+            json!({"format":{"type":"json_schema", "name":"answer", "schema":{}, "description":1}}),
+        ] {
+            assert!(matches!(
+                super::responses_to_chat_request(&json!({"input":"hello", "text":text})),
+                Err(oxllm_core::Error::BadRequest(_))
+            ));
+        }
+    }
+
     #[test]
     fn message_parts_use_chat_types_and_null_controls_are_omitted() {
         let request = json!({"model":"m","input":[{"role":"user","content":[
@@ -1365,6 +1505,32 @@ mod tests {
                 .all(|pair| pair[0].1["sequence_number"].as_u64().unwrap()
                     < pair[1].1["sequence_number"].as_u64().unwrap())
         );
+    }
+
+    #[test]
+    fn responses_text_format_preserves_schema_settings_and_isolates_cache_entries() {
+        let format = json!({
+            "type":"json_schema", "name":"answer", "strict":true, "description":"A structured answer",
+            "schema":{"type":"object", "properties":{"answer":{"$ref":"#/$defs/answer"}},
+                "required":["answer"], "additionalProperties":false,
+                "$defs":{"answer":{"type":"string"}}}
+        });
+        let request = json!({"model":"m", "input":"answer", "text":{"format":format}});
+        let chat = responses_to_chat_request(&request);
+        assert_eq!(
+            chat["response_format"],
+            json!({"type":"json_schema", "json_schema":{
+                "name":format["name"], "strict":format["strict"], "description":format["description"], "schema":format["schema"]
+            }})
+        );
+        let mut other = request.clone();
+        other["text"]["format"]["schema"]["$defs"]["answer"]["type"] = json!("number");
+        let plain = responses_to_chat_request(&json!({"model":"m", "input":"answer"}));
+        let key = |request: &Value| {
+            crate::hooks::cache_hook::cache_key_for(request, "synthetic-principal")
+        };
+        assert_ne!(key(&chat), key(&responses_to_chat_request(&other)));
+        assert_ne!(key(&chat), key(&plain));
     }
 
     #[test]

@@ -15,16 +15,6 @@ use super::{
     truncate_scope_list, validate_limits,
 };
 
-/// Reject tag names that break the `spend:tag:{name}` key format.
-fn validate_tag_name(name: &str) -> Result<(), ApiError> {
-    if name.contains(':') {
-        return Err(ApiError::bad_request(
-            "tag name must not contain ':' (reserved as a spend-key separator)",
-        ));
-    }
-    Ok(())
-}
-
 /// Request body for `POST /tag/new`.
 #[derive(Debug, Deserialize)]
 pub struct NewTagRequest {
@@ -53,7 +43,6 @@ pub async fn new_tag(
     if name.is_empty() {
         return Err(ApiError::bad_request("name is required"));
     }
-    validate_tag_name(&name)?;
     if db.get_tag(&name).await.map_err(db_err)?.is_some() {
         return Err(ApiError::bad_request(format!(
             "tag '{name}' already exists"

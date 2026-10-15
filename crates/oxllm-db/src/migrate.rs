@@ -237,6 +237,15 @@ impl Database {
             .await?;
             self.set_schema_version(16, &mut *conn).await?;
         }
+        if current < 17 {
+            self.run_prepared_migration_batch(
+                crate::spend_metadata::session_attribution_statements(self.placeholder_style()),
+                conn,
+                prepared_spend,
+            )
+            .await?;
+            self.set_schema_version(17, &mut *conn).await?;
+        }
         Ok(())
     }
 
@@ -1017,7 +1026,7 @@ fn v14_statements_for(style: PlaceholderStyle) -> Vec<String> {
 /// This wrapper is preserved for the SQL-string regression tests, which
 /// assert on the union of all batches, so it is gated to test builds.
 #[cfg(test)]
-fn migration_statements_for(style: PlaceholderStyle) -> Vec<String> {
+pub(crate) fn migration_statements_for(style: PlaceholderStyle) -> Vec<String> {
     let mut stmts = vec![v0_schema_version_statement()];
     stmts.extend(v1_statements_for(style));
     stmts.extend(v2_statements_for(style));
@@ -1039,6 +1048,7 @@ fn migration_statements_for(style: PlaceholderStyle) -> Vec<String> {
     stmts.extend(crate::spend_metadata::model_group_attribution_statements(
         style,
     ));
+    stmts.extend(crate::spend_metadata::session_attribution_statements(style));
     stmts
 }
 
@@ -1061,13 +1071,25 @@ fn v0_schema_version_statement() -> String {
 mod sql_string_tests {
     //! Regression tests for Postgres compatibility bugs #4a / #4b.
     //!
-    //! CI only runs SQLite, so we can't exercise the Postgres path live.
-    //! Instead we assert on the generated SQL strings for both branches
-    //! of the placeholder-style dispatch.
+    //! Pin both generated backend branches alongside the live migration
+    //! contracts, including agreement with PostgreSQL online preparation.
 
     use super::migration_statements_for;
     use crate::PlaceholderStyle;
     use crate::pool::is_in_memory_sqlite;
+
+    /// Session attribution must be in the complete migration statement union.
+    #[test]
+    fn session_attribution_migration_is_part_of_both_backend_contracts() {
+        for style in [PlaceholderStyle::Dollar, PlaceholderStyle::Question] {
+            let statements = migration_statements_for(style);
+            assert!(statements.iter().any(|statement| {
+                statement.starts_with("ALTER TABLE spend_logs ADD COLUMN")
+                    && statement.ends_with("session_id TEXT")
+            }));
+            assert!(statements.iter().any(|statement| statement == "CREATE INDEX IF NOT EXISTS idx_spend_logs_session_timestamp ON spend_logs(session_id, timestamp)"));
+        }
+    }
 
     /// Bug #4a: Postgres REAL (FLOAT4) can't decode to f64 under sqlx's
     /// Any backend — the migration must emit DOUBLE PRECISION. SQLite must

@@ -255,6 +255,39 @@ from final provider bodies after configured overrides and allowed-parameter
 restoration. Raw bodies are validated before Messages/Responses/counting
 conversion; opt-in fallback status summaries survive API bridges.
 
+Tag headers accept native `x-oxllm-tag` / `x-oxllm-tags` and migration aliases
+`x-litellm-tags` / `x-litellm-tag`. Merge order is top-level body tags, metadata
+tags, native singular/plural headers, then legacy plural/singular headers.
+Repeated and comma-separated values are trimmed, deduplicated and bounded to
+16 tags of 128 bytes each. Colons within attribution pairs are literal, including
+tag-management names, budget counters and alert-reset scopes.
+
+Responses `text.format` supports `text`, `json_object` and `json_schema` on the
+chat bridge. JSON-schema names, descriptions, strictness and schemas reach the
+provider's existing structured-output transform and remain part of exact and
+semantic cache identity. Invalid formats return 400 before provider calls.
+Schema names are trimmed, bounded to 64 characters and restricted to ASCII
+letters/digits/underscores/hyphens. The chat bridge does not translate
+`text.verbosity`; schema objects still pass through the provider's own supported
+JSON-schema subset checks.
+Converted Anthropic unary tool calls carry indexes into the visible tool-call
+array after hidden JSON-helper removal.
+
+Vertex Anthropic deployments serving schema requests require the appropriate
+`structured_outputs` permission under
+`constraints/vertexai.allowedPartnerModelFeatures`. Verify the model feature
+allowlist and a schema request on each intended deployment. Provider policy
+errors retain their status; output constraints are not removed to evade them.
+
+Locally unresolved inference models return 400 after fallback handling, including
+native embeddings, token counting and realtime setup. OpenAI-shaped errors retain
+`code: model_not_found`; translated Messages errors use Anthropic's
+`invalid_request_error` envelope. Configured groups whose deployments are
+temporarily unavailable return 429 `proxy_rate_limited`, preserving the
+distinction between an invalid selector and retryable unavailability.
+Missing resources and genuine upstream 404s retain 404; local upstream deadlines
+remain 504 with a timeout message.
+
 Streaming startup holds role/usage metadata until content or a normal terminator
 arrives. A pre-content disconnect, timeout or provider error frame re-enters the
 same retry/fallback chain; malformed provider preludes are retryable 502s and
@@ -469,6 +502,7 @@ additive compatibility aliases with the same values; native clients use only
 
 | Primary header | Meaning |
 |---|---|
+| `x-oxllm-request-id` | Gateway-generated correlation id; `x-request-id` and `x-litellm-call-id` contain the same value on success, errors, cache hits and streams |
 | `x-oxllm-deployment-id`, `x-oxllm-model-id` | Selected deployment's `model_info.id` |
 | `x-oxllm-model-name` | Selected deployment's provider/model selector, independently of its pricing hint |
 | `x-oxllm-model-group` | Public group that served, including a fallback group |
@@ -495,6 +529,17 @@ the tracked counter without adding spend. Removing both key and global caps
 omits the header even if a previous counter remains. An absent counter during
 reset or a failed counter read also omits it. Live upstream streams omit the
 snapshot; buffered cached SSE replays can expose the tracked counter.
+The migration alias `x-litellm-key-spend` has the identical value and omission
+rules. Both correlation and spend aliases are exposed by the proxy CORS policy.
+Upstream-provided key-spend snapshots are stripped from native relays; response
+cost and token receipts remain available for the chained-billing contract.
+
+Entirely free primary groups use a zero admission estimate only when every
+matching deployment's effective override, inherited bucket and context tier
+proves a zero price. Concrete deployment selection clears the admission hint;
+paid fallback pricing must top up the reservation before reaching the provider.
+Zero budgets retain block-all semantics, and cached responses still bypass spend
+reservation through the normal cache-first hook order.
 
 Configure a unique `model_info.id` for durable identities across restarts and
 replicas. Otherwise oxllm generates a UUID and preserves it across in-process
@@ -515,6 +560,30 @@ Schema version 16 also records nullable `requested_model` and `model_group`.
 Both log endpoints accept `requested_model=requested-alias` or
 `model_group=serving-alias`, with filtered totals on the v1 endpoint. These
 identities remain separate from the provider-model field used to compute spend.
+Schema version 17 adds nullable `session_id` and a session/timestamp index.
+Native session headers take precedence over their legacy alias, with existing
+Anthropic metadata fallback. Attribution is independent of routing strategy and
+includes failure and partial-stream/realtime records.
+
+Session identities are trimmed and bounded to 256 bytes on a UTF-8 boundary
+before routing, logging or persistence. Oversized sessions use this bounded
+prefix consistently; the writer also normalizes direct producer entries.
+Both spend-log endpoints accept exact, case-sensitive `session_id` filters and
+return totals over the full matching scope. Request-log reads expose the same
+identity. Historical/older-writer rows remain null, and cache hits create no
+additional spend rows. Structured logs retain correlation without prompts or
+responses.
+
+End-user/customer identities have a separate 256-byte limit after trimming.
+Oversized request `user` values and new customer IDs return local 400s; they are
+never truncated into another customer's policy or spend. Existing customer
+records are not renamed. The spend writer omits invalid end-user attribution
+from direct producer entries while preserving the event's other fields and
+settled cost. Its indexed `model` label is bounded to 512 bytes; longer provider
+or failure-model labels include a SHA-256 suffix so distinct values remain
+distinct. This storage-only safeguard does not change routing or pricing; the
+original `requested_model` remains available for correlation.
+
 Inference-pipeline model ACL/customer denials, tag-budget lookup rejections,
 admission-hook rejections and terminal upstream failures queue a zero-cost
 `status: failure` row with request/model/key

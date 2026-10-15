@@ -500,8 +500,8 @@ async fn realtime_unknown_model_rejected() {
     if let Err(e) = result {
         let msg = format!("{e}");
         assert!(
-            msg.contains("404") || msg.contains("Not Found"),
-            "expected 404, got: {msg}"
+            msg.contains("400") || msg.contains("Bad Request"),
+            "expected invalid-model 400, got: {msg}"
         );
     }
     let _ = handle.shutdown_tx.send(());

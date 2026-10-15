@@ -34,8 +34,8 @@ pub struct RequestContext {
     /// `SimpleShuffle`. Carries the request's PRIMARY tag (the first of
     /// [`Self::tags`]) for single-tag compatibility.
     pub tag: Option<String>,
-    /// All request tags (the common proxy convention: `metadata.tags` in the
-    /// request body, plus any `x-oxllm-tag` header values, comma-separated). The
+    /// All normalized request tags (body/metadata arrays and the native or
+    /// migration header family, normalized by the host). The
     /// `tag_based` strategy matches deployments against the full set:
     /// positive tags are subset-matched, `&tag` requires a deployment tag,
     /// `!tag` excludes deployments carrying it. [`Self::tag`] stays the

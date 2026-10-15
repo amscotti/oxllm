@@ -103,7 +103,7 @@ async fn inactive_environment_models_are_stored_without_being_exposed_and_can_be
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 404);
+    assert_eq!(response.status(), 400);
     let response = client.post(proxy.url("/model/update")).bearer_auth(MASTER_KEY)
         .json(&json!({"model_id": created["model_id"], "model_info": {"supported_environments": null}, "oxllm_params": {"api_key": "synthetic-key"}}))
         .send().await.unwrap();
@@ -5423,7 +5423,7 @@ async fn spend_log_records_tag_name_from_header_without_tag_row() {
 }
 
 #[tokio::test]
-async fn tag_name_rejects_colon() {
+async fn tag_name_accepts_literal_attribution_pairs() {
     let mock = MockServer::start();
     let (handle, _db) = start_oxllm(proxy_config(&mock.base_url())).await;
     let client = reqwest::Client::new();
@@ -5432,17 +5432,22 @@ async fn tag_name_rejects_colon() {
     let resp = client
         .post(handle.url("/tag/new"))
         .header("authorization", &auth)
-        .json(&json!({"name": "bad:tag"}))
+        .json(&json!({"name": "product:demo", "max_budget":1.0}))
         .send()
         .await
         .expect("ok");
-    assert_eq!(resp.status(), 400);
-    let body: Value = resp.json().await.expect("json");
-    let msg = body["error"]["message"].as_str().unwrap_or("");
-    assert!(
-        msg.contains("':'") || msg.contains("colon") || msg.contains("spend-key"),
-        "expected colon-rejection message, got {msg}"
-    );
+    assert_eq!(resp.status(), 200);
+    let response = client
+        .get(handle.url("/tag/info"))
+        .header("authorization", &auth)
+        .query(&[("name", "product:demo")])
+        .send()
+        .await
+        .expect("tag info");
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.expect("json");
+    assert_eq!(body["name"], "product:demo");
+    assert_eq!(body["max_budget"], 1.0);
 
     shutdown(handle).await;
 }

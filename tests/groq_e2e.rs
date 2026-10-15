@@ -634,7 +634,7 @@ async fn groq_upstream_5xx_propagates() {
 }
 
 #[tokio::test]
-async fn groq_model_not_found_returns_404() {
+async fn groq_unconfigured_model_returns_400() {
     let mock = MockServer::start();
     let config = make_proxy_config(&mock.base_url(), None);
     let (handle, _state) = start_oxllm(config).await.expect("server should start");
@@ -650,7 +650,7 @@ async fn groq_model_not_found_returns_404() {
         .await
         .expect("request should succeed");
 
-    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.status(), 400);
     let body: Value = resp.json().await.expect("json");
     assert_eq!(body["error"]["code"], "model_not_found");
     assert!(

@@ -209,8 +209,8 @@ impl AlertState {
     /// marker for a threshold that fired under a previous config (e.g.
     /// `0.85` after a hot-reload narrowed the configured set to `[0.8]`)
     /// is left behind in Redis until its own TTL expires. The in-memory
-    /// branch below uses prefix matching and cleans up every key for the
-    /// scope. The asymmetry is academic in practice because hot-reload
+    /// branch below matches the complete scope and cleans up every threshold
+    /// for it. The asymmetry is academic in practice because hot-reload
     /// constructs a fresh `AlertState` per hook and the orphaned Redis
     /// keys TTL out with the budget window, but it is real and documented
     /// here for future maintainers. A `SCAN alertfired:{scope}:*` would
@@ -227,9 +227,15 @@ impl AlertState {
             cache.delete(&self.key(scope, SOFT_BUDGET_SENTINEL)).await;
             return;
         }
-        let prefix = format!("alertfired:{}:{scope}:", self.name);
+        let prefix = format!("alertfired:{}:", self.name);
         let mut set = self.fired.lock().unwrap_or_else(|e| e.into_inner());
-        set.retain(|k| !k.starts_with(&prefix));
+        // The final separator belongs to the numeric/soft threshold. Scope
+        // identities are opaque and can include ':' (e.g. tag:product:demo).
+        set.retain(|key| {
+            key.strip_prefix(&prefix)
+                .and_then(|key| key.rsplit_once(':'))
+                .is_none_or(|(stored_scope, _)| stored_scope != scope)
+        });
     }
 
     /// Evaluate one spend scope against a threshold set, returning every
@@ -974,6 +980,36 @@ mod tests {
         assert!(state.was_fired("key:abc", 0.8).await);
         assert!(!state.was_fired("key:def", 0.8).await);
         assert!(!state.was_fired("key:abc", 0.9).await);
+    }
+
+    #[tokio::test]
+    async fn alert_resets_keep_literal_tag_scopes_distinct() {
+        for cache_backed in [false, true] {
+            let cache: Arc<dyn Cache> = Arc::new(crate::cache::InMemoryCache::default());
+            let state = AlertState::new()
+                .with_name("webhook")
+                .with_thresholds(vec![0.8])
+                .with_cache(cache_backed.then_some(cache));
+            for scope in [
+                "tag:product",
+                "tag:product:demo",
+                "tag:product:demo:detail",
+                "team:demo",
+            ] {
+                state.mark_fired(scope, 0.8).await;
+            }
+            state.clear_scope("tag:product").await;
+            assert!(!state.was_fired("tag:product", 0.8).await);
+            assert!(state.was_fired("tag:product:demo", 0.8).await);
+            state.clear_scope("tag:product:demo").await;
+            assert!(!state.was_fired("tag:product:demo", 0.8).await);
+            assert!(state.was_fired("tag:product:demo:detail", 0.8).await);
+            assert!(state.was_fired("team:demo", 0.8).await);
+            assert_eq!(
+                scope_for_spend_key(&tag_spend_key("product:demo")).as_deref(),
+                Some("tag:product:demo")
+            );
+        }
     }
 
     #[tokio::test]
@@ -1759,7 +1795,7 @@ mod tests {
     /// Documents the documented asymmetry between the two `clear_scope`
     /// branches: the distributed branch deletes only currently-configured
     /// threshold keys (plus the soft sentinel), while the in-memory branch
-    /// uses prefix matching and cleans up every key for the scope. A
+    /// matches the complete scope and clears every threshold for it. A
     /// marker for a threshold not in `self.thresholds` (e.g. one left
     /// behind by a previous config) survives in distributed mode but is
     /// cleared in in-memory mode. In practice hot-reload builds a fresh
@@ -1780,14 +1816,14 @@ mod tests {
             "distributed clear_scope leaves orphan threshold markers (documented asymmetry)"
         );
 
-        // In-memory branch: orphan marker is cleaned up by prefix match.
+        // In-memory branch: every threshold for the exact scope is cleared.
         let in_memory = AlertState::new().with_thresholds(vec![0.8]);
         in_memory.mark_fired("key:abc", 0.85).await;
         assert!(in_memory.was_fired("key:abc", 0.85).await);
         in_memory.clear_scope("key:abc").await;
         assert!(
             !in_memory.was_fired("key:abc", 0.85).await,
-            "in-memory clear_scope uses prefix match and removes orphan markers"
+            "in-memory clear_scope matches the exact scope and removes orphan markers"
         );
     }
 

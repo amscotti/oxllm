@@ -1082,10 +1082,10 @@ pub async fn customer_limits_for(
     .await
 }
 
-/// Cached request-tag limits (`x-oxllm-tag` header → `tags` table).
+/// Cached limits for normalized request tags from every supported carrier.
 ///
 /// Request-scoped like customers: looked up from the pipeline after the
-/// header is parsed, not from `lookup_virtual_key`.
+/// carriers are parsed, not from `lookup_virtual_key`.
 #[cfg(feature = "db")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct TagLimits {

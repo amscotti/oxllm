@@ -807,6 +807,7 @@ async fn azure_transcription_and_edit_rewrite_only_model_and_preserve_binary_mul
 
 fn seeded_log(timestamp: &str, model: &str, provider: &str, cost: f64) -> SpendLog {
     SpendLog {
+        session_id: None,
         deployment_id: None,
         requested_model: None,
         model_group: None,
@@ -1994,7 +1995,7 @@ async fn concurrent_model_creates_keep_one_stored_routable_owner_and_release_del
         .to_str()
         .unwrap()
         .to_string();
-    response_json(deleted_alias_response, 404).await;
+    response_json(deleted_alias_response, 400).await;
     let successor = (winner + 1) % mocks.len();
     let created = post_json(
         &client,
@@ -2105,7 +2106,7 @@ async fn competing_model_renames_leave_loser_unchanged_and_release_only_winners_
     );
     assert_alias_routes_to_owner(&client, &handle, target, winner).await;
     assert_alias_routes_to_owner(&client, &handle, &previous[loser].model_name, loser).await;
-    response_json(post(&client, handle.url("/v1/chat/completions"), &json!({"model": previous[winner].model_name, "messages": [{"role": "user", "content": "Who owns this alias?"}]})).await, 404).await;
+    response_json(post(&client, handle.url("/v1/chat/completions"), &json!({"model": previous[winner].model_name, "messages": [{"role": "user", "content": "Who owns this alias?"}]})).await, 400).await;
     // The failed rename did not release its source; the successful one did.
     response_json(
         post(
@@ -2180,7 +2181,7 @@ async fn model_rename_racing_create_keeps_one_alias_owner_and_coherent_stored_ro
         assert_eq!(owners[0].model_id, previous.model_id);
         assert_eq!(current_source.oxllm_params["weight"], 7);
         assert_eq!(current_source.model_info.unwrap()["id"], "renamed-source");
-        response_json(post(&client, handle.url("/v1/chat/completions"), &json!({"model": "rename-source", "messages": [{"role": "user", "content": "Who owns this alias?"}]})).await, 404).await;
+        response_json(post(&client, handle.url("/v1/chat/completions"), &json!({"model": "rename-source", "messages": [{"role": "user", "content": "Who owns this alias?"}]})).await, 400).await;
     } else {
         assert_eq!(records.len(), 2);
         assert_eq!(

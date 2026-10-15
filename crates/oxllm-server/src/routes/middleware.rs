@@ -33,7 +33,8 @@ impl<B> MakeSpan<B> for RedactingMakeSpan {
  method = %request.method(),
  uri = %redact_uri(request.uri()),
   version = ?request.version(),
-  request_id = tracing::field::Empty)
+   request_id = tracing::field::Empty,
+   session_id = tracing::field::Empty)
     }
 }
 
@@ -214,7 +215,7 @@ pub(crate) fn build_proxy_cors(
                 // Oxllm-native transparency headers.
                 axum::http::HeaderName::from_static("x-oxllm-request-id"),
                 axum::http::HeaderName::from_static("x-oxllm-response-cost"),
-                axum::http::HeaderName::from_static("x-oxllm-key-spend"),
+                axum::http::HeaderName::from_static(crate::pipeline::KEY_SPEND_HEADER),
                 axum::http::HeaderName::from_static("x-oxllm-total-tokens"),
                 axum::http::HeaderName::from_static("x-oxllm-router-strategy"),
                 axum::http::HeaderName::from_static("x-oxllm-router-decision"),
@@ -233,6 +234,8 @@ pub(crate) fn build_proxy_cors(
                 axum::http::HeaderName::from_static("x-oxllm-upstream-duration-ms"),
                 axum::http::HeaderName::from_static("x-oxllm-overhead-duration-ms"),
                 // Additive compatibility response aliases.
+                axum::http::HeaderName::from_static(crate::pipeline::LITELLM_CALL_ID_HEADER),
+                axum::http::HeaderName::from_static(crate::pipeline::LITELLM_KEY_SPEND_HEADER),
                 axum::http::HeaderName::from_static("x-litellm-model-id"),
                 axum::http::HeaderName::from_static("x-litellm-model-name"),
                 axum::http::HeaderName::from_static("x-litellm-model-group"),
@@ -273,6 +276,9 @@ async fn request_timing(request: axum::extract::Request, next: middleware::Next)
     // failure are traceable using the same headers as a successful call.
     let request_id = uuid::Uuid::new_v4().to_string();
     Span::current().record("request_id", request_id.as_str());
+    if let Some(session_id) = crate::pipeline::extract_session_id(request.headers()) {
+        Span::current().record("session_id", session_id.as_str());
+    }
     let mut response = crate::pipeline::HTTP_REQUEST_START
         .scope(
             started,
@@ -590,6 +596,12 @@ mod tests {
             expose.contains("x-oxllm-key-spend"),
             "expose-headers must include x-oxllm-key-spend, got: {expose}"
         );
+        for name in ["x-litellm-call-id", "x-litellm-key-spend"] {
+            assert!(
+                expose.contains(name),
+                "migration alias {name} must be readable: {expose}"
+            );
+        }
         assert!(
             expose.contains("x-ratelimit-remaining-tokens"),
             "expose-headers must include x-ratelimit-remaining-tokens, got: {expose}"

@@ -22,6 +22,8 @@ use tokio::sync::mpsc;
 pub struct SpendEntry {
     pub timestamp: String,
     pub request_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub model: String,
     pub provider: String,
     #[serde(default)]
@@ -39,8 +41,7 @@ pub struct SpendEntry {
     pub user_id: Option<String>,
     /// OpenAI body end-user / customer id (distinct from `user_id`).
     pub end_user_id: Option<String>,
-    /// Request tag from `x-oxllm-tag` (for durable tag spend). The primary
-    /// (first) tag.
+    /// Primary (first) normalized request tag across body and header carriers.
     pub request_tag: Option<String>,
     /// Every request tag, serialized as a JSON array string into the
     /// `spend_logs.tags` column. `None` when the request carried no tags.
@@ -277,6 +278,26 @@ async fn drain(
     true
 }
 
+/// Bound the indexed model label after settlement without merging long values.
+#[cfg(feature = "db")]
+fn indexed_model_identity(model: String) -> String {
+    use sha2::{Digest, Sha256};
+
+    const MAX_MODEL_BYTES: usize = 512;
+    if model.len() <= MAX_MODEL_BYTES {
+        return model;
+    }
+    // Provider model values and pre-routing failure selectors can be supplied
+    // by an untrusted peer. Keep the indexed label bounded without merging
+    // distinct long values. Pricing has already used the original identity.
+    let suffix = format!("...#sha256:{:x}", Sha256::digest(model.as_bytes()));
+    let mut end = MAX_MODEL_BYTES - suffix.len();
+    while !model.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{suffix}", &model[..end])
+}
+
 /// Give each queued entry a stable event identity before the first attempt.
 /// The DB inserts logs, tag memberships and aggregated durable counters in
 /// one transaction. Any fallback retains those identities: a replay can
@@ -294,7 +315,11 @@ async fn insert_batch(db: &std::sync::Arc<oxllm_db::Database>, batch: Vec<SpendE
             id: None,
             timestamp: entry.timestamp,
             request_id: entry.request_id,
-            model: entry.model,
+            session_id: entry
+                .session_id
+                .as_deref()
+                .and_then(crate::pipeline::normalize_session_id),
+            model: indexed_model_identity(entry.model),
             provider: entry.provider,
             deployment_id: entry.deployment_id,
             requested_model: entry.requested_model,
@@ -306,7 +331,10 @@ async fn insert_batch(db: &std::sync::Arc<oxllm_db::Database>, batch: Vec<SpendE
             key_id: entry.key_id,
             team_id: entry.team_id,
             user_id: entry.user_id,
-            end_user_id: entry.end_user_id,
+            end_user_id: entry
+                .end_user_id
+                .as_deref()
+                .and_then(crate::pipeline::normalize_end_user_id),
             tag_name: entry.request_tag,
             tags: entry.request_tags,
             status: entry.status,
@@ -468,6 +496,43 @@ mod tests {
     use super::*;
     use sqlx::error::DatabaseError;
     use std::time::Duration;
+
+    #[test]
+    fn oversized_indexed_model_labels_are_utf8_safe_distinct_and_idempotent() {
+        assert_eq!(indexed_model_identity("short-model".into()), "short-model");
+        let long = "é".repeat(300);
+        let label = indexed_model_identity(long.clone());
+        assert!(label.len() <= 512);
+        assert!(label.contains("...#sha256:"));
+        assert_ne!(indexed_model_identity(format!("{long}x")), label);
+        assert_eq!(indexed_model_identity(label.clone()), label);
+    }
+
+    #[tokio::test]
+    async fn writer_defensively_bounds_session_and_rejects_invalid_end_user_attribution() {
+        let db = oxllm_db::Database::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        let entry: SpendEntry = serde_json::from_value(serde_json::json!({
+            "timestamp":"2026-10-15T00:00:00Z", "request_id":"raw-attribution", "model":"short-model", "provider":"test",
+            "session_id":"é".repeat(300), "end_user_id":"x".repeat(300), "cost":0.25
+        })).unwrap();
+        let (writer, handle) = spawn_with_shutdown(db.clone(), 3600, 8);
+        writer.queue(entry).await;
+        tokio::time::timeout(Duration::from_secs(5), handle.shutdown())
+            .await
+            .unwrap();
+        let row = db
+            .query_spend_by_request_id("raw-attribution")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.model, "short-model");
+        assert_eq!(row.cost, Some(0.25));
+        assert_eq!(row.session_id, Some("é".repeat(128)));
+        assert!(row.end_user_id.is_none());
+    }
 
     #[derive(Debug)]
     struct ReportedDatabaseError(Option<&'static str>);
@@ -932,6 +997,7 @@ mod tests {
             deployment_id: None,
             requested_model: None,
             model_group: None,
+            session_id: None,
             timestamp: "t".to_string(),
             request_id: None,
             model: "gpt-4o".to_string(),
@@ -974,6 +1040,7 @@ mod tests {
             deployment_id: None,
             requested_model: None,
             model_group: None,
+            session_id: None,
             timestamp: "t".to_string(),
             request_id: None,
             model: "overflow-probe".to_string(),
@@ -1024,6 +1091,7 @@ mod tests {
             deployment_id: None,
             requested_model: None,
             model_group: None,
+            session_id: None,
             timestamp: "t".to_string(),
             request_id: None,
             model: "closed-probe".to_string(),
@@ -1066,6 +1134,7 @@ mod tests {
                     deployment_id: None,
                     requested_model: None,
                     model_group: None,
+                    session_id: None,
                     timestamp: oxllm_db::now_iso(),
                     request_id: Some(format!("r-{i}")),
                     model: "gpt-4o".to_string(),
@@ -1165,6 +1234,7 @@ mod tests {
                     deployment_id: None,
                     requested_model: None,
                     model_group: None,
+                    session_id: None,
                     timestamp: oxllm_db::now_iso(),
                     request_id: Some(format!("r-shutdown-{i}")),
                     model: "gpt-4o".to_string(),
@@ -1329,6 +1399,7 @@ mod tests {
                 deployment_id: None,
                 requested_model: None,
                 model_group: None,
+                session_id: None,
                 timestamp: oxllm_db::now_iso(),
                 request_id: Some("r-1".to_string()),
                 model: "gpt-4o".to_string(),
@@ -1386,6 +1457,7 @@ mod tests {
             deployment_id: None,
             requested_model: None,
             model_group: None,
+            session_id: None,
             timestamp: oxllm_db::now_iso(),
             request_id: Some("r-valid".to_string()),
             model: "gpt-4o".to_string(),
@@ -1425,6 +1497,7 @@ mod tests {
                 deployment_id: None,
                 requested_model: None,
                 model_group: None,
+                session_id: None,
                 timestamp: oxllm_db::now_iso(),
                 request_id: Some(format!("r-retry-{i}")),
                 model: if i == 1 { "fail-sentinel" } else { "gpt-4o" }.to_string(),
@@ -1504,6 +1577,7 @@ mod tests {
                 deployment_id: None,
                 requested_model: None,
                 model_group: None,
+                session_id: None,
                 timestamp: oxllm_db::now_iso(),
                 request_id: Some(format!("r-mid-{i}")),
                 model: if is_sentinel {

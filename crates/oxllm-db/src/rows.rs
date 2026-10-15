@@ -119,6 +119,7 @@ pub(crate) fn row_to_spend(row: &AnyRow) -> Result<SpendLog> {
         id: get_opt_int(row, "id")?,
         timestamp: row.try_get("timestamp")?,
         request_id: row.try_get("request_id")?,
+        session_id: row.try_get("session_id")?,
         model: row.try_get("model")?,
         provider: row.try_get("provider")?,
         deployment_id: row.try_get("deployment_id")?,

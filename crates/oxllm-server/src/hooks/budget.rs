@@ -69,6 +69,12 @@ pub fn most_restrictive(a: Option<f64>, b: Option<f64>) -> Option<f64> {
 /// Unknown models (no override and no table entry) reserve a nominal `0.01`
 /// floor plus any known Model Router infrastructure fee.
 pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
+    if ctx.pre_call_pricing_is_free
+        && ctx.deployment_pricing.is_none()
+        && ctx.pricing_model.is_none()
+    {
+        return 0.0;
+    }
     let pricing_model = ctx.pricing_model.as_deref().unwrap_or(&ctx.model);
     let table = oxllm_core::lookup_pricing(pricing_model);
     let duration_ms = ctx
@@ -1085,6 +1091,25 @@ mod tests {
 
     fn make_ctx() -> CallContext {
         CallContext::for_test("gpt-4o")
+    }
+
+    #[tokio::test]
+    async fn free_group_zero_estimates_still_reject_exhausted_positive_budgets() {
+        for current in [1.0, 1.5] {
+            let cache = Arc::new(InMemoryCache::default());
+            cache.incr("spend:abc", current, None).await.unwrap();
+            let hook = BudgetHook::new(cache.clone(), Some(1.0), "1h");
+            let mut ctx = CallContext {
+                pre_call_pricing_is_free: true,
+                ..CallContext::for_test("free-group")
+            };
+            assert!(matches!(
+                hook.pre_call(&mut ctx).await.unwrap(),
+                HookAction::Reject(Error::BudgetExceeded(_))
+            ));
+            assert_eq!(cache.counter_value("spend:abc").await, Some(current));
+            assert!(ctx.budget_estimate.is_none());
+        }
     }
 
     #[tokio::test]
@@ -2230,7 +2255,7 @@ mod tests {
         }
     }
 
-    /// Tag budget uses `spend:tag:{name}` from the `x-oxllm-tag` header.
+    /// Tag budgets use `spend:tag:{name}` for normalized request tags.
     #[tokio::test]
     async fn tag_budget_reserves_and_rejects_when_exhausted() {
         let cache = Arc::new(InMemoryCache::default());

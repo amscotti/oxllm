@@ -8,6 +8,7 @@ in-process against [httpmock](https://docs.rs/httpmock) upstreams unless noted.
 | `chat_e2e.rs` | Chat completions lifecycle |
 | `embeddings_completions_e2e.rs` | Embeddings + legacy completions |
 | `messages_responses_e2e.rs` | Anthropic Messages + OpenAI Responses |
+| `request_attribution_e2e.rs` | Bounded identities, session/call-id correlation, denial/partial attribution, spend aliases, scoped model errors and free-group admission |
 | `router_e2e.rs` | Routing, retries, fallbacks, wildcards, adaptive bandit routing |
 | `router_strategies_e2e.rs` | Zero-cooldown loop bounds, 401 sibling failover, round-robin, health-metric label hygiene |
 | `session_affinity_e2e.rs` | Sticky `x-oxllm-session-id` routing |
@@ -43,6 +44,20 @@ in-process against [httpmock](https://docs.rs/httpmock) upstreams unless noted.
 | `workspace_layering.rs` | Crate dependency DAG (no httpmock) |
 
 Fixtures: `tests/fixtures/`.
+
+## Database contracts
+
+When testing the database crate by itself, enable a backend explicitly; its
+default feature set has no database implementation and runs no DB contracts:
+
+```bash
+cargo test --locked -p oxllm-db --features sqlite --lib
+cargo test --locked -p oxllm-db --features postgres,sqlite --lib
+```
+
+`OXLLM_TEST_POSTGRES_URL` selects a disposable PostgreSQL fixture for the opt-in
+integration cases, including isolated-schema migrations and spend-writer
+regressions. Without it, PostgreSQL cases skip; SQLite contracts still run.
 
 ## Live tests (real provider APIs)
 

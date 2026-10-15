@@ -251,6 +251,9 @@ pub struct SpendLog {
     pub timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Opaque client session identity, separate from the per-request id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub model: String,
     pub provider: String,
     /// Public deployment identity used to distinguish regions and credentials
@@ -281,13 +284,14 @@ pub struct SpendLog {
     /// Distinct from [`SpendLog::user_id`] (the virtual-key owner).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_user_id: Option<String>,
-    /// Request tag from the `x-oxllm-tag` header (`tags.name`). Distinct from
+    /// Primary normalized request tag (`tags.name`) across body and header
+    /// carriers. Distinct from
     /// routing metadata; used for per-tag spend analytics and attribution.
     /// The PRIMARY (first) request tag.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag_name: Option<String>,
     /// Every request tag as a JSON array string (`["app-a","env-prod"]`),
-    /// carrying body `metadata.tags` plus header values. `None` when the
+    /// carrying body `tags` / `metadata.tags` plus header values. `None` when the
     /// request carried no tags. Exact, case-sensitive membership is indexed
     /// separately in `spend_log_tags` by the spend-log write transaction.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -358,6 +362,9 @@ pub struct SpendFilter {
     pub model_group: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Exact, case-sensitive session correlation filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]

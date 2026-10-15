@@ -277,6 +277,98 @@ async fn top_level_tags_are_attributed_and_stripped_across_translated_surfaces()
 }
 
 #[tokio::test]
+async fn header_tag_aliases_reach_the_ledger_and_tag_budgets_across_surfaces() {
+    let upstream = MockServer::start_async().await;
+    let wire = upstream
+        .mock_async(|when, then| {
+            when.method(POST)
+                .header("authorization", "Bearer synthetic-key")
+                .matches(|request| {
+                    request.headers.as_ref().is_some_and(|headers| {
+                        headers.iter().all(|(name, _)| {
+                            !name.starts_with("x-litellm-tag") && !name.starts_with("x-oxllm-tag")
+                        })
+                    })
+                });
+            then.status(200).json_body(reply());
+        })
+        .await;
+    let mut config = config(&upstream);
+    config.router_settings.routing.routing_strategy = Some("tag_based".into());
+    config.model_list[0].model_info = Some(
+        serde_json::from_value(json!({
+            "tags":["product:demo", "firm:example", "user:synthetic"]
+        }))
+        .unwrap(),
+    );
+    let mut other = config.model_list[0].clone();
+    other.oxllm_params.api_key = Some("synthetic-other-leg".into());
+    other.model_info = Some(serde_json::from_value(json!({"tags":["product:other"]})).unwrap());
+    config.model_list.push(other);
+    let proxy = start(config).await;
+    let client = common::http_client();
+    for (index, path) in [
+        "/v1/chat/completions",
+        "/v1/messages",
+        "/v1/responses",
+        "/v1/completions",
+        "/v1/embeddings",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let response = client
+            .post(proxy.url(path))
+            .bearer_auth(MASTER_KEY)
+            .header("x-litellm-tags", "product:demo, firm:example")
+            .header("x-litellm-tag", "firm:example, user:synthetic")
+            .json(
+                &json!({"model":"chat", "max_tokens":5, "input":"hello", "prompt":"hello",
+                "messages":[{"role":"user", "content":"hello"}]}),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "{path}: {}",
+            response.text().await.unwrap()
+        );
+        let rows = wait_for_rows(&proxy.db, index + 1).await;
+        let row = rows.first().unwrap();
+        assert_eq!(row.tag_name.as_deref(), Some("product:demo"));
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(row.tags.as_deref().unwrap()).unwrap(),
+            ["product:demo", "firm:example", "user:synthetic"]
+        );
+    }
+    let response = client
+        .post(proxy.url("/tag/new"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({"name":"product:blocked", "max_budget":0.0}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    let key = generate_key(&proxy, json!({"models":["chat"]})).await;
+    let response = client.post(proxy.url("/v1/chat/completions"))
+        .bearer_auth(key["key"].as_str().unwrap()).header("x-litellm-tags", "product:blocked")
+        .json(&json!({"model":"chat", "messages":[{"role":"user", "content":"hello"}], "max_tokens":5}))
+        .send().await.unwrap();
+    assert_eq!(
+        response.status(),
+        429,
+        "tag alias must participate in admission"
+    );
+    let rows = wait_for_rows(&proxy.db, 6).await;
+    assert_eq!(rows[0].tag_name.as_deref(), Some("product:blocked"));
+    assert_eq!(rows[0].status.as_deref(), Some("failure"));
+    wire.assert_hits_async(5).await;
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn vertex_reasoning_usage_reaches_client_cost_and_spend_for_json_and_sse() {
     for provider in ["vertex_ai", "gemini"] {
         for stream in [false, true] {
@@ -786,6 +878,7 @@ async fn review_embedding_cache_hits_report_settled_key_spend() {
         response.headers().get("x-oxllm-key-spend").is_none(),
         "a retained counter must not masquerade as active budget tracking"
     );
+    assert!(response.headers().get("x-litellm-key-spend").is_none());
     response.bytes().await.unwrap();
     wire.assert_hits_async(1).await;
     let db = proxy.db.clone();
@@ -1324,7 +1417,10 @@ async fn review_key_spend_headers_cover_bridges_cache_and_omission() {
                 );
                 settled = Some(spend);
             }
-            assert!(!response.headers().contains_key("x-litellm-key-spend"));
+            assert_eq!(
+                response.headers().get("x-litellm-key-spend"),
+                response.headers().get("x-oxllm-key-spend")
+            );
             response.bytes().await.unwrap();
         }
     }
@@ -1340,6 +1436,7 @@ async fn review_key_spend_headers_cover_bridges_cache_and_omission() {
             .unwrap();
         assert_eq!(response.status(), 200);
         assert!(response.headers().get("x-oxllm-key-spend").is_none());
+        assert!(response.headers().get("x-litellm-key-spend").is_none());
         response.bytes().await.unwrap();
     }
     let mut stream_body = body;
@@ -1354,6 +1451,7 @@ async fn review_key_spend_headers_cover_bridges_cache_and_omission() {
         .unwrap();
     assert_eq!(response.status(), 200);
     assert!(response.headers().get("x-oxllm-key-spend").is_none());
+    assert!(response.headers().get("x-litellm-key-spend").is_none());
     assert!(response.text().await.unwrap().contains("[DONE]"));
     let global: Value = client
         .get(proxy.url("/global/spend"))
@@ -1589,7 +1687,7 @@ async fn review_realtime_preupgrade_rejections_are_audited_without_upstream_call
         let cases = if wildcard {
             vec![("*", None, 400)]
         } else {
-            vec![("missing", None, 404), ("chat", Some("&missing"), 400)]
+            vec![("missing", None, 400), ("chat", Some("&missing"), 400)]
         };
         let mut ids = Vec::new();
         for (model, tag, status) in cases {
@@ -1601,6 +1699,9 @@ async fn review_realtime_preupgrade_rejections_are_audited_without_upstream_call
                 "authorization",
                 format!("Bearer {MASTER_KEY}").parse().unwrap(),
             );
+            request
+                .headers_mut()
+                .insert("x-litellm-session-id", "setup-session".parse().unwrap());
             if let Some(tag) = tag {
                 request
                     .headers_mut()
@@ -1613,6 +1714,10 @@ async fn review_realtime_preupgrade_rejections_are_audited_without_upstream_call
                 panic!("expected an HTTP rejection: {error}")
             };
             assert_eq!(response.status().as_u16(), status);
+            assert_eq!(
+                response.headers().get("x-litellm-call-id"),
+                response.headers().get("x-request-id")
+            );
             ids.push(
                 response.headers()["x-request-id"]
                     .to_str()
@@ -1641,6 +1746,7 @@ async fn review_realtime_preupgrade_rejections_are_audited_without_upstream_call
                 .find(|row| row.request_id.as_deref() == Some(id.as_str()))
                 .unwrap();
             assert_eq!(row.status.as_deref(), Some("failure"));
+            assert_eq!(row.session_id.as_deref(), Some("setup-session"));
             assert_eq!(row.cost, Some(0.0));
             assert!(row.total_tokens.is_none());
         }

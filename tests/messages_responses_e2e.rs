@@ -253,6 +253,158 @@ async fn test_messages_missing_model_returns_400() {
 // ===========================================================================
 
 #[tokio::test]
+async fn responses_schema_format_reaches_openai_and_anthropic_for_json_and_streams() {
+    let schema = json!({"type":"object", "properties":{"answer":{"type":"string"}},
+        "required":["answer"], "additionalProperties":false});
+    for model in ["openai/gpt-4o", "anthropic/claude-haiku-4-5"] {
+        for stream in [false, true] {
+            let mock = MockServer::start_async().await;
+            let anthropic = model.starts_with("anthropic/");
+            let expected = if anthropic {
+                json!({"output_config":{"format":{"type":"json_schema", "schema":schema}}})
+            } else {
+                json!({"response_format":{"type":"json_schema", "json_schema":{
+                    "name":"answer", "strict":true, "description":"A structured answer", "schema":schema
+                }}})
+            };
+            let upstream = mock.mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(if anthropic { "/messages" } else { "/chat/completions" })
+                    .json_body_partial(expected.to_string());
+                if stream {
+                    let chunks = if anthropic {
+                        vec![
+                            json!({"type":"message_start", "message":{"id":"msg-schema", "model":"claude-haiku-4-5", "usage":{"input_tokens":5, "output_tokens":0}}}),
+                            json!({"type":"content_block_delta", "index":0, "delta":{"type":"text_delta", "text":"{\"answer\":\"ok\"}"}}),
+                            json!({"type":"message_delta", "delta":{"stop_reason":"end_turn"}, "usage":{"output_tokens":3}}),
+                            json!({"type":"message_stop"}),
+                        ]
+                    } else {
+                        vec![
+                            json!({"id":"chatcmpl-schema", "model":"gpt-4o", "choices":[{"index":0, "delta":{"content":"{\"answer\":\"ok\"}"}, "finish_reason":null}]}),
+                            json!({"choices":[{"index":0, "delta":{}, "finish_reason":"stop"}]}),
+                            json!({"choices":[], "usage":{"prompt_tokens":5, "completion_tokens":3, "total_tokens":8}}),
+                        ]
+                    };
+                    let mut body = chunks.iter().map(|chunk| format!("data: {chunk}\n\n")).collect::<String>();
+                    if !anthropic { body.push_str("data: [DONE]\n\n"); }
+                    then.status(200).header("content-type", "text/event-stream").body(body);
+                } else {
+                    then.status(200).json_body(if anthropic {
+                        json!({"id":"msg-schema", "type":"message", "role":"assistant", "model":"claude-haiku-4-5",
+                            "content":[{"type":"text", "text":"{\"answer\":\"ok\"}"}], "stop_reason":"end_turn",
+                            "usage":{"input_tokens":5, "output_tokens":3}})
+                    } else {
+                        json!({"id":"chatcmpl-schema", "model":"gpt-4o", "choices":[{"index":0,
+                            "message":{"role":"assistant", "content":"{\"answer\":\"ok\"}"}, "finish_reason":"stop"}],
+                            "usage":{"prompt_tokens":5, "completion_tokens":3, "total_tokens":8}})
+                    });
+                }
+            }).await;
+            let handle = start_oxllm(make_proxy_config(&mock.base_url(), "structured", model))
+                .await
+                .unwrap();
+            let response = reqwest::Client::new()
+                .post(handle.url("/v1/responses"))
+                .json(
+                    &json!({"model":"structured", "input":"answer", "stream":stream,
+                    "text":{"format":{"type":"json_schema", "name":"answer", "strict":true,
+                        "description":"A structured answer", "schema":schema}}}),
+                )
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                200,
+                "{model}, stream={stream}: {}",
+                response.text().await.unwrap()
+            );
+            let body: Value = if stream {
+                let text = response.text().await.unwrap();
+                text.lines()
+                    .filter_map(|line| line.strip_prefix("data: "))
+                    .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+                    .find(|event| event["type"] == "response.completed")
+                    .expect("completed event")["response"]
+                    .clone()
+            } else {
+                response.json().await.unwrap()
+            };
+            assert_eq!(body["status"], "completed");
+            assert_eq!(
+                serde_json::from_str::<Value>(
+                    body["output"][0]["content"][0]["text"].as_str().unwrap()
+                )
+                .unwrap(),
+                json!({"answer":"ok"})
+            );
+            assert_eq!(body["usage"]["input_tokens"], 5);
+            assert_eq!(body["usage"]["output_tokens"], 3);
+            upstream.assert_hits_async(1).await;
+            let _ = handle.shutdown_tx.send(());
+        }
+    }
+}
+
+#[tokio::test]
+async fn responses_invalid_formats_are_local_client_errors_without_cooldown() {
+    let mock = MockServer::start_async().await;
+    let upstream = mock
+        .mock_async(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/chat/completions");
+            then.status(200).json_body(
+                json!({"id":"chatcmpl-healthy", "model":"gpt-4o", "choices":[{
+            "index":0, "message":{"role":"assistant", "content":"ok"}, "finish_reason":"stop"
+        }], "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}),
+            );
+        })
+        .await;
+    let handle = start_oxllm(make_proxy_config(
+        &mock.base_url(),
+        "structured",
+        "openai/gpt-4o",
+    ))
+    .await
+    .unwrap();
+    let client = reqwest::Client::new();
+    for format in [
+        json!("invalid"),
+        json!({"type":"unsupported"}),
+        json!({"type":"json_schema", "name":"answer"}),
+        json!({"type":"json_schema", "name":"answer", "schema":{}, "strict":"true"}),
+        json!({"type":"json_schema", "name":"two words", "schema":{"type":"object"}}),
+        json!({"type":"json_schema", "name":"a".repeat(65), "schema":{"type":"object"}}),
+    ] {
+        let response = client
+            .post(handle.url("/v1/responses"))
+            .json(&json!({"model":"structured", "input":"answer", "text":{"format":format}}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+        let body: Value = response.json().await.unwrap();
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("text.format")
+        );
+    }
+    upstream.assert_hits_async(0).await;
+    let response = client
+        .post(handle.url("/v1/responses"))
+        .json(&json!({"model":"structured", "input":"answer"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    upstream.assert_hits_async(1).await;
+    let _ = handle.shutdown_tx.send(());
+}
+
+#[tokio::test]
 async fn test_responses_non_streaming() {
     let mock = MockServer::start();
     let config = make_proxy_config(&mock.base_url(), "gpt-4o", "openai/gpt-4o");

@@ -58,6 +58,7 @@ impl Hook for CostTrackingHook {
                 cost = c,
                 cost_known = true,
                 request_id = %ctx.request_id,
+                session_id = ctx.session_id.as_deref(),
                 tag_name = ctx.request_tag.as_deref(),
                 tags = %tags.as_deref().unwrap_or("[]"),
                 "spend recorded"
@@ -66,6 +67,7 @@ impl Hook for CostTrackingHook {
                     let entry = SpendEntry {
                         timestamp: now_iso(),
                         request_id: Some(ctx.request_id.clone()),
+                        session_id: ctx.session_id.clone(),
                         model: resp.model.clone(),
                         provider: resp.provider.clone(),
                         deployment_id: ctx.deployment_id.clone(),
@@ -98,6 +100,7 @@ impl Hook for CostTrackingHook {
                 total_tokens = derived_total_tokens(usage),
                 cost_known = false,
                 request_id = %ctx.request_id,
+                session_id = ctx.session_id.as_deref(),
                 tag_name = ctx.request_tag.as_deref(),
                 tags = %tags.as_deref().unwrap_or("[]"),
                 "no price-table entry; cost omitted"
@@ -106,6 +109,7 @@ impl Hook for CostTrackingHook {
                     let entry = SpendEntry {
                         timestamp: now_iso(),
                         request_id: Some(ctx.request_id.clone()),
+                        session_id: ctx.session_id.clone(),
                         model: resp.model.clone(),
                         provider: resp.provider.clone(),
                         deployment_id: ctx.deployment_id.clone(),
@@ -137,6 +141,7 @@ impl Hook for CostTrackingHook {
                 provider = %resp.provider,
                 deployment_id = ctx.deployment_id.as_deref(),
                 request_id = %ctx.request_id,
+                session_id = ctx.session_id.as_deref(),
                 cost = cost,
                 cost_known = cost.is_some(),
                 tag_name = ctx.request_tag.as_deref(),
@@ -147,6 +152,7 @@ impl Hook for CostTrackingHook {
                     let entry = SpendEntry {
                         timestamp: now_iso(),
                         request_id: Some(ctx.request_id.clone()),
+                        session_id: ctx.session_id.clone(),
                         model: resp.model.clone(),
                         provider: resp.provider.clone(),
                         deployment_id: ctx.deployment_id.clone(),
@@ -187,6 +193,7 @@ impl Hook for CostTrackingHook {
         let tags = tags_json(&ctx.request_tags);
         tracing::info!(event = "spend", status = "failure", cost = 0.0,
             error_type = crate::pipeline::error_type_label(err), request_id = %ctx.request_id,
+            session_id = ctx.session_id.as_deref(),
             requested_model = %ctx.model, deployment_id = ctx.deployment_id.as_deref(),
             key_id = ctx.key_id.as_deref(), tags = %tags.as_deref().unwrap_or("[]"),
             "failed request recorded");
@@ -196,6 +203,7 @@ impl Hook for CostTrackingHook {
                 SpendEntry {
                     timestamp: now_iso(),
                     request_id: Some(ctx.request_id.clone()),
+                    session_id: ctx.session_id.clone(),
                     model: model.into(),
                     provider: provider.into(),
                     deployment_id: ctx.deployment_id.clone(),
@@ -395,6 +403,7 @@ mod tests {
             (None, Some(0.25)),
         ] {
             let mut ctx = CallContext::for_test("unpriced-log-test");
+            ctx.session_id = Some("structured-spend-session".into());
             ctx.request_tag = Some("app".into());
             ctx.request_tags = vec!["app".into(), "quoted\"tag\nnext-line".into()];
             let expected_tags = tags_json(&ctx.request_tags).expect("tags JSON");
@@ -417,6 +426,10 @@ mod tests {
                 })
             });
             assert_eq!(entry.request_tags.as_deref(), Some(expected_tags.as_str()));
+            assert_eq!(
+                entry.session_id.as_deref(),
+                Some("structured-spend-session")
+            );
             let spend_lines: Vec<_> = log
                 .lines()
                 .filter(|line| line.contains("event=\"spend\""))

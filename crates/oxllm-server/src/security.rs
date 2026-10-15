@@ -825,12 +825,15 @@ pub fn check_json_depth(value: &serde_json::Value, max_depth: usize) -> Result<(
     Ok(())
 }
 
-/// Strip `server`, `x-request-id`, and `content-length` (so the framework
-/// recomputes it after any body modification).
+/// Strip transport fingerprints and gateway-owned caller-spend snapshots.
+/// Upstream response-cost/token receipts remain available for chained billing.
 pub fn strip_leaking_headers(headers: &mut HeaderMap) {
     headers.remove("server");
     headers.remove("x-request-id");
     headers.remove("content-length");
+    for name in crate::pipeline::KEY_SPEND_HEADERS {
+        headers.remove(name);
+    }
 }
 
 /// Strip every hop-by-hop header listed in RFC 7230 §6.1 (`connection`,
@@ -2163,10 +2166,36 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("server", "nginx".parse().unwrap());
         h.insert("x-request-id", "abc".parse().unwrap());
+        h.insert(crate::pipeline::KEY_SPEND_HEADER, "99".parse().unwrap());
+        h.insert(
+            crate::pipeline::LITELLM_KEY_SPEND_HEADER,
+            "88".parse().unwrap(),
+        );
+        h.insert(
+            crate::pipeline::UPSTREAM_RESPONSE_COST_HEADER,
+            "0.125".parse().unwrap(),
+        );
+        h.insert(
+            crate::pipeline::UPSTREAM_TOTAL_TOKENS_HEADER,
+            "12".parse().unwrap(),
+        );
         h.insert("x-keep", "yes".parse().unwrap());
         strip_leaking_headers(&mut h);
         assert!(h.get("server").is_none());
         assert!(h.get("x-request-id").is_none());
+        for name in crate::pipeline::KEY_SPEND_HEADERS {
+            assert!(h.get(name).is_none());
+        }
+        assert_eq!(
+            h.get(crate::pipeline::UPSTREAM_RESPONSE_COST_HEADER)
+                .unwrap(),
+            "0.125"
+        );
+        assert_eq!(
+            h.get(crate::pipeline::UPSTREAM_TOTAL_TOKENS_HEADER)
+                .unwrap(),
+            "12"
+        );
         assert!(h.get("x-keep").is_some());
     }
 

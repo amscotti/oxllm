@@ -31,7 +31,7 @@ enum SpendBind {
 /// insert NULLs.
 const SPEND_LOG_COLS: &str = "timestamp, request_id, model, provider, \
  prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, \
- end_user_id, tag_name, tags, status, latency_ms, deployment_id, requested_model, model_group";
+ end_user_id, tag_name, tags, status, latency_ms, deployment_id, requested_model, model_group, session_id";
 /// The number of columns in [`SPEND_LOG_COLS`] (and therefore the number of
 /// binds applied per row by [`bind_spend_log`]). The single-row insert
 /// ([`Database::insert_spend_log`]) and the chunked batch insert
@@ -41,7 +41,7 @@ const SPEND_LOG_COLS: &str = "timestamp, request_id, model, provider, \
 /// cannot drift from the column list / bind order when a column is added.
 /// Updating [`SPEND_LOG_COLS`] and [`bind_spend_log`] without bumping this
 /// constant is caught by the batch-roundtrip tests.
-const SPEND_LOG_COL_COUNT: usize = 19;
+const SPEND_LOG_COL_COUNT: usize = 20;
 /// Bind every field of `log` onto `query`, in the same order as
 /// [`SPEND_LOG_COLS`]. Both the single-row and batched insert paths route
 /// through here so the column ↔ bind mapping has one source of truth.
@@ -70,7 +70,8 @@ fn bind_spend_log<'q>(
         .bind(log.latency_ms)
         .bind(log.deployment_id.clone())
         .bind(log.requested_model.clone())
-        .bind(log.model_group.clone());
+        .bind(log.model_group.clone())
+        .bind(log.session_id.clone());
     query
 }
 /// Builds the `WHERE` clause shared by the spend-log queries and owns the
@@ -406,6 +407,7 @@ impl Database {
     }
     pub async fn query_spend(&self, filter: &SpendFilter) -> Result<Vec<SpendLog>> {
         let w = SpendWhereBuilder::new(self.placeholder_style())
+            .cmp_str("session_id", "=", filter.session_id.as_deref())
             .cmp_timestamp("timestamp", ">=", filter.start_date.as_deref())
             .cmp_timestamp("timestamp", "<=", filter.end_date.as_deref())
             .cmp_str("key_id", "=", filter.key_id.as_deref())
@@ -508,6 +510,7 @@ impl Database {
         let cursor = if order_col == "id" { cursor } else { None };
         let cursor_op = if order_dir == "DESC" { "<" } else { ">" };
         let w = SpendWhereBuilder::new(self.placeholder_style())
+            .cmp_str("session_id", "=", filter.session_id.as_deref())
             .cmp_i64("id", cursor_op, cursor)
             .cmp_timestamp("timestamp", ">=", filter.start_date.as_deref())
             .cmp_timestamp("timestamp", "<=", filter.end_date.as_deref())
@@ -634,6 +637,7 @@ impl Database {
     /// the same row set as the page being returned.
     pub async fn count_spend_filtered(&self, filter: &SpendFilter) -> Result<i64> {
         let w = SpendWhereBuilder::new(self.placeholder_style())
+            .cmp_str("session_id", "=", filter.session_id.as_deref())
             .cmp_timestamp("timestamp", ">=", filter.start_date.as_deref())
             .cmp_timestamp("timestamp", "<=", filter.end_date.as_deref())
             .cmp_str("key_id", "=", filter.key_id.as_deref())
@@ -658,6 +662,7 @@ impl Database {
     /// when reporting total spend over the caller's full filter scope.
     pub async fn total_spend_filtered(&self, filter: &SpendFilter) -> Result<f64> {
         let w = SpendWhereBuilder::new(self.placeholder_style())
+            .cmp_str("session_id", "=", filter.session_id.as_deref())
             .cmp_timestamp("timestamp", ">=", filter.start_date.as_deref())
             .cmp_timestamp("timestamp", "<=", filter.end_date.as_deref())
             .cmp_str("key_id", "=", filter.key_id.as_deref())

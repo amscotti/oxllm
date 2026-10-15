@@ -756,6 +756,34 @@ fn response_with_thinking_blocks() {
 // a variant with tool_calls check in message.
 
 #[test]
+fn response_tool_indexes_follow_visible_calls_after_thinking_and_hidden_json() {
+    let body = json!({"id":"msg-tools", "model":"claude-sonnet-4-5", "content":[
+        {"type":"thinking", "thinking":"choose tools", "signature":"synthetic-signature"},
+        {"type":"tool_use", "id":"hidden", "name":"json_tool_call", "input":{"answer":"ok"}},
+        {"type":"text", "text":"checking"},
+        {"type":"tool_use", "id":"first", "name":"lookup", "input":{"city":"Paris"}, "caller":{"type":"direct"}},
+        {"type":"text", "text":"and another"},
+        {"type":"tool_use", "id":"second", "name":"lookup", "input":{"city":"London"}}
+    ], "stop_reason":"tool_use", "usage":{"input_tokens":5, "output_tokens":10}});
+    let response = AnthropicProvider
+        .transform_response_with_request(&body, "claude-sonnet-4-5", &json!({}))
+        .unwrap();
+    let calls = response["choices"][0]["message"]["tool_calls"]
+        .as_array()
+        .unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0]["index"], 0);
+    assert_eq!(calls[1]["index"], 1);
+    assert_eq!(calls[0]["id"], "first");
+    assert_eq!(calls[1]["id"], "second");
+    assert_eq!(calls[0]["caller"], json!({"type":"direct"}));
+    assert_eq!(
+        response["choices"][0]["message"]["content"],
+        "{\"answer\":\"ok\"}"
+    );
+}
+
+#[test]
 fn response_with_text_and_multiple_tool_uses() {
     let p = AnthropicProvider;
     let body = json!({
@@ -781,8 +809,10 @@ fn response_with_text_and_multiple_tool_uses() {
         .expect("tool_calls");
     assert_eq!(tool_calls.len(), 2);
     assert_eq!(tool_calls[0]["id"], "toolu_01");
+    assert_eq!(tool_calls[0]["index"], 0);
     assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
     assert_eq!(tool_calls[1]["id"], "toolu_02");
+    assert_eq!(tool_calls[1]["index"], 1);
     assert_eq!(tool_calls[1]["function"]["name"], "get_weather");
 }
 
@@ -1590,6 +1620,7 @@ fn response_converts_tool_use_blocks_to_tool_calls() {
         .expect("tool_calls array");
     assert_eq!(tool_calls.len(), 1);
     assert_eq!(tool_calls[0]["id"], "tool_1");
+    assert_eq!(tool_calls[0]["index"], 0);
     assert_eq!(tool_calls[0]["type"], "function");
     assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
     let args: serde_json::Value = serde_json::from_str(

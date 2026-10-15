@@ -28,6 +28,7 @@ fn log(
         deployment_id: None,
         requested_model: None,
         model_group: None,
+        session_id: None,
         id: None,
         timestamp: ts.into(),
         request_id: Some(request_id.into()),
@@ -144,6 +145,152 @@ async fn model_group_upgrade_contract(db: &Database) {
 #[tokio::test]
 async fn model_group_upgrade_preserves_v15_rows_and_filters_aliases() {
     model_group_upgrade_contract(&*sqlite().await).await;
+}
+
+async fn session_upgrade_contract(db: &Database) {
+    // Freeze the preceding schema independently of the new migration helpers.
+    sqlx::query("DROP VIEW spend_logs_read")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("DROP INDEX idx_spend_logs_session_timestamp")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE spend_logs DROP COLUMN session_id")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE VIEW spend_logs_read AS SELECT id, timestamp, request_id, model, provider, prompt_tokens, completion_tokens, total_tokens, cost, key_id, team_id, user_id, end_user_id, tag_name, tags, status, latency_ms, deployment_id, requested_model, model_group FROM spend_logs")
+        .execute(db.pool()).await.unwrap();
+    sqlx::query("DELETE FROM _schema_version WHERE version > 16")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO spend_logs (timestamp, request_id, model, provider, cost) VALUES ('2026-10-01T00:00:00Z', 'before-session-upgrade', 'gpt-4o', 'openai', 0.3)")
+        .execute(db.pool()).await.unwrap();
+    assert_eq!(db.get_schema_version().await.unwrap(), 16);
+    db.migrate().await.unwrap();
+    db.migrate().await.unwrap();
+    assert_eq!(db.get_schema_version().await.unwrap(), SCHEMA_VERSION);
+    let query = match db.placeholder_style() {
+        PlaceholderStyle::Question => {
+            "SELECT name FROM pragma_index_info('idx_spend_logs_session_timestamp') ORDER BY seqno"
+        }
+        PlaceholderStyle::Dollar => {
+            "SELECT CAST(a.attname AS TEXT) AS name FROM pg_index i \
+            CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, position) \
+            JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum \
+            WHERE i.indexrelid = to_regclass('idx_spend_logs_session_timestamp') AND i.indisvalid AND i.indisready ORDER BY k.position"
+        }
+    };
+    let columns = sqlx::query(query)
+        .fetch_all(db.pool())
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.try_get::<String, _>("name").unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        columns,
+        ["session_id", "timestamp"],
+        "session lookups must have the intended usable index"
+    );
+    assert!(
+        db.query_spend_by_request_id("before-session-upgrade")
+            .await
+            .unwrap()
+            .unwrap()
+            .session_id
+            .is_none()
+    );
+    // Older replicas continue writing without the new nullable field.
+    sqlx::query("INSERT INTO spend_logs (timestamp, request_id, model, provider, cost) VALUES ('2026-10-01T00:00:00Z', 'older-replica', 'gpt-4o', 'openai', 0.2)")
+        .execute(db.pool()).await.unwrap();
+    let sessions = [
+        Some("session_%:demo"),
+        Some("Session_%:demo"),
+        Some("session_X:demo"),
+        None,
+    ];
+    let events = (0..96)
+        .map(|index| {
+            let mut row = log(
+                "2026-10-01T00:00:00Z",
+                &format!("session-request-{index}"),
+                Some(0.125),
+                None,
+                None,
+            );
+            row.session_id = sessions[index % sessions.len()].map(str::to_string);
+            row.key_id = Some("session-owner".into());
+            SpendLogEvent::new(row)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(db.insert_spend_events(&events).await.unwrap(), 96);
+    assert_eq!(
+        db.insert_spend_events(&events).await.unwrap(),
+        0,
+        "replayed batches retain their event identities"
+    );
+    let filter = SpendFilter {
+        session_id: Some("session_%:demo".into()),
+        key_id: Some("session-owner".into()),
+        start_date: Some("2026-10-01".into()),
+        end_date: Some("2026-10-01".into()),
+        limit: Some(2),
+        ..Default::default()
+    };
+    let rows = db.query_spend(&filter).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .all(|row| row.session_id.as_deref() == Some("session_%:demo"))
+    );
+    assert_eq!(db.count_spend_filtered(&filter).await.unwrap(), 24);
+    assert_eq!(db.total_spend_filtered(&filter).await.unwrap(), 3.0);
+    let mut cursor = None;
+    let mut ids = BTreeSet::new();
+    loop {
+        let page = db.query_spend_paginated(cursor, 5, &filter).await.unwrap();
+        if page.is_empty() {
+            break;
+        }
+        cursor = page.last().unwrap().id;
+        for row in page {
+            assert_eq!(row.session_id.as_deref(), Some("session_%:demo"));
+            assert!(ids.insert(row.id.unwrap()));
+        }
+    }
+    assert_eq!(ids.len(), 24);
+    assert_eq!(db.total_spend(None, None).await.unwrap(), 12.5);
+    assert!(
+        db.query_spend_by_request_id("older-replica")
+            .await
+            .unwrap()
+            .unwrap()
+            .session_id
+            .is_none()
+    );
+    assert_eq!(
+        db.query_spend_by_request_id("session-request-0")
+            .await
+            .unwrap()
+            .unwrap()
+            .session_id
+            .as_deref(),
+        Some("session_%:demo")
+    );
+    let absent = SpendFilter {
+        session_id: Some("session-other".into()),
+        ..Default::default()
+    };
+    assert_eq!(db.count_spend_filtered(&absent).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn session_upgrade_preserves_older_writes_and_exact_paged_attribution() {
+    session_upgrade_contract(&*sqlite().await).await;
 }
 
 async fn customer(db: &Database, id: &str, spend: f64) {
@@ -1470,7 +1617,7 @@ pub(crate) async fn postgres_release_validation() {
         url.starts_with("postgres://") || url.starts_with("postgresql://"),
         "OXLLM_TEST_POSTGRES_URL must select the disposable CI Postgres database"
     );
-    for scenario in 0..21 {
+    for scenario in 0..22 {
         let max_connections = if scenario == 17 { 1 } else { 4 };
         let fixture = PostgresFixture::new(&url, max_connections).await;
         let db = &fixture.db;
@@ -1540,6 +1687,7 @@ pub(crate) async fn postgres_release_validation() {
                     .expect("set-based budget deletes"),
                 19 => deployment_attribution_contract(db).await,
                 20 => model_group_upgrade_contract(db).await,
+                21 => session_upgrade_contract(db).await,
                 _ => unreachable!(),
             }
         }

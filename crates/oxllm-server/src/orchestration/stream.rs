@@ -948,6 +948,7 @@ async fn record_partial_stream_spend(
     .or_else(|| deployment_cost_fallback(deployment, call_ctx, accumulated_usage));
     let tags = tags_json(&call_ctx.request_tags);
     tracing::info!(event = "spend", status = "partial", request_id = %call_ctx.request_id,
+        session_id = call_ctx.session_id.as_deref(),
         model = response_model, provider = deployment.provider_slug(), cost, cost_known = cost.is_some(),
         deployment_id = call_ctx.deployment_id.as_deref(), key_id = call_ctx.key_id.as_deref(),
         prompt_tokens = accumulated_usage.map(|usage| usage.prompt_tokens),
@@ -975,6 +976,7 @@ async fn record_partial_stream_spend(
         let entry = crate::spend_writer::SpendEntry {
             timestamp: jiff::Timestamp::now().to_string(),
             request_id: Some(call_ctx.request_id.clone()),
+            session_id: call_ctx.session_id.clone(),
             model: response_model.to_string(),
             provider: deployment.provider_slug().to_string(),
             deployment_id: call_ctx.deployment_id.clone(),
@@ -1549,6 +1551,7 @@ mod tests {
             };
             let mut ctx = CallContext {
                 max_budget: Some(100.0),
+                session_id: Some("partial-stream-session".into()),
                 max_parallel_requests: Some(1),
                 request_body: Arc::new(serde_json::json!({
                     "model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"max_tokens":100
@@ -1614,6 +1617,7 @@ mod tests {
                 assert_eq!(state.cache.counter_value("rpm:abc").await, Some(1.0));
                 let entry = spend_rx.try_recv().expect("partial debit must be logged");
                 assert_eq!(entry.status.as_deref(), Some("partial"));
+                assert_eq!(entry.session_id.as_deref(), Some("partial-stream-session"));
                 assert_eq!(entry.total_tokens, Some(if has_usage { 3 } else { 0 }));
             } else {
                 assert!(actual_key.abs() < 1e-9 && actual_dep.abs() < 1e-9);

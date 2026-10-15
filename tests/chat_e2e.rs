@@ -386,7 +386,7 @@ async fn test_model_not_found() {
         .await
         .expect("request should succeed");
 
-    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.status(), 400);
     let body: Value = resp.json().await.expect("body should be JSON");
     assert_eq!(body["error"]["code"], "model_not_found");
     assert!(
