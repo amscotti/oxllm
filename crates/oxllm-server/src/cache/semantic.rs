@@ -615,7 +615,7 @@ pub fn semantic_scope_for(
         api_base.trim_end_matches('/'),
         compatible,
     ]);
-    if let Some(version) = crate::native_output_policy::cache_version(body) {
+    for version in crate::cache::response_policy_versions(body) {
         scope.as_array_mut()?.push(serde_json::json!(version));
     }
     canonicalize_json(&mut scope);
@@ -626,6 +626,56 @@ pub fn semantic_scope_for(
 #[cfg(test)]
 mod native_policy_tests {
     use super::*;
+
+    #[test]
+    fn explicit_thinking_scopes_cannot_reuse_prevalidation_responses() {
+        for (body, changed) in [
+            (serde_json::json!({"messages":[]}), false),
+            (serde_json::json!({"messages":[],"thinking":null}), false),
+            (
+                serde_json::json!({"messages":[],"reasoning_effort":"high"}),
+                false,
+            ),
+            (
+                serde_json::json!({"messages":[],"thinking":{"type":"enabled","budget_tokens":2000},"max_tokens":100}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"additionalModelRequestFields":{"thinking":{"type":"enabled","budget_tokens":2000}},"max_tokens":100}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"additional_model_request_fields":{"thinking":{"type":"enabled","budget_tokens":2000}},"max_tokens":100}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"thinking":{"type":"enabled","budget_tokens":2000},"tools":[{"type":"function","function":{"name":"extract","strict":true}}]}),
+                true,
+            ),
+        ] {
+            let mut legacy = serde_json::json!([
+                "oxllm-semantic-v2",
+                "model",
+                "embedding",
+                "https://example.test",
+                body
+            ]);
+            if let Some(version) = crate::native_output_policy::cache_version(&body) {
+                legacy
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!(version));
+            }
+            canonicalize_json(&mut legacy);
+            let legacy = format!(
+                "sem:v2:{:x}",
+                Sha256::digest(serde_json::to_vec(&legacy).unwrap())
+            );
+            let current =
+                semantic_scope_for(&body, "model", "embedding", "https://example.test").unwrap();
+            assert_eq!(current != legacy, changed, "{body}");
+        }
+    }
 
     #[test]
     fn only_output_shaping_scopes_are_isolated_from_legacy_semantic_entries() {

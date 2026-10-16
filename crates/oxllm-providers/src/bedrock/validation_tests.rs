@@ -35,6 +35,126 @@ fn strict_tools_are_forwarded_in_invoke_and_converse_without_schema_rewrites() {
 }
 
 #[test]
+fn explicit_thinking_rejects_unsatisfiable_limits_on_both_native_apis() {
+    for converse in [false, true] {
+        for max_tokens in [100, 1000, 1024] {
+            for budget in [json!(2000), json!(2000.0)] {
+                let request = json!({"messages":[],"max_tokens":max_tokens,"thinking":{"type":"enabled","budget_tokens":budget}});
+                let error = BedrockProvider
+                    .transform_request(
+                        &request,
+                        &deployment("anthropic.claude-haiku-4-5", converse),
+                    )
+                    .unwrap_err();
+                assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+                assert!(error.to_string().contains("thinking.budget_tokens"));
+                assert!(error.to_string().contains("max_tokens"));
+            }
+        }
+    }
+}
+
+#[test]
+fn converse_forwards_disabled_thinking_with_a_stale_budget_for_provider_validation() {
+    let thinking = json!({"type":"disabled","budget_tokens":2000});
+    let body = BedrockProvider
+        .transform_request(
+            &json!({"messages":[],"max_tokens":100,"thinking":thinking}),
+            &deployment("anthropic.claude-haiku-4-5", true),
+        )
+        .unwrap();
+    assert_eq!(body["additionalModelRequestFields"]["thinking"], thinking);
+    assert_eq!(body["inferenceConfig"]["maxTokens"], 100);
+}
+
+#[test]
+fn converse_budget_window_applies_after_native_thinking_aliases_are_merged() {
+    for alias in [
+        "thinking",
+        "additionalModelRequestFields",
+        "additional_model_request_fields",
+    ] {
+        for limit in ["max_tokens", "max_completion_tokens"] {
+            for value in [json!(100), json!(100.0)] {
+                let mut request = json!({"messages":[],"reasoning_effort":"high"});
+                request[limit] = value;
+                let thinking = json!({"type":"enabled","budget_tokens":2000});
+                request[alias] = if alias == "thinking" {
+                    thinking
+                } else {
+                    json!({"thinking":thinking})
+                };
+                assert!(matches!(
+                    BedrockProvider.transform_request(
+                        &request,
+                        &deployment("anthropic.claude-haiku-4-5", true)
+                    ),
+                    Err(oxllm_core::Error::BadRequest(_))
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn converse_clamps_a_possible_window_and_omits_only_inferred_impossible_thinking() {
+    let mut request =
+        json!({"messages":[],"max_tokens":1500,"thinking":{"type":"enabled","budget_tokens":2000}});
+    let configured = deployment("anthropic.claude-haiku-4-5", true);
+    let body = BedrockProvider
+        .transform_request(&request, &configured)
+        .unwrap();
+    assert_eq!(
+        body["additionalModelRequestFields"]["thinking"]["budget_tokens"],
+        1499
+    );
+    assert_eq!(body["inferenceConfig"]["maxTokens"], 1500);
+    request.as_object_mut().unwrap().remove("thinking");
+    request["max_tokens"] = json!(100);
+    request["reasoning_effort"] = json!("high");
+    request["additionalModelRequestFields"] = json!({"independent_option":true});
+    let body = BedrockProvider
+        .transform_request(&request, &configured)
+        .unwrap();
+    assert!(
+        body.pointer("/additionalModelRequestFields/thinking")
+            .is_none()
+    );
+    assert_eq!(
+        body["additionalModelRequestFields"]["independent_option"],
+        true
+    );
+    assert_eq!(body["inferenceConfig"]["maxTokens"], 100);
+}
+
+#[test]
+fn converse_uses_the_effective_native_thinking_after_alias_precedence() {
+    let configured = deployment("anthropic.claude-haiku-4-5", true);
+    for thinking in [json!({"type":"disabled"}), json!({"type":"adaptive"})] {
+        let request = json!({"messages":[],"max_tokens":100,"reasoning_effort":"high",
+            "thinking":{"type":"enabled","budget_tokens":2000},
+            "additionalModelRequestFields":{"thinking":{"type":"enabled","budget_tokens":3000}},
+            "additional_model_request_fields":{"thinking":thinking}});
+        let body = BedrockProvider
+            .transform_request(&request, &configured)
+            .unwrap();
+        assert_eq!(body["additionalModelRequestFields"]["thinking"], thinking);
+        assert_eq!(body["inferenceConfig"]["maxTokens"], 100);
+    }
+    let request = json!({"messages":[],"max_tokens":3000,"reasoning_effort":"high",
+        "thinking":{"type":"disabled"},
+        "additional_model_request_fields":{"thinking":{"type":"enabled","budget_tokens":2000}}});
+    let body = BedrockProvider
+        .transform_request(&request, &configured)
+        .unwrap();
+    assert_eq!(
+        body["additionalModelRequestFields"]["thinking"]["budget_tokens"],
+        2000
+    );
+    assert_eq!(body["inferenceConfig"]["maxTokens"], 3000);
+}
+
+#[test]
 fn native_messages_output_schema_maps_to_converse_without_leaking_format_alias() {
     let schema = json!({"type":"object","additionalProperties":false,"properties":{"data":{"type":"string"}}});
     let body=BedrockProvider.transform_request(&json!({"messages":[],"output_config":{"format":{"type":"json_schema","schema":schema},"effort":"low"}}),&deployment("anthropic.claude-haiku-5-5",true)).unwrap();

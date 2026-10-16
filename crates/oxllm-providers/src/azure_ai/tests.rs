@@ -273,9 +273,72 @@ fn embeddings_are_openai_shaped_and_keep_dimensions_and_usage() {
     );
     let response = json!({"data": [{"index": 0, "embedding": [0.1]}], "model": "cohere-deployment", "usage": {"prompt_tokens": 5, "total_tokens": 5}});
     assert_eq!(
-        EmbeddingProvider::transform_response(&AzureAiProvider, &response, "alias").unwrap(),
+        EmbeddingProvider::transform_response(
+            &AzureAiProvider,
+            &response,
+            &deployment.oxllm_params.model
+        )
+        .unwrap(),
         response
     );
+}
+
+#[test]
+fn embedding_models_use_the_selected_wire_selector_not_the_vendor_echo() {
+    let response = json!({"object":"list","model":"embed-v4.0","data":[{"index":0,"embedding":[0.1]}],"usage":{"prompt_tokens":5,"total_tokens":5,"cost":0.01}});
+    for (model, expected) in [
+        ("azure_ai/embed-v-4-0", "embed-v-4-0"),
+        ("embed-v-4-0", "embed-v-4-0"),
+        ("azure_ai/private-embedding", "private-embedding"),
+        ("azure_ai/model_router/embed-v-4-0", "embed-v-4-0"),
+        ("azure_ai/model-router/embed-v-4-0", "embed-v-4-0"),
+    ] {
+        let body =
+            EmbeddingProvider::transform_response(&AzureAiProvider, &response, model).unwrap();
+        assert_eq!(body["model"], expected);
+        assert_eq!(body["data"], response["data"]);
+        assert_eq!(body["usage"], response["usage"]);
+    }
+}
+
+#[test]
+fn embedding_request_and_response_selectors_remove_router_wrappers_exactly_once() {
+    for (model, expected) in [
+        ("model_router/embed-v-4-0", "embed-v-4-0"),
+        ("model-router/private-embedding", "private-embedding"),
+        (
+            "model_router/model_router/embedding",
+            "model_router/embedding",
+        ),
+        (
+            "model-router/model-router/embedding",
+            "model-router/embedding",
+        ),
+    ] {
+        let deployment = deployment(model, "https://resource.services.ai.azure.com/models");
+        let request = EmbeddingProvider::transform_request(
+            &AzureAiProvider,
+            &json!({"input":["text"]}),
+            &deployment,
+        )
+        .unwrap();
+        let response = EmbeddingProvider::transform_response(
+            &AzureAiProvider,
+            &json!({"model":"vendor-echo","data":[]}),
+            &deployment.oxllm_params.model,
+        )
+        .unwrap();
+        assert_eq!(request["model"], expected);
+        assert_eq!(response["model"], request["model"]);
+    }
+}
+
+#[test]
+fn chat_model_snapshots_are_not_rewritten_by_embedding_model_normalization() {
+    let response = json!({"id":"chat","model":"gpt-5.5-2026-04-23","choices":[{"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}});
+    let body =
+        ChatProvider::transform_response(&AzureAiProvider, &response, "azure_ai/gpt-5.5").unwrap();
+    assert_eq!(body["model"], response["model"]);
 }
 
 #[test]
@@ -497,6 +560,17 @@ fn cohere_image_selection_uses_concrete_models_and_explicit_base_model_hints() {
     );
     assert_eq!(
         EmbeddingProvider::transform_request(&AzureAiProvider, &request, &configured).unwrap()["model"],
+        "private-deployment"
+    );
+    // The response side uses the same selector; the base-model hint only
+    // selects the route and never leaks into attribution.
+    assert_eq!(
+        EmbeddingProvider::transform_response(
+            &AzureAiProvider,
+            &json!({"model":"embed-v4.0","data":[]}),
+            &configured.oxllm_params.model,
+        )
+        .unwrap()["model"],
         "private-deployment"
     );
     configured.model_info = None;

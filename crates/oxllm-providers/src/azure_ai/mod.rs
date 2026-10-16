@@ -54,26 +54,18 @@ impl AzureAiProvider {
                 "azure_ai deployment requires api_base".into(),
             ));
         }
-        let configured = deployment
-            .oxllm_params
-            .model
-            .strip_prefix("azure_ai/")
-            .unwrap_or(&deployment.oxllm_params.model);
+        let configured = &deployment.oxllm_params.model;
         let model = if configured.contains('*') {
             request
                 .get("model")
                 .and_then(Value::as_str)
-                .map(|model| model.strip_prefix("azure_ai/").unwrap_or(model))
                 .ok_or_else(|| {
                     Error::BadRequest("wildcard azure_ai deployment requires a model".into())
                 })?
         } else {
-            configured
+            configured.as_str()
         };
-        let model = model
-            .strip_prefix("model_router/")
-            .or_else(|| model.strip_prefix("model-router/"))
-            .unwrap_or(model);
+        let model = embeddings::model_selector(model);
         if model.is_empty() || model.contains('*') {
             return Err(Error::BadRequest(
                 "azure_ai requires a concrete deployment/model name".into(),
@@ -371,7 +363,13 @@ impl EmbeddingProvider for AzureAiProvider {
     }
 
     fn transform_response(&self, body: &Value, model: &str) -> Result<Value> {
-        EmbeddingProvider::transform_response(&COMPAT, body, model)
+        let mut body = EmbeddingProvider::transform_response(&COMPAT, body, model)?;
+        // Foundry can echo a vendor model-group label rather than the wire
+        // selector. Normalize before accounting, including every mixed-batch leg.
+        if let Some(object) = body.as_object_mut() {
+            object.insert("model".into(), json!(embeddings::model_selector(model)));
+        }
+        Ok(body)
     }
 }
 

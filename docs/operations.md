@@ -131,6 +131,12 @@ explicit `azure_ad_token` uses Bearer authentication. Native Cohere embedding
 deployments also recognize unified Foundry hosts, or `api_type: azure_ai` for
 custom gateways, and send `input` to `/models/embeddings`. Azure ML
 `llm_provider-num_tokens` headers are honored for embedding usage and cost.
+Translated embedding responses use the selected deployment's prefix-stripped wire
+model for spend attribution, not a vendor model-group echo (for example,
+`embed-v-4-0` rather than `embed-v4.0`). This applies to text, image and mixed
+batches, including wildcard model resolution. Client responses still use the
+requested model alias; chat spend retains upstream model snapshots. Existing
+spend records are not rewritten.
 See [the Foundry configuration sample](../examples/config.foundry.yaml).
 
 On the translated `/v1/embeddings` endpoint, Cohere embedding models such as
@@ -527,6 +533,28 @@ or path/query-bearing names are rejected. Gemini requests discard foreign
 `thinking_blocks`, retaining
 the caller's single `reasoning_content` representation and Google's native
 provider fields/tool-call IDs.
+
+### Claude thinking budgets
+
+On translated Claude routes (direct Anthropic, Foundry, Vertex and Bedrock
+Invoke/Converse), manual thinking budgets are clamped into
+`1024 <= thinking.budget_tokens < max_tokens` when that window exists. An explicit
+budget with `max_tokens <= 1024` returns HTTP 400 `invalid_request_error` instead
+of silently disabling thinking. Increase the output limit to leave room for both
+thinking and the answer, or set `thinking.type` to `disabled` (drop
+`budget_tokens` if the provider rejects it). Integer- and float-encoded budgets
+are treated identically. The `max_completion_tokens` alias obeys the same rule.
+A disabled configuration never uses the budget window; any stray budget is
+forwarded for provider validation. Converse also checks native thinking under
+`additionalModelRequestFields` and its snake_case alias after merging caller
+options, without increasing an explicit output limit.
+
+Thinking inferred only from `reasoning_effort` remains lenient: an impossible
+derived budget may be omitted while preserving the caller's output limit.
+Budget-free adaptive/disabled configurations are unaffected; model support and
+other native validation remain provider-owned. Exact and semantic caches isolate
+explicit-thinking requests from responses cached before this validation change;
+ordinary and inferred-effort cache namespaces are unchanged.
 
 ### Provider token counting
 

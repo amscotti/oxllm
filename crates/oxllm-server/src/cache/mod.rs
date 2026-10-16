@@ -35,6 +35,27 @@ use tokio::sync::RwLock;
 #[cfg(feature = "redis")]
 use oxllm_cache_redis::RedisCache;
 
+/// Keep persistent responses produced under older request-shaping rules from
+/// bypassing current validation. Unaffected requests retain their cache keys.
+pub(crate) fn response_policy_versions(
+    body: &serde_json::Value,
+) -> impl Iterator<Item = &'static str> {
+    let explicit_thinking = [
+        body.get("thinking"),
+        body.pointer("/additionalModelRequestFields/thinking"),
+        body.pointer("/additional_model_request_fields/thinking"),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| !value.is_null());
+    [
+        crate::native_output_policy::cache_version(body),
+        explicit_thinking.then_some("explicit-thinking-policy-v1"),
+    ]
+    .into_iter()
+    .flatten()
+}
+
 /// An entry stored in the moka cache, optionally with a per-entry expiry.
 #[derive(Clone, Debug)]
 struct CachedEntry {

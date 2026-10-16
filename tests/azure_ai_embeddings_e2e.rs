@@ -24,10 +24,11 @@ fn config(upstream: &MockServer) -> oxllm_server::ProxyConfig {
 
 fn capture_spend(state: &oxllm_server::SharedState) -> mpsc::Receiver<SpendEntry> {
     let mut next = (*state.load_full()).clone();
+    let model = next.config.model_list[0].model_name.clone();
     let settings = &mut Arc::make_mut(&mut next.config).oxllm_settings;
     settings.max_budget = Some(100.0);
     settings.budget_duration = Some("1h".into());
-    let budgets = std::collections::HashMap::from([("embeddings".into(), 100.0)]);
+    let budgets = std::collections::HashMap::from([(model, 100.0)]);
     settings.model_max_budget = Some(budgets.clone());
     let (tx, rx) = mpsc::channel(8);
     next.spend_tx = Some(tx.clone());
@@ -49,13 +50,132 @@ fn request_id(response: &reqwest::Response) -> String {
 
 fn response(vectors: Vec<Value>, tokens: u64) -> Value {
     json!({
-        "object":"list", "model":"embed-v-4-0", "data":vectors,
+        "object":"list", "model":"embed-v4.0", "data":vectors,
         "usage":{"prompt_tokens":tokens, "total_tokens":tokens}
     })
 }
 
 fn embedding(index: usize, vector: Value) -> Value {
     json!({"object":"embedding", "index":index, "embedding":vector})
+}
+
+#[tokio::test]
+async fn embedding_spend_records_the_selected_model_for_text_images_and_mixed_batches() {
+    for (configured_model, requested_model) in [
+        ("azure_ai/embed-v-4-0", "embeddings"),
+        ("azure_ai/model_router/embed-v-4-0", "embeddings"),
+        ("azure_ai/*", "azure_ai/embed-v-4-0"),
+    ] {
+        let upstream = MockServer::start_async().await;
+        let text = upstream
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/models/embeddings")
+                    .json_body(json!({"model":"embed-v-4-0", "input":["text"]}));
+                then.status(200)
+                    .json_body(response(vec![embedding(0, json!([1]))], 2));
+            })
+            .await;
+        let image = upstream
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/models/images/embeddings")
+                    .json_body(json!({"model":"embed-v-4-0", "input":[{"image":IMAGE}]}));
+                then.status(200)
+                    .json_body(response(vec![embedding(0, json!([2]))], 3));
+            })
+            .await;
+        let mut config = config(&upstream);
+        let params = &mut config.model_list[0].oxllm_params;
+        params.model = configured_model.into();
+        params.input_cost_per_token = Some(0.001);
+        params.output_cost_per_token = Some(0.0);
+        if configured_model.contains('*') {
+            config.model_list[0].model_name = "*".into();
+        }
+        let (handle, state) = common::start_oxllm(config).await.unwrap();
+        let mut ledger = capture_spend(&state);
+        let client = common::http_client();
+        let mut ids = std::collections::HashSet::new();
+        for (input, tokens, vectors) in [
+            (json!("text"), 2, json!([embedding(0, json!([1]))])),
+            (json!(IMAGE), 3, json!([embedding(0, json!([2]))])),
+            (
+                json!([IMAGE, "text"]),
+                5,
+                json!([embedding(0, json!([2])), embedding(1, json!([1]))]),
+            ),
+        ] {
+            let result = client
+                .post(handle.url("/v1/embeddings"))
+                .json(&json!({"model":requested_model,"input":input}))
+                .send()
+                .await
+                .unwrap();
+            let status = result.status();
+            let id = request_id(&result);
+            let body: Value = result.json().await.unwrap();
+            assert_eq!(status, 200, "{configured_model}: {body}");
+            assert_eq!(body["model"], requested_model);
+            assert_eq!(body["data"], vectors);
+            assert_eq!(body["usage"]["total_tokens"], tokens);
+            let entry = tokio::time::timeout(Duration::from_secs(5), ledger.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(entry.request_id.as_deref(), Some(id.as_str()));
+            assert_eq!(entry.model, "embed-v-4-0");
+            assert_eq!(entry.requested_model.as_deref(), Some(requested_model));
+            assert_eq!(entry.provider, "azure_ai");
+            assert_eq!(entry.prompt_tokens, Some(tokens));
+            assert_eq!(entry.total_tokens, Some(tokens));
+            assert!((entry.cost.unwrap() - tokens as f64 * 0.001).abs() < 1e-12);
+            assert!(ids.insert(id), "every spend event belongs to a new request");
+        }
+        assert!(ledger.try_recv().is_err());
+        text.assert_hits_async(2).await;
+        image.assert_hits_async(2).await;
+        handle.shutdown();
+    }
+}
+
+#[tokio::test]
+async fn azure_chat_spend_preserves_dated_upstream_snapshots() {
+    let upstream = MockServer::start_async().await;
+    let chat = upstream.mock_async(|when, then| {
+        when.method(POST).path("/models/chat/completions")
+            .json_body(json!({"model":"gpt-5.5","messages":[{"role":"user","content":"Hello"}]}));
+        then.status(200).json_body(json!({"id":"chat-snapshot","model":"gpt-5.5-2026-04-23","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}));
+    }).await;
+    let mut config = config(&upstream);
+    config.model_list[0].model_name = "chat".into();
+    let params = &mut config.model_list[0].oxllm_params;
+    params.model = "azure_ai/gpt-5.5".into();
+    params.input_cost_per_token = Some(0.001);
+    params.output_cost_per_token = Some(0.002);
+    let (handle, state) = common::start_oxllm(config).await.unwrap();
+    let mut ledger = capture_spend(&state);
+    let result = common::http_client()
+        .post(handle.url("/v1/chat/completions"))
+        .json(&json!({"model":"chat","messages":[{"role":"user","content":"Hello"}]}))
+        .send()
+        .await
+        .unwrap();
+    let status = result.status();
+    let id = request_id(&result);
+    let body: Value = result.json().await.unwrap();
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["model"], "chat");
+    let entry = tokio::time::timeout(Duration::from_secs(5), ledger.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(entry.request_id.as_deref(), Some(id.as_str()));
+    assert_eq!(entry.model, "gpt-5.5-2026-04-23");
+    assert_eq!(entry.requested_model.as_deref(), Some("chat"));
+    assert!((entry.cost.unwrap() - 0.008).abs() < 1e-12);
+    chat.assert_hits_async(1).await;
+    handle.shutdown();
 }
 
 #[tokio::test]

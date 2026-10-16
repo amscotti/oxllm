@@ -3456,6 +3456,96 @@ fn request_thinking_budget_clamped_below_max_tokens() {
 }
 
 #[test]
+fn explicit_thinking_requires_room_for_the_minimum_budget() {
+    for limit in ["max_tokens", "max_completion_tokens"] {
+        for max_tokens in [1, 100, 1024] {
+            for value in [json!(max_tokens), json!(max_tokens as f64)] {
+                for budget in [json!(512), json!(2000), json!(512.0), json!(2000.0)] {
+                    let mut request =
+                        json!({"messages":[],"thinking":{"type":"enabled","budget_tokens":budget}});
+                    request[limit] = value.clone();
+                    let error = AnthropicProvider
+                        .transform_request(&request, &deployment())
+                        .unwrap_err();
+                    assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+                    assert!(error.to_string().contains("max_tokens"));
+                    assert!(error.to_string().contains("thinking.budget_tokens"));
+                }
+            }
+        }
+        for max_tokens in [1025, 1500, 3000] {
+            for budget in [json!(2000), json!(2000.0)] {
+                let mut request =
+                    json!({"messages":[],"thinking":{"type":"enabled","budget_tokens":budget}});
+                request[limit] = json!(max_tokens as f64);
+                let body = AnthropicProvider
+                    .transform_request(&request, &deployment())
+                    .unwrap();
+                assert_eq!(body["max_tokens"], max_tokens);
+                assert_eq!(body["thinking"]["budget_tokens"], 2000.min(max_tokens - 1));
+            }
+        }
+        // The lower-bound clamp and its error path apply to both numeric encodings.
+        let mut request =
+            json!({"messages":[],"thinking":{"type":"enabled","budget_tokens":472.6}});
+        request[limit] = json!(64000);
+        let body = AnthropicProvider
+            .transform_request(&request, &deployment())
+            .unwrap();
+        assert_eq!(body["thinking"]["budget_tokens"], 1024);
+        request["thinking"] = json!({"type":"enabled","budget_tokens":2000.0});
+        request[limit] = json!(100);
+        assert!(matches!(
+            AnthropicProvider.transform_request(&request, &deployment()),
+            Err(oxllm_core::Error::BadRequest(_))
+        ));
+    }
+}
+
+#[test]
+fn disabled_thinking_is_not_subject_to_the_budget_window() {
+    // A caller explicitly disabling thinking must not fail the budget window
+    // just because a stale `budget_tokens` value is still present; the exact
+    // configuration is forwarded for provider validation.
+    let thinking = json!({"type":"disabled","budget_tokens":2000});
+    let body = AnthropicProvider
+        .transform_request(
+            &json!({"messages":[],"max_tokens":100,"thinking":thinking}),
+            &deployment(),
+        )
+        .unwrap();
+    assert_eq!(body["thinking"], thinking);
+    assert_eq!(body["max_tokens"], 100);
+}
+
+#[test]
+fn inferred_thinking_can_be_omitted_without_changing_a_tiny_output_limit() {
+    for effort in ["low", "high", "max"] {
+        let body = AnthropicProvider
+            .transform_request(
+                &json!({"messages":[],"max_tokens":100,"reasoning_effort":effort}),
+                &deployment(),
+            )
+            .unwrap();
+        assert!(body.get("thinking").is_none());
+        assert_eq!(body["max_tokens"], 100);
+    }
+}
+
+#[test]
+fn non_budgeted_thinking_is_not_subject_to_the_manual_budget_floor() {
+    for thinking in [json!({"type":"adaptive"}), json!({"type":"disabled"})] {
+        let body = AnthropicProvider
+            .transform_request(
+                &json!({"messages":[],"max_tokens":100,"thinking":thinking}),
+                &deployment(),
+            )
+            .unwrap();
+        assert_eq!(body["thinking"], thinking);
+    }
+}
+
+#[test]
 fn request_thinking_budget_below_minimum_clamped_up() {
     // A caller budget below Anthropic's 1024 minimum (e.g. 512) with a large
     // max_tokens must clamp UP to 1024 (mirroring bedrock's
@@ -3470,15 +3560,17 @@ fn request_thinking_budget_below_minimum_clamped_up() {
     let out = p.transform_request(&req, &deployment()).expect("ok");
     assert_eq!(out["thinking"]["budget_tokens"], 1024);
 
-    // max_tokens too small to satisfy the 1024 minimum — drop thinking.
+    // An explicit budget must not disappear when no valid window exists.
     let req = json!({
         "model": "claude-3-7-sonnet",
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": 1000,
         "thinking": {"type": "enabled", "budget_tokens": 512},
     });
-    let out = p.transform_request(&req, &deployment()).expect("ok");
-    assert!(out.get("thinking").is_none());
+    assert!(matches!(
+        p.transform_request(&req, &deployment()),
+        Err(oxllm_core::Error::BadRequest(_))
+    ));
 }
 
 #[test]

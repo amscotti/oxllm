@@ -408,7 +408,7 @@ pub fn cache_key_for(request: &Value, api_key_hash: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(api_key_hash.as_bytes());
     hasher.update(b"\x00");
-    if let Some(version) = crate::native_output_policy::cache_version(request) {
+    for version in crate::cache::response_policy_versions(request) {
         hasher.update(version.as_bytes());
         hasher.update(b"\x00");
     }
@@ -662,6 +662,46 @@ pub async fn store(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_thinking_isolates_prevalidation_cache_entries_without_changing_effort_keys() {
+        for (body, changed) in [
+            (serde_json::json!({"messages":[]}), false),
+            (serde_json::json!({"messages":[],"thinking":null}), false),
+            (
+                serde_json::json!({"messages":[],"reasoning_effort":"high"}),
+                false,
+            ),
+            (
+                serde_json::json!({"messages":[],"thinking":{"type":"enabled","budget_tokens":2000},"max_tokens":100}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"additionalModelRequestFields":{"thinking":{"type":"enabled","budget_tokens":2000}},"max_tokens":100}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"additional_model_request_fields":{"thinking":{"type":"enabled","budget_tokens":2000}},"max_tokens":100}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"thinking":{"type":"enabled","budget_tokens":2000},"tools":[{"type":"function","function":{"name":"extract","strict":true}}]}),
+                true,
+            ),
+        ] {
+            let mut legacy = Sha256::new();
+            legacy.update(b"key\x00");
+            if let Some(version) = crate::native_output_policy::cache_version(&body) {
+                legacy.update(version.as_bytes());
+                legacy.update(b"\x00");
+            }
+            let mut canonical = body.clone();
+            canonicalize_json(&mut canonical);
+            legacy.update(serde_json::to_vec(&canonical).unwrap());
+            let legacy = format!("resp:{:x}", legacy.finalize());
+            assert_eq!(cache_key_for(&body, "key") != legacy, changed, "{body}");
+        }
+    }
 
     #[test]
     fn native_output_cache_version_preserves_plain_keys_and_isolates_old_tool_keys() {

@@ -542,14 +542,11 @@ impl ChatProvider for AnthropicProvider {
         }
 
         if let Some(thinking) = request.get("thinking").filter(|value| !value.is_null()) {
-            // Apply budget clamping (feature #4): Anthropic requires
-            // `budget_tokens < max_tokens`. If the caller set a budget at
-            // or above `max_tokens`, clamp it down to `max_tokens - 1`
-            // rather than letting the request 400.
-            let clamped = clamp_thinking_budget(thinking, max_tokens);
-            if let Some(clamped) = clamped {
-                out.insert("thinking".to_string(), clamped);
-            }
+            // Retain budget clamping when a valid window exists, but never
+            // silently discard an explicit request for thinking.
+            let clamped =
+                clamp_thinking_budget(thinking, max_tokens).ok_or_else(thinking_budget_error)?;
+            out.insert("thinking".to_string(), clamped);
         } else if let Some(effort) = request.get("reasoning_effort").and_then(|v| v.as_str()) {
             // Map OpenAI `reasoning_effort` to Anthropic thinking config when
             // the caller didn't set `thinking` directly (feature #4). For
@@ -2590,28 +2587,33 @@ pub(crate) fn normalize_stop_sequences(stop: &Value) -> Value {
 ///
 /// Anthropic requires `budget_tokens < max_tokens` AND `budget_tokens >= 1024`.
 /// The budget is clamped into the valid window `[MIN_BUDGET, max_tokens - 1]`:
-/// a budget at/above `max_tokens` is lowered to `max_tokens - 1` (mirroring
-/// the bedrock `clamp_thinking_budget` behaviour), and a budget below
+/// a budget at/above `max_tokens` is lowered to `max_tokens - 1`, and a budget below
 /// Anthropic's 1024 minimum is raised to 1024 rather than being silently
 /// rewritten to `max_tokens - 1` (which would inflate a small budget ~16x).
-/// When the window is unsatisfiable (`max_tokens <= 1024`), return `None` so
-/// thinking is dropped entirely. Non-`enabled`/`adaptive` thinking (or
-/// thinking without a numeric budget) is returned unchanged.
+/// When the window is unsatisfiable (`max_tokens <= 1024`), return `None`:
+/// explicit thinking must error, while inferred thinking may be omitted.
+/// Integer- and float-encoded budgets are both honored (matching
+/// `json_number_as_u64`). A `type: "disabled"` configuration never uses the
+/// budget window: it is returned unchanged, so any stray `budget_tokens` is
+/// provider-validated instead of failing this local clamp. Thinking without a
+/// numeric budget is likewise returned unchanged.
 pub fn clamp_thinking_budget(thinking: &Value, max_tokens: u64) -> Option<Value> {
     const MIN_BUDGET: u64 = 1024;
     let map = match thinking.as_object() {
         Some(m) => m,
         None => return Some(thinking.clone()),
     };
-    let budget = match map.get("budget_tokens").and_then(|v| v.as_u64()) {
+    if map.get("type").and_then(Value::as_str) == Some("disabled") {
+        return Some(thinking.clone());
+    }
+    let budget = match map.get("budget_tokens").and_then(json_number_as_u64) {
         Some(b) => b,
         None => return Some(thinking.clone()),
     };
-    if budget < max_tokens && budget >= MIN_BUDGET {
-        return Some(thinking.clone());
-    }
     // Clamp into [MIN_BUDGET, max_tokens - 1], but only when that window is
-    // non-empty; otherwise max_tokens is too small — drop thinking entirely.
+    // non-empty; otherwise the caller must distinguish explicit from inferred
+    // intent. A float-encoded budget is normalized to the integer the API
+    // expects even when it sits inside the window.
     let upper = max_tokens.saturating_sub(1);
     if upper < MIN_BUDGET {
         return None;
@@ -2620,6 +2622,12 @@ pub fn clamp_thinking_budget(thinking: &Value, max_tokens: u64) -> Option<Value>
     let mut out = map.clone();
     out.insert("budget_tokens".to_string(), json!(clamped));
     Some(Value::Object(out))
+}
+
+pub(crate) fn thinking_budget_error() -> oxllm_core::Error {
+    oxllm_core::Error::BadRequest(
+        "`max_tokens` must be greater than `thinking.budget_tokens`; extended thinking requires a budget of at least 1024 tokens".into(),
+    )
 }
 
 /// Compute the dynamic `anthropic-beta` header tags a request needs (feature #1).
@@ -2915,7 +2923,7 @@ pub fn normalize_effort_for_model(model: &str, effort: &str) -> Option<String> {
 /// serializer emits `4096.0` would otherwise be silently dropped. Floats are
 /// rounded and clamped to a minimum of 1, matching the reference
 /// (`transformation.py:1427-1430`: `max(1, int(round(value)))`).
-fn json_number_as_u64(v: &Value) -> Option<u64> {
+pub(crate) fn json_number_as_u64(v: &Value) -> Option<u64> {
     if let Some(n) = v.as_u64() {
         return Some(n);
     }

@@ -163,11 +163,21 @@ pub(super) fn prepare_requests(
 }
 
 fn wire_model(deployment: &Deployment) -> &str {
+    // Requests already resolved the optional router wrapper. Strip only the
+    // provider prefix here, so a selector is never normalized twice.
     deployment
         .oxllm_params
         .model
         .strip_prefix("azure_ai/")
         .unwrap_or(&deployment.oxllm_params.model)
+}
+
+pub(super) fn model_selector(model: &str) -> &str {
+    let model = model.strip_prefix("azure_ai/").unwrap_or(model);
+    model
+        .strip_prefix("model_router/")
+        .or_else(|| model.strip_prefix("model-router/"))
+        .unwrap_or(model)
 }
 
 pub(super) fn image_url(deployment: &Deployment) -> String {

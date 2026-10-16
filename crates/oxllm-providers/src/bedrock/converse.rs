@@ -291,9 +291,9 @@ pub(super) fn transform_request_converse_with_base_model(
         apply_tool_name_forward_map(&mut out, &forward);
     }
     apply_top_k(request, feature_model, &mut out)?;
-    // Clamp thinking budget to Bedrock's 1024-token minimum. Runs after
-    // pass-through so caller-supplied values are also clamped.
-    clamp_thinking_budget(&mut out);
+    // Enforce the same budget window as the Anthropic adapter after merging
+    // all explicit thinking aliases. Only inferred thinking may be omitted.
+    clamp_thinking_budget(request, &mut out)?;
     // Auto-set `inferenceConfig.maxTokens` when thinking is enabled but no
     // explicit maxTokens was provided (Bedrock requires maxTokens >
     // budget_tokens).
@@ -825,23 +825,45 @@ fn apply_context_management(request: &Value, out: &mut Map<String, Value>) {
     }
 }
 
-/// Bedrock enforces a minimum `budget_tokens` of 1024 for extended thinking.
-/// Any value below that is rejected with a validation error. This clamps
-/// `additionalModelRequestFields.thinking.budget_tokens` up to 1024 in place.
-/// No-op when thinking is absent or the budget is already ≥ 1024.
-fn clamp_thinking_budget(out: &mut Map<String, Value>) {
-    const MIN_THINKING_BUDGET: u64 = 1024;
+/// Clamp manual thinking into `[1024, maxTokens - 1]` without increasing an
+/// explicit output limit. An impossible explicit request is an error; an
+/// inferred budget can be omitted. Without a limit, clamp only the minimum and
+/// let `auto_set_max_tokens_for_thinking` retain its existing default policy.
+fn clamp_thinking_budget(request: &Value, out: &mut Map<String, Value>) -> Result<()> {
+    let max_tokens = out
+        .get("inferenceConfig")
+        .and_then(|config| config.get("maxTokens"))
+        .and_then(crate::anthropic::json_number_as_u64)
+        .unwrap_or(u64::MAX);
     let Some(Value::Object(amrf)) = out.get_mut("additionalModelRequestFields") else {
-        return;
+        return Ok(());
     };
-    let Some(Value::Object(thinking)) = amrf.get_mut("thinking") else {
-        return;
+    let Some(thinking) = amrf.get("thinking") else {
+        return Ok(());
     };
-    if let Some(budget) = thinking.get("budget_tokens").and_then(Value::as_u64) {
-        if budget < MIN_THINKING_BUDGET {
-            thinking.insert("budget_tokens".to_string(), json!(MIN_THINKING_BUDGET));
+    match crate::anthropic::clamp_thinking_budget(thinking, max_tokens) {
+        Some(thinking) => {
+            amrf.insert("thinking".into(), thinking);
+        }
+        None => {
+            let explicit = [
+                request.get("thinking"),
+                request.pointer("/additionalModelRequestFields/thinking"),
+                request.pointer("/additional_model_request_fields/thinking"),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|value| !value.is_null());
+            if explicit {
+                return Err(crate::anthropic::thinking_budget_error());
+            }
+            amrf.remove("thinking");
+            if amrf.is_empty() {
+                out.remove("additionalModelRequestFields");
+            }
         }
     }
+    Ok(())
 }
 
 /// When `additionalModelRequestFields.thinking` is present, Bedrock requires
@@ -1633,8 +1655,12 @@ fn build_inference_config(request: &Value, model: &str) -> Value {
     // alias must not silently lose its output limit.
     let max_tokens = request
         .get("max_tokens")
-        .or_else(|| request.get("max_completion_tokens"))
-        .and_then(|v| v.as_u64());
+        .and_then(crate::anthropic::json_number_as_u64)
+        .or_else(|| {
+            request
+                .get("max_completion_tokens")
+                .and_then(crate::anthropic::json_number_as_u64)
+        });
     if let Some(mt) = max_tokens {
         // Converse rejects maxTokens below 16 for OpenAI GPT and xAI Grok.
         let mt = if bedrock_requires_min_max_tokens(model) {
