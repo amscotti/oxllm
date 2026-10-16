@@ -288,6 +288,189 @@ pub(crate) fn response_format_schema(
     Ok(Some(schema.clone()))
 }
 
+/// Translate only a caller-supplied schema. Schema-less JSON mode has no
+/// equivalent on these native APIs; never invent a schema or a tool fallback.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
+pub(crate) fn native_response_schema(request: &Value) -> oxllm_core::Result<Option<Value>> {
+    let invalid = |message: &str| oxllm_core::Error::BadRequest(message.into());
+    let Some(format) = request
+        .get("response_format")
+        .filter(|value| !value.is_null())
+    else {
+        return Ok(None);
+    };
+    let format = format
+        .as_object()
+        .ok_or_else(|| invalid("response_format must be an object"))?;
+    match format.get("type").and_then(Value::as_str) {
+        Some("text") => Ok(None),
+        Some(kind @ ("json_schema" | "json_object")) => {
+            if let Some(strict) = format
+                .get("json_schema")
+                .and_then(|value| value.get("strict"))
+                .filter(|value| !value.is_null())
+                && !strict.is_boolean()
+            {
+                return Err(invalid(
+                    "response_format.json_schema.strict must be a boolean",
+                ));
+            }
+            let schema = response_format_schema(format)?;
+            if schema.is_none() {
+                return Err(invalid(if kind == "json_object" {
+                    "response_format json_object has no native representation without a schema; use json_schema"
+                } else {
+                    "response_format json_schema requires an object schema"
+                }));
+            }
+            Ok(schema)
+        }
+        _ => Err(invalid(
+            "unsupported native response_format.type; use text or json_schema",
+        )),
+    }
+}
+
+/// Resolve equivalent native schema envelopes without changing their contents.
+/// A legacy output_format is translated to the stable format container, not a
+/// beta request or a synthetic tool. Multiple definitions must agree exactly.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
+pub(crate) fn native_output_format(
+    request: &Value,
+    native_paths: &[(&str, &str)],
+) -> oxllm_core::Result<Option<Value>> {
+    // A bare JSON-mode intent can be satisfied by a schema the caller has
+    // explicitly supplied through another envelope. Never synthesize one.
+    let json_mode = request.get("response_format").is_some_and(|format| {
+        format.get("type").and_then(Value::as_str) == Some("json_object")
+            && format.get("json_schema").is_none()
+    });
+    let mut selected = if json_mode {
+        None
+    } else {
+        native_response_schema(request)?
+    }
+    .map(|schema| {
+        Value::Object(Map::from_iter([
+            ("type".into(), Value::String("json_schema".into())),
+            ("schema".into(), schema),
+        ]))
+    });
+    let mut source = "response_format";
+    for &(path, label) in native_paths {
+        if let Some((parent, _)) = path.rsplit_once('/')
+            && !parent.is_empty()
+            && request
+                .pointer(parent)
+                .is_some_and(|value| !value.is_null() && !value.is_object())
+        {
+            return Err(oxllm_core::Error::BadRequest(format!(
+                "{} must be an object",
+                parent.trim_start_matches('/')
+            )));
+        }
+        let Some(format) = request.pointer(path).filter(|value| !value.is_null()) else {
+            continue;
+        };
+        if request
+            .pointer("/response_format/type")
+            .and_then(Value::as_str)
+            == Some("text")
+        {
+            return Err(oxllm_core::Error::BadRequest(format!(
+                "response_format text conflicts with {label}"
+            )));
+        }
+        if !format.is_object() {
+            return Err(oxllm_core::Error::BadRequest(format!(
+                "{label} must be an object"
+            )));
+        }
+        if path != "/output_format"
+            && format.get("type").and_then(Value::as_str) == Some("json_object")
+        {
+            return Err(oxllm_core::Error::BadRequest(format!(
+                "{label} json_object has no native representation; use json_schema with an object schema"
+            )));
+        }
+        if path == "/output_format"
+            && (format.get("type").and_then(Value::as_str) != Some("json_schema")
+                || !format.get("schema").is_some_and(Value::is_object)
+                || format.as_object().is_some_and(|format| {
+                    format
+                        .keys()
+                        .any(|key| !matches!(key.as_str(), "type" | "schema"))
+                }))
+        {
+            return Err(oxllm_core::Error::BadRequest("output_format requires json_schema with only type and an object schema; use output_config.format for native options".into()));
+        }
+        if let Some(selected) = &selected {
+            if selected != format {
+                return Err(oxllm_core::Error::BadRequest(format!(
+                    "{source} conflicts with {label}"
+                )));
+            }
+        } else {
+            selected = Some(format.clone());
+            source = label;
+        }
+    }
+    if json_mode
+        && !selected.as_ref().is_some_and(|format| {
+            format.get("type").and_then(Value::as_str) == Some("json_schema")
+                && format.get("schema").is_some_and(Value::is_object)
+        })
+    {
+        return Err(oxllm_core::Error::BadRequest("response_format json_object has no native representation without a schema; use json_schema".into()));
+    }
+    Ok(selected)
+}
+
+/// Strictness is transport metadata, never a JSON Schema keyword. Explicit
+/// false/null stay non-strict; malformed or misplaced flags must not disappear.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
+pub(crate) fn strict_function_tool(function: &Value) -> oxllm_core::Result<bool> {
+    if [
+        function.get("parameters"),
+        function.get("input_schema"),
+        function.pointer("/inputSchema/json"),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|schema| schema.get("strict").is_some())
+    {
+        return Err(oxllm_core::Error::BadRequest("tool schema must not contain a root strict field; put strict on the function/tool definition".into()));
+    }
+    match function.get("strict") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => Ok(false),
+        Some(Value::Bool(true)) => Ok(true),
+        Some(_) => Err(oxllm_core::Error::BadRequest(
+            "tool strict must be a boolean".into(),
+        )),
+    }
+}
+
+/// Resolve transport-metadata aliases without ignoring either strict flag or
+/// schema carrier. Contradictory declarations are malformed, not precedence.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
+pub(crate) fn strict_tool_definition(tool: &Value) -> oxllm_core::Result<bool> {
+    let root = strict_function_tool(tool)?;
+    let Some(function) = tool.get("function") else {
+        return Ok(root);
+    };
+    let nested = strict_function_tool(function)?;
+    match (
+        tool.get("strict").filter(|value| !value.is_null()),
+        function.get("strict").filter(|value| !value.is_null()),
+    ) {
+        (Some(root), Some(nested)) if root != nested => Err(oxllm_core::Error::BadRequest(
+            "tool strict conflicts with function.strict".into(),
+        )),
+        (Some(_), _) => Ok(root),
+        _ => Ok(nested),
+    }
+}
+
 /// A `thinking` block the API rejects: the text is missing or whitespace.
 /// `redacted_thinking` carries opaque data, not text, so it is never blank.
 #[cfg(any(feature = "anthropic", feature = "bedrock"))]
@@ -381,68 +564,6 @@ pub(crate) fn thinking_blocks_for_replay(
         ));
     }
     Ok(replay)
-}
-
-/// Maximum recursion depth for [`inject_additional_properties_false`].
-/// Matches serde_json's default 128-level recursion limit with headroom for
-/// the breadth of combiners walked per level.
-#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
-const SCHEMA_MAX_DEPTH: u32 = 64;
-
-/// Recursively inject `additionalProperties: false` on object nodes of a JSON
-/// Schema. Anthropic (native + Bedrock Converse) requires this annotation.
-///
-/// Shared by Anthropic and Bedrock so both validate the same schema shape.
-#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
-pub(crate) fn inject_additional_properties_false(schema: &mut Value) {
-    inject_additional_properties_false_inner(schema, 0);
-}
-
-#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
-fn inject_additional_properties_false_inner(schema: &mut Value, depth: u32) {
-    if depth >= SCHEMA_MAX_DEPTH {
-        return;
-    }
-    let Some(map) = schema.as_object_mut() else {
-        return;
-    };
-    let is_object = map
-        .get("type")
-        .and_then(Value::as_str)
-        .map(|t| t == "object")
-        .unwrap_or(false);
-    if is_object {
-        // Anthropic requires additionalProperties to be exactly false on
-        // object schemas. Always overwrite — even if the client explicitly
-        // sent true — because Anthropic 400s on anything else. (The reference
-        // commit 46751ad83e)
-        map.insert("additionalProperties".to_string(), Value::Bool(false));
-    }
-    if let Some(Value::Object(props)) = map.get_mut("properties") {
-        for (_, child) in props.iter_mut() {
-            inject_additional_properties_false_inner(child, depth + 1);
-        }
-    }
-    if let Some(items) = map.get_mut("items") {
-        inject_additional_properties_false_inner(items, depth + 1);
-    }
-    // Walk `$defs` / `definitions` (referenced sub-schemas) so named
-    // definitions get the same annotation. Matches the reference
-    // `_add_additional_properties_to_schema`.
-    for defs_key in ["$defs", "definitions"] {
-        if let Some(Value::Object(defs)) = map.get_mut(defs_key) {
-            for (_, child) in defs.iter_mut() {
-                inject_additional_properties_false_inner(child, depth + 1);
-            }
-        }
-    }
-    for combiner in ["anyOf", "oneOf", "allOf"] {
-        if let Some(Value::Array(arr)) = map.get_mut(combiner) {
-            for child in arr.iter_mut() {
-                inject_additional_properties_false_inner(child, depth + 1);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -594,136 +715,5 @@ mod tests {
                 "{name}: `{url}` should map to None"
             );
         }
-    }
-
-    // --- inject_additional_properties_false ---
-
-    #[test]
-    fn inject_object_node_gets_annotation() {
-        let mut schema = json!({"type": "object", "properties": {}});
-        inject_additional_properties_false(&mut schema);
-        assert_eq!(schema["additionalProperties"], false);
-    }
-
-    #[test]
-    fn inject_non_object_type_is_skipped() {
-        let mut schema = json!({"type": "string"});
-        inject_additional_properties_false(&mut schema);
-        assert!(schema.get("additionalProperties").is_none());
-    }
-
-    #[test]
-    fn inject_does_not_annotate_untyped_schema() {
-        // A node with no explicit `type` is not an object per the reference
-        // `result.get("type") == "object"` predicate.
-        let mut schema = json!({"description": "x"});
-        inject_additional_properties_false(&mut schema);
-        assert!(schema.get("additionalProperties").is_none());
-    }
-
-    #[test]
-    fn inject_does_not_annotate_combiner_root() {
-        // A bare combiner node has no `type: object`; the top-level must NOT
-        // gain `additionalProperties` (it would reject every instance). The
-        // object child inside the combiner IS still annotated.
-        let mut schema = json!({"anyOf": [{"type": "object", "properties": {}}]});
-        inject_additional_properties_false(&mut schema);
-        assert!(
-            schema.get("additionalProperties").is_none(),
-            "combiner root must not be annotated"
-        );
-        assert_eq!(schema["anyOf"][0]["additionalProperties"], false);
-    }
-
-    #[test]
-    fn inject_skips_type_array() {
-        // `type: ["object","null"]` is not the string "object"; the reference skips
-        // it. oxllm now matches (previously injected).
-        let mut schema = json!({"type": ["object", "null"], "properties": {}});
-        inject_additional_properties_false(&mut schema);
-        assert!(
-            schema.get("additionalProperties").is_none(),
-            "array-typed node must not be annotated"
-        );
-    }
-
-    #[test]
-    fn inject_always_forces_additional_properties_false() {
-        // Even when the client explicitly sends true, it must be overwritten
-        // to false — Anthropic 400s on additionalProperties: true.
-        let mut schema = json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": true,
-        });
-        inject_additional_properties_false(&mut schema);
-        assert_eq!(schema["additionalProperties"], false);
-
-        // Absent key still gets injected.
-        let mut schema = json!({
-            "type": "object",
-            "properties": {},
-        });
-        inject_additional_properties_false(&mut schema);
-        assert_eq!(schema["additionalProperties"], false);
-    }
-
-    #[test]
-    fn inject_walks_items_and_combiners_and_defs() {
-        let mut schema = json!({
-            "type": "object",
-            "properties": {
-                "list": {"type": "array", "items": {"type": "object", "properties": {}}},
-                "choice": {"oneOf": [{"type": "object", "properties": {}}]}
-            },
-            "$defs": {
-                "named": {"type": "object", "properties": {}}
-            },
-            "definitions": {
-                "legacy": {"type": "object", "properties": {}}
-            }
-        });
-        inject_additional_properties_false(&mut schema);
-        assert_eq!(schema["additionalProperties"], false);
-        assert_eq!(
-            schema["properties"]["list"]["items"]["additionalProperties"],
-            false
-        );
-        assert_eq!(
-            schema["properties"]["choice"]["oneOf"][0]["additionalProperties"],
-            false
-        );
-        assert_eq!(schema["$defs"]["named"]["additionalProperties"], false);
-        assert_eq!(
-            schema["definitions"]["legacy"]["additionalProperties"],
-            false
-        );
-    }
-
-    #[test]
-    fn inject_caps_recursion_at_max_depth() {
-        // A chain of nested objects deeper than SCHEMA_MAX_DEPTH (64). Only the
-        // first SCHEMA_MAX_DEPTH levels may be annotated; deeper levels are
-        // skipped and the walk terminates without overflowing the stack.
-        let depth: u32 = 80;
-        let mut schema = json!({"type": "object"});
-        for _ in 0..depth {
-            schema = json!({"type": "object", "properties": {"next": schema}});
-        }
-        inject_additional_properties_false(&mut schema);
-        let mut node = &schema;
-        let mut annotated = 0u32;
-        loop {
-            if node.get("additionalProperties") == Some(&json!(false)) {
-                annotated += 1;
-            } else {
-                break;
-            }
-            match node.get("properties").and_then(|p| p.get("next")) {
-                Some(child) => node = child,
-                None => break,
-            }
-        }
-        assert_eq!(annotated, SCHEMA_MAX_DEPTH);
     }
 }

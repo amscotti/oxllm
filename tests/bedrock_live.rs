@@ -225,7 +225,7 @@ async fn bedrock_streaming_chat() {
 }
 
 #[tokio::test]
-async fn bedrock_json_object_mode() {
+async fn bedrock_native_json_schema_output() {
     let Some(_env) = get_aws_env() else {
         skip_aws_env();
         return;
@@ -246,27 +246,39 @@ async fn bedrock_json_object_mode() {
                 {"role": "system", "content": "You are a helpful assistant that always responds with valid JSON."},
                 {"role": "user", "content": "Create a JSON object for a person named Alice who is 25 years old, with fields 'name' and 'age'."}
             ],
-            "response_format": {"type": "json_object"},
+            "response_format": {"type":"json_schema","json_schema":{"name":"person","strict":true,"schema":{"type":"object","properties":{"name":{"type":"string"},"age":{"type":"integer"}},"required":["name","age"],"additionalProperties":false}}},
         }),
     )
     .await;
 
-    assert_eq!(status, 200, "Bedrock JSON mode failed: {body}");
+    assert_eq!(
+        status, 200,
+        "Bedrock native JSON schema request failed: {body}"
+    );
+    if matches!(
+        body["choices"][0]["finish_reason"].as_str(),
+        Some("length" | "content_filter" | "refusal")
+    ) || body["choices"][0]["message"]["refusal"].is_string()
+    {
+        eprintln!("native schema result unevaluated: truncated or refused");
+        handle.shutdown();
+        return;
+    }
     let content = body["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("");
     assert!(!content.is_empty(), "response had empty content");
-    // Sonnet 4.6 takes the native `output_config` path: `json_object`
-    // without a schema becomes a permissive schema, so the model may
-    // return any valid JSON object (it has been observed returning `{}`
-    // or inventing its own fields). Assert the JSON-mode contract — a
-    // parseable JSON object — rather than specific fields.
+    // The caller's closed schema is forwarded through native output_config.
     let parsed: Value = serde_json::from_str(content)
         .unwrap_or_else(|_| panic!("response must be valid JSON, got: {content}"));
     assert!(
         parsed.is_object(),
         "response must be a JSON object, got: {content}"
     );
+    assert!(parsed["name"].is_string());
+    assert!(parsed["age"].as_f64().is_some_and(|age| age.fract() == 0.0));
+    assert_eq!(parsed.as_object().unwrap().len(), 2);
+    assert!(body["choices"][0]["message"].get("tool_calls").is_none());
     eprintln!("JSON mode response: {content}");
 
     handle.shutdown();

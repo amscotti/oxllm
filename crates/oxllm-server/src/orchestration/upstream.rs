@@ -1226,6 +1226,8 @@ pub(crate) fn apply_drop_params(
         body
     });
     let request: &Value = control_stripped.as_ref().unwrap_or(request);
+    crate::native_output_policy::validate_formats(request)?;
+    let requested_output = crate::native_output_policy::contract(request);
 
     let needs_outbound_shape = deployment
         .oxllm_params
@@ -1252,6 +1254,7 @@ pub(crate) fn apply_drop_params(
         && chat.supported_params().is_none()
         && control_stripped.is_none()
         && !needs_outbound_shape
+        && requested_output.is_none()
     {
         warn_unsupported_params(chat, request);
         return Ok(None);
@@ -1263,16 +1266,50 @@ pub(crate) fn apply_drop_params(
         &mut request,
         deployment.oxllm_params.additional_drop_params.as_deref(),
     );
+    crate::native_output_policy::ensure_preserved(&requested_output, &request)?;
 
     let mut transformed = chat.transform_request(&request, deployment)?;
+    if crate::native_output_policy::has_message_formats(&request)
+        && !uses_anthropic_messages_wire(deployment, &transformed)
+    {
+        return Err(oxllm_core::Error::BadRequest("message-level output_config.format has no native representation in this adapter; use a native Anthropic Messages deployment".into()));
+    }
+    let native_output =
+        crate::native_output_policy::native_contract(&requested_output, &transformed)?;
     let mapped = chat.supported_params();
-    restore_allowed_params(&mut transformed, &request, allowed, mapped.as_deref());
+    restore_allowed_params(
+        &mut transformed,
+        &request,
+        allowed,
+        mapped.as_deref(),
+        requested_output.as_ref(),
+    );
     shape_outbound_body(
         &mut transformed,
         deployment.oxllm_params.additional_drop_params.as_deref(),
         deployment.oxllm_params.extra_body.as_ref(),
     );
+    crate::native_output_policy::ensure_preserved(&native_output, &transformed)?;
     Ok(Some(transformed))
+}
+
+/// This identifies the API envelope actually chosen by an adapter, never a
+/// model's feature availability. Model, schema and beta acceptance stay remote.
+fn uses_anthropic_messages_wire(deployment: &Deployment, body: &Value) -> bool {
+    match deployment.provider_slug() {
+        "anthropic" => true,
+        "bedrock" | "vertex_ai" => body.get("anthropic_version").is_some(),
+        "azure_ai" => {
+            let mut resolved = deployment.clone();
+            if resolved.oxllm_params.model.contains('*')
+                && let Some(model) = body.get("model").and_then(Value::as_str)
+            {
+                resolved.oxllm_params.model = format!("azure_ai/{model}");
+            }
+            oxllm_providers::azure_ai::AzureAiProvider::is_anthropic(&resolved)
+        }
+        _ => false,
+    }
 }
 
 /// Apply the pre-transform drop/allow policy.
@@ -1301,6 +1338,7 @@ pub(crate) fn restore_allowed_params(
     request: &Value,
     allowed: Option<&[String]>,
     mapped: Option<&[&str]>,
+    protected: Option<&Value>,
 ) {
     let Some(obj) = body.as_object_mut() else {
         return;
@@ -1310,6 +1348,7 @@ pub(crate) fn restore_allowed_params(
         .flatten()
         .filter(|key| key.as_str() != "model")
         .filter(|key| !mapped.is_some_and(|params| params.contains(&key.as_str())))
+        .filter(|key| !crate::native_output_policy::controls_param(protected, key))
     {
         if let Some(value) = request.get(key).filter(|value| !value.is_null()) {
             obj.entry(key.clone()).or_insert_with(|| value.clone());

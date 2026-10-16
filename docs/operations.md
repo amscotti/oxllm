@@ -319,22 +319,155 @@ Repeated and comma-separated values are trimmed, deduplicated and bounded to
 16 tags of 128 bytes each. Colons within attribution pairs are literal, including
 tag-management names, budget counters and alert-reset scopes.
 
-Responses `text.format` supports `text`, `json_object` and `json_schema` on the
-chat bridge. JSON-schema names, descriptions, strictness and schemas reach the
-provider's existing structured-output transform and remain part of exact and
-semantic cache identity. Invalid formats return 400 before provider calls.
+Responses `text.format` accepts `text`, `json_object` and `json_schema` on the
+chat bridge, subject to a native representation on the selected route.
+JSON-schema names, descriptions, strictness and schemas reach the
+provider transform and remain part of exact and semantic cache identity. Native
+providers encode the fields their API defines; wrapper names/descriptions are
+not added as unsupported Anthropic fields. Invalid request shapes return 400.
 Schema names are trimmed, bounded to 64 characters and restricted to ASCII
 letters/digits/underscores/hyphens. The chat bridge does not translate
-`text.verbosity`; schema objects still pass through the provider's own supported
-JSON-schema subset checks.
-Converted Anthropic unary tool calls carry indexes into the visible tool-call
-array after hidden JSON-helper removal.
+`text.verbosity`.
+Unknown `text.format` envelope options and malformed tool entries return 400
+instead of being discarded. JSON Schema keywords inside `schema` are not filtered.
+
+### Native structured outputs and strict tools
+
+Structured JSON output is native-only. Anthropic-style routes (direct, Bedrock
+InvokeModel, Vertex and Foundry) send schemas through `output_config.format`;
+Bedrock Converse uses `outputConfig.textFormat` with its serialized JSON schema.
+There is no model-name allow-list controlling forwarding: the selected provider
+decides whether its model, deployment permissions and schema support the feature.
+Model names and catalog hints do not manufacture support or select another model.
+Provider support/schema errors retain their status and message; existing configured
+retry/fallback rules never relax the output request or substitute tools.
+
+| Request surface | Schema format |
+| --- | --- |
+| Chat | `response_format: {"type":"json_schema","json_schema":{"name":"record","strict":true,"schema":{...}}}` |
+| Responses | `text.format: {"type":"json_schema","name":"record","strict":true,"schema":{...}}` |
+| Messages / native Anthropic-style body | `output_config.format: {"type":"json_schema","schema":{...}}` |
+| Native Converse body | `outputConfig.textFormat: {"type":"json_schema","structure":{"jsonSchema":{"schema":"<serialized JSON schema>"}}}` |
+
+In the Converse wire body, `structure.jsonSchema.schema` is a JSON **string**, not
+an embedded schema object; `name` and `description` are optional sibling fields.
+On translated Chat/Messages routes, the historical
+`output_format: {"type":"json_schema","schema":{...}}` alias
+maps losslessly to the stable native representation and does not select the old
+structured-output beta. Converse also accepts the schema-bearing
+`outputConfig.format` alias, translating it to `textFormat` rather than forwarding
+an unknown member. The supported `output_config.textFormat` snake-case container
+alias receives the same preservation checks and cache isolation as
+`outputConfig.textFormat`. Multiple format definitions must agree; null formats are
+treated as absent. Native format options without a lossless cross-API mapping
+are not discarded: use the provider's native route or receive an explicit error.
+OpenAI wrapper `name`, `description` and `strict` are not native Anthropic format
+options. Native options are not stripped merely to make two envelopes equivalent;
+send one definition when their option sets cannot be represented losslessly.
+
+Schemas reach these native output APIs unchanged: the proxy does not inject
+`additionalProperties`, add required fields, or remove unsupported constraints.
+For example, callers must supply the object annotations required by their chosen
+provider. Schema-less `json_object` requests have no native Anthropic/Converse
+equivalent and return a clear 400 rather than inventing a schema or JSON tool.
+OpenAI-compatible providers that natively support `json_object` continue to receive
+it normally. A supplied schema on the historical `json_object`/`json_schema`
+alias is still translated to the native schema representation.
+A bare JSON-mode intent may also accompany an explicitly supplied native schema
+alias; the supplied schema, not an invented permissive schema, is used.
+
+Message-level `messages[].output_config.format` is preserved and guarded on native
+Anthropic-style adapters, including its position among output-config events after
+system-message extraction. Routes without that native representation return 400;
+the proxy does not flatten it into a top-level format or silently discard it on a
+fallback. Provider beta/permission/schema acceptance remains provider-owned.
+
+Strict tool use is separate and explicit. OpenAI `tools[].function.strict: true`
+becomes the native tool-level `strict: true` (or Converse `toolSpec.strict`),
+preserving its input schema. False/null/omitted flags do not enable strict mode.
+Native tool-root strict metadata is also honored when a legacy `function` carrier
+is present; contradictory flags return 400. All supplied schema carriers are checked
+for misplaced flags, including carriers that are not selected for the native body.
+A root `parameters.strict`/`input_schema.strict` is a placement error, not a
+schema keyword; actual properties named `strict` are preserved. The Messages
+bridge preserves native tool strictness, and Responses preserves its flat
+function-tool strictness. Only API envelope/name encoding changes the caller's
+tool choice: a JSON-output request never adds or forces a tool. Explicit tools
+named `json_tool_call` are ordinary visible tools, including in streaming output.
+Restricted choices (for example, OpenAI `allowed_tools`) without a lossless native
+mapping return 400 rather than defaulting to automatic tool selection. Messages
+`tool_choice.disable_parallel_tool_use` is translated to the shared parallel-call
+control; explicit choices and parallel-call limits remain protected after
+native transformation, including Converse's `additionalModelRequestFields` form.
+Applying a parallel-call limit preserves an incoming native selection and its
+options; conflicting native/canonical choices return 400. A native `none` choice
+already forbids all tool calls and does not need an invalid parallel-disable flag.
+Converse represents canonical `none` by omitting unused tool definitions. This is
+not a claim of strict generation with those tools: calls are disabled, and later
+deployment policies may not re-enable them. Native model-specific tool names use
+the same reversible encoding as the tool definitions before choices are compared.
+Advisory non-strict tools retain their existing compatibility normalization.
+Native hosted-tool options, such as computer display dimensions and
+`cache_control`, remain on their native definitions. A strict non-function
+Responses tool without a chat-bridge representation returns 400, not a fabricated
+function tool.
+Legacy hosted-tool `function` carriers are not emitted on the native wire. An
+explicit native `cache_control: null` clears a legacy annotation rather than
+reviving it; omitted controls may still inherit an explicit legacy annotation.
+
+Deployment drop/allow/body policies cannot silently remove or replace requested
+schemas, active strict tool definitions or explicit choices; conflicting policy returns 400
+before the provider call. Exact and semantic caches version tool/schema requests
+so old emulated-output or ignored-strict entries cannot satisfy the new policy.
+Native Messages and Responses relays also check their JSON body before and after deployment
+shaping. Allow-list restoration cannot reinsert an already translated output
+parameter into a different native API envelope. Native relays do not translate
+their JSON bodies; the remote API still validates unsupported native fields.
+Policy conflicts fail closed as request errors; they do not trigger automatic
+capability-based selection of another deployment or API. Tool-choice safeguards
+also apply to advisory-only tools: a restricted choice is never silently changed
+to `auto`. Advisory schema compatibility normalization is otherwise unchanged.
+
+**Migration:** callers previously relying on automatic JSON tools must now supply
+a schema supported by their selected native API, or explicitly choose a route
+with native JSON-object mode. Strict schemas must include the chosen provider's
+required annotations; the proxy will not add them. Explicit historical helper-name
+tools now return tool calls rather than JSON text. Expect a one-time cache miss
+and normal on-demand warmup for **all tool-bearing requests**, including advisory
+tools, explicit choices and message-level schemas: this deliberately isolates
+historical helper-name responses as well as ignored constraints. The revised
+namespace also excludes entries produced under the earlier native-output policy,
+including responses from unguarded native body shaping. Old cache data is not deleted.
+Unshaped text-request cache keys,
+including explicit `response_format: {"type":"text"}`, remain unchanged.
+
+Common local 400s and their remedies:
+
+| Error | Action |
+| --- | --- |
+| `json_object has no native representation without a schema` | Supply `json_schema`, or explicitly select a route that natively supports JSON-object mode. |
+| Format definitions `conflict` | Send one format definition, or make the supplied definitions agree. |
+| Tool schema contains a root `strict` field | Move the flag to the function/tool definition; do not rename real schema properties. |
+| `deployment parameter policy must not remove or alter` output requirements | Remove the conflicting drop/body override; the proxy will not silently weaken the request. |
+| Adapter has `no native representation` for a field/tool | Use a format/tool supported by that adapter, or the provider's native endpoint for provider-specific options. |
+
+Native refusals and token-limit truncation remain provider results, not repaired
+JSON or extra generation attempts.
+Keep client-side validation for semantic correctness and provider exceptions.
+
+See [Anthropic structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs),
+[strict tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use)
+and [Bedrock structured outputs](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html)
+for current model availability and schema limitations. Forwarding a native field
+does not mean every hosted route/model supports it.
 
 Vertex Anthropic deployments serving schema requests require the appropriate
 `structured_outputs` permission under
 `constraints/vertexai.allowedPartnerModelFeatures`. Verify the model feature
 allowlist and a schema request on each intended deployment. Provider policy
 errors retain their status; output constraints are not removed to evade them.
+
+### Inference errors and streaming
 
 Locally unresolved inference models return 400 after fallback handling, including
 native embeddings, token counting and realtime setup. OpenAI-shaped errors retain

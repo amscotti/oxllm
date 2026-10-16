@@ -560,25 +560,15 @@ async fn anthropic_streaming_tool_call() {
 }
 
 #[tokio::test]
-async fn anthropic_json_object_mode() {
+async fn anthropic_schema_less_json_mode_returns_an_unsupported_error() {
     let mock = MockServer::start();
     let config = make_proxy_config(&mock.base_url(), "anthropic/claude-3-opus");
     let (handle, _state) = start_oxllm(config).await.expect("server should start");
 
     let upstream = mock.mock(|when, then| {
-        when.method(httpmock::Method::POST)
-            .path("/v1/messages")
-            .json_body_partial(
-                json!({
-                    "tools": [{
-                        "name": "json_tool_call",
-                        "description": "Call this tool with the JSON object you want to return.",
-                        "input_schema": {"type": "object", "properties": {}}
-                    }],
-                    "tool_choice": {"type": "tool", "name": "json_tool_call"}
-                })
-                .to_string(),
-            );
+        // Any attempt to call this upstream would succeed and fail the local
+        // 400 assertion below, regardless of the attempted wire encoding.
+        when.method(httpmock::Method::POST);
         then.status(200)
             .header("content-type", "application/json")
             .json_body(json!({
@@ -586,13 +576,8 @@ async fn anthropic_json_object_mode() {
                 "type": "message",
                 "role": "assistant",
                 "model": "claude-3-opus",
-                "content": [{
-                    "type": "tool_use",
-                    "id": "toolu_01",
-                    "name": "json_tool_call",
-                    "input": {"key": "value"}
-                }],
-                "stop_reason": "tool_use",
+                "content": [{"type":"text","text":"{}"}],
+                "stop_reason": "end_turn",
                 "stop_sequence": null,
                 "usage": {"input_tokens": 10, "output_tokens": 5}
             }));
@@ -611,27 +596,22 @@ async fn anthropic_json_object_mode() {
         .await
         .expect("request should succeed");
 
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 400);
     let body: Value = resp.json().await.expect("json");
-    assert_eq!(
-        body["choices"][0]["message"]["content"],
-        "{\"key\":\"value\"}"
-    );
     assert!(
-        body["choices"][0]["message"]["tool_calls"].is_null(),
-        "synthetic json_tool_call must not leak as tool_calls"
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no native representation")
     );
-
-    upstream.assert_hits(1);
+    upstream.assert_hits(0);
     handle.shutdown();
 }
 
 #[tokio::test]
 async fn anthropic_json_schema_mode() {
     let mock = MockServer::start();
-    // Native `output_config` structured outputs are only emitted for
-    // structured-output-capable families (Sonnet 4.5+); older models fall
-    // back to the synthetic json_tool_call tool.
+    // Schemas are forwarded natively, leaving model support to the provider.
     let config = make_proxy_config(&mock.base_url(), "anthropic/claude-sonnet-4-5");
     let (handle, _state) = start_oxllm(config).await.expect("server should start");
 
@@ -678,7 +658,7 @@ async fn anthropic_json_schema_mode() {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "x",
-                    "schema": {"type": "object", "properties": {"answer": {"type": "string"}}}
+                    "schema": {"type": "object", "properties": {"answer": {"type": "string"}}, "additionalProperties":false}
                 }
             },
         }))

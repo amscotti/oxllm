@@ -87,8 +87,8 @@ fn live_client() -> reqwest::Client {
     common::http_client_with_timeout(std::time::Duration::from_secs(180))
 }
 
-/// A compatibility fallback is justified only by a parameter-specific
-/// unsupported response, not by an arbitrary 400/5xx/auth failure.
+/// An unavailable feature is reported only for a parameter-specific response,
+/// not for an arbitrary 400/5xx/auth failure.
 fn unsupported_parameter(status: reqwest::StatusCode, body: &Value, params: &[&str]) -> bool {
     if status != 400 && status != 422 {
         return false;
@@ -107,10 +107,32 @@ fn unsupported_parameter(status: reqwest::StatusCode, body: &Value, params: &[&s
             "does not support",
             "not available",
             "unavailable",
+            "no native representation",
+            "no lossless",
         ]
         .iter()
         .any(|phrase| detail.contains(*phrase));
     unsupported && params.iter().any(|param| detail.contains(*param))
+}
+
+#[test]
+fn native_mode_unavailability_is_not_confused_with_schema_or_auth_failures() {
+    let unavailable = json!({"error":{"message":"response_format json_object has no native representation without a schema; use json_schema"}});
+    assert!(unsupported_parameter(
+        reqwest::StatusCode::BAD_REQUEST,
+        &unavailable,
+        &["json_object", "response_format"]
+    ));
+    assert!(!unsupported_parameter(
+        reqwest::StatusCode::BAD_REQUEST,
+        &json!({"error":{"message":"invalid JSON schema"}}),
+        &["json_schema", "response_format"]
+    ));
+    assert!(!unsupported_parameter(
+        reqwest::StatusCode::UNAUTHORIZED,
+        &unavailable,
+        &["json_object", "response_format"]
+    ));
 }
 
 /// Run the full e2e suite against one provider: chat, streaming, tool calls,
@@ -283,7 +305,8 @@ async fn run_suite(label: &str, config: ProxyConfig, model: &str, max_tokens: u6
         }
     }
 
-    // 4. Structured output (json_schema, falling back to json_object)
+    // 4. Test schema output and JSON mode independently. Unsupported schema
+    // constraints must not turn into a pass using a weaker output request.
     {
         let schema_request = json!({
             "model": model,
@@ -313,82 +336,69 @@ async fn run_suite(label: &str, config: ProxyConfig, model: &str, max_tokens: u6
             "max_tokens": max_tokens,
         });
 
-        // Retry JSON mode only for an explicit unsupported schema format.
-        // Other failures must remain failures instead of becoming a pass on
-        // the fallback request (or on parsing an error body as a completion).
-        let structured = {
-            let resp = client
-                .post(&url)
-                .bearer_auth(AUTH)
-                .json(&schema_request)
-                .send()
-                .await
-                .expect("structured output request");
-            let status = resp.status();
-            let body: Value = resp.json().await.expect("structured output json");
-            if status.is_success() {
-                Some(("json_schema", body))
-            } else if unsupported_parameter(status, &body, &["json_schema", "response_format"]) {
-                // Fall back to json_object (e.g. DeepSeek doesn't support json_schema)
-                let resp2 = client
+        for (fmt_used, request) in [
+            ("json_schema", schema_request),
+            ("json_object", object_request),
+        ] {
+            let structured = {
+                let resp = client
                     .post(&url)
                     .bearer_auth(AUTH)
-                    .json(&object_request)
+                    .json(&request)
                     .send()
                     .await
-                    .expect("json_object fallback request");
-                let status2 = resp2.status();
-                let body2: Value = resp2.json().await.expect("json_object json");
-                if unsupported_parameter(status2, &body2, &["json_object", "response_format"]) {
-                    println!(
-                        "  [{label}] structured output: SKIP (both formats explicitly unsupported)"
-                    );
+                    .expect("structured output request");
+                let status = resp.status();
+                let body: Value = resp.json().await.expect("structured output json");
+                if status.is_success() {
+                    Some((fmt_used, body))
+                } else if unsupported_parameter(status, &body, &[fmt_used, "response_format"]) {
+                    println!("  [{label}] {fmt_used}: SKIP (native format unavailable)");
                     None
                 } else {
-                    assert_eq!(status2, 200, "[{label}] JSON-mode fallback failed: {body2}");
-                    Some(("json_object", body2))
+                    panic!("[{label}] {fmt_used} request failed with {status}: {body}");
                 }
-            } else {
-                panic!("[{label}] schema request failed with {status}: {body}");
-            }
-        };
+            };
 
-        if let Some((fmt_used, body)) = structured {
-            let choice = &body["choices"][0];
-            let message = &choice["message"];
-            // Strict schema guarantees do not cover truncation or refusal.
-            // Report these as unevaluated, never as a valid structured result.
-            if choice["finish_reason"] == "length"
-                || message["refusal"].as_str().is_some_and(|s| !s.is_empty())
-            {
-                println!("  [{label}] structured output: SKIP (truncated/refused response)");
-            } else {
-                let content = message["content"]
-                    .as_str()
-                    .expect("structured text content");
-                let parsed: Value = serde_json::from_str(content)
-                    .unwrap_or_else(|e| panic!("[{label}] invalid {fmt_used} content: {e}"));
-                assert!(
-                    parsed.is_object(),
-                    "[{label}] {fmt_used} must produce a JSON object"
-                );
-                if fmt_used == "json_schema" {
+            if let Some((fmt_used, body)) = structured {
+                let choice = &body["choices"][0];
+                let message = &choice["message"];
+                // Strict schema guarantees do not cover truncation or refusal.
+                // Report these as unevaluated, never as a valid structured result.
+                if matches!(
+                    choice["finish_reason"].as_str(),
+                    Some("length" | "content_filter" | "refusal")
+                ) || message["refusal"].as_str().is_some_and(|s| !s.is_empty())
+                {
+                    println!("  [{label}] structured output: SKIP (truncated/refused response)");
+                } else {
+                    let content = message["content"]
+                        .as_str()
+                        .expect("structured text content");
+                    let parsed: Value = serde_json::from_str(content)
+                        .unwrap_or_else(|e| panic!("[{label}] invalid {fmt_used} content: {e}"));
                     assert!(
-                        parsed["name"].is_string(),
-                        "[{label}] schema requires name:string"
+                        parsed.is_object(),
+                        "[{label}] {fmt_used} must produce a JSON object"
                     );
-                    // JSON Schema integer includes 30.0 as well as 30.
-                    assert!(
-                        parsed["age"].as_f64().is_some_and(|age| age.fract() == 0.0),
-                        "[{label}] schema requires age:integer"
-                    );
-                    assert_eq!(
-                        parsed.as_object().unwrap().len(),
-                        2,
-                        "additionalProperties=false"
-                    );
+                    if fmt_used == "json_schema" {
+                        assert!(
+                            parsed["name"].is_string(),
+                            "[{label}] schema requires name:string"
+                        );
+                        // JSON Schema integer includes 30.0 as well as 30.
+                        assert!(
+                            parsed["age"].as_f64().is_some_and(|age| age.fract() == 0.0),
+                            "[{label}] schema requires age:integer"
+                        );
+                        assert_eq!(
+                            parsed.as_object().unwrap().len(),
+                            2,
+                            "additionalProperties=false"
+                        );
+                    }
+                    println!("  [{label}] structured output ✅  {fmt_used} contract validated");
                 }
-                println!("  [{label}] structured output ✅  {fmt_used} contract validated");
             }
         }
     }

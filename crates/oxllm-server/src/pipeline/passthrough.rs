@@ -1171,11 +1171,53 @@ pub(crate) async fn send_upstream_tracked(
         let mut value: Value = serde_json::from_slice(&body).map_err(|_| {
             ApiError::bad_request("invalid JSON body for configured request shaping")
         })?;
+        // Generation requests on native relays need the same policy guard as
+        // translated chat. Do not apply LLM-format rules to media/embeddings.
+        let llm_body = value.get("messages").is_some()
+            || ["tools", "functions", "toolConfig"]
+                .iter()
+                .any(|key| value.get(*key).is_some_and(|value| !value.is_null()))
+            || [
+                "/response_format/type",
+                "/output_config/format/type",
+                "/output_format/type",
+                "/outputConfig/textFormat/type",
+            ]
+            .iter()
+            .any(|path| {
+                matches!(
+                    value.pointer(path).and_then(Value::as_str),
+                    Some("json_schema" | "json_object")
+                )
+            });
+        let generation = method == Method::POST
+            && url::Url::parse(url).is_ok_and(|url| {
+                let operation = url
+                    .path()
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default();
+                matches!(
+                    operation,
+                    "messages" | "responses" | "completions" | "converse" | "converse-stream"
+                ) || llm_body
+                    && (matches!(operation, "invoke" | "invoke-with-response-stream")
+                        || operation.ends_with(":rawPredict")
+                        || operation.ends_with(":streamRawPredict"))
+            });
+        let output = if generation {
+            crate::native_output_policy::validate_formats(&value)?;
+            crate::native_output_policy::contract(&value)
+        } else {
+            None
+        };
         crate::orchestration::upstream::shape_outbound_body(
             &mut value,
             params.additional_drop_params.as_deref(),
             params.extra_body.as_ref(),
         );
+        crate::native_output_policy::ensure_preserved(&output, &value)?;
         Bytes::from(
             serde_json::to_vec(&value)
                 .map_err(|_| ApiError::internal("failed to serialize configured request body"))?,

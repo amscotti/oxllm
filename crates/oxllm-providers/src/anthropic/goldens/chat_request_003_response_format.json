@@ -30,11 +30,10 @@
     ],
     "max_tokens": 256,
     "temperature": 0,
-    "tools": [
-      {
-        "name": "json_tool_call",
-        "description": "Call this tool with the JSON object you want to return.",
-        "input_schema": {
+    "output_config": {
+      "format": {
+        "type": "json_schema",
+        "schema": {
           "type": "object",
           "properties": {
             "name": {"type": "string"},
@@ -43,7 +42,6 @@
           "required": ["name"]
         }
       }
-    ],
-    "tool_choice": {"type": "tool", "name": "json_tool_call"}
+    }
   }
 }

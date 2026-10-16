@@ -441,7 +441,7 @@ async fn anthropic_multiturn_tool_conversation() {
 }
 
 #[tokio::test]
-async fn anthropic_json_object_mode() {
+async fn anthropic_native_json_schema_output() {
     let Some(_key) = get_api_key() else {
         eprintln!("skipping: {ANTHROPIC_API_KEY_ENV} not set");
         return;
@@ -462,8 +462,8 @@ async fn anthropic_json_object_mode() {
                 {"role": "system", "content": "You are a helpful assistant that always responds with valid JSON."},
                 {"role": "user", "content": "Create a JSON object for a person named Alice who is 25 years old, with fields 'name' and 'age'."}
             ],
-            "response_format": {"type": "json_object"},
-            "max_completion_tokens": 100,
+            "response_format": {"type":"json_schema","json_schema":{"name":"person","strict":true,"schema":{"type":"object","properties":{"name":{"type":"string"},"age":{"type":"integer"}},"required":["name","age"],"additionalProperties":false}}},
+            "max_completion_tokens": 512,
         }))
         .send()
         .await
@@ -472,10 +472,19 @@ async fn anthropic_json_object_mode() {
     assert_eq!(
         resp.status(),
         200,
-        "Anthropic JSON mode failed: {}",
+        "Anthropic native JSON schema request failed: {}",
         resp.text().await.unwrap_or_default()
     );
     let body: Value = resp.json().await.expect("json");
+    if matches!(
+        body["choices"][0]["finish_reason"].as_str(),
+        Some("length" | "content_filter" | "refusal")
+    ) || body["choices"][0]["message"]["refusal"].is_string()
+    {
+        eprintln!("native schema result unevaluated: truncated or refused");
+        handle.shutdown();
+        return;
+    }
     let content = body["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("");
@@ -486,6 +495,10 @@ async fn anthropic_json_object_mode() {
         parsed.is_object(),
         "response must be a JSON object, got: {parsed}"
     );
+    assert!(parsed["name"].is_string());
+    assert!(parsed["age"].as_f64().is_some_and(|age| age.fract() == 0.0));
+    assert_eq!(parsed.as_object().unwrap().len(), 2);
+    assert!(body["choices"][0]["message"].get("tool_calls").is_none());
 
     handle.shutdown();
 }

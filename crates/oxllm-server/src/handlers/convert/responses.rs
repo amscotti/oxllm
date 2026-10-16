@@ -212,7 +212,53 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> oxllm_core::Result<Value
             out.insert(key.to_string(), value.clone());
         }
     }
-    if let Some(tools) = req.get("tools").and_then(|v| v.as_array()) {
+    if let Some(tools) = req.get("tools").filter(|value| !value.is_null()) {
+        let tools = tools
+            .as_array()
+            .ok_or_else(|| oxllm_core::Error::BadRequest("tools must be an array".into()))?;
+        if tools.iter().any(|tool| {
+            !tool.is_object()
+                || tool
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_none_or(str::is_empty)
+        }) {
+            return Err(oxllm_core::Error::BadRequest(
+                "each tools entry must be an object with a non-empty string type".into(),
+            ));
+        }
+        if tools.iter().any(|tool| {
+            tool.get("type").and_then(Value::as_str) == Some("function")
+                && tool
+                    .get("strict")
+                    .is_some_and(|value| !value.is_null() && !value.is_boolean())
+        }) {
+            return Err(oxllm_core::Error::BadRequest(
+                "tool strict must be a boolean".into(),
+            ));
+        }
+        if tools.iter().any(|tool| {
+            [
+                tool.get("parameters"),
+                tool.get("input_schema"),
+                tool.pointer("/inputSchema/json"),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|schema| schema.get("strict").is_some())
+        }) {
+            return Err(oxllm_core::Error::BadRequest("tool schema must not contain a root strict field; put strict on the function/tool definition".into()));
+        }
+        if tools.iter().any(|tool| {
+            tool.get("type").and_then(Value::as_str) != Some("function")
+                && tool
+                    .get("strict")
+                    .is_some_and(|value| !value.is_null() && value.as_bool() != Some(false))
+        }) {
+            return Err(oxllm_core::Error::BadRequest(
+                "strict tool type has no native chat-bridge representation".into(),
+            ));
+        }
         let mapped: Vec<Value> = tools
             .iter()
             .filter_map(map_responses_tool_to_chat)
@@ -221,11 +267,9 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> oxllm_core::Result<Value
             out.insert("tools".to_string(), Value::Array(mapped));
         }
     }
-    if let Some(tool_choice) = req
-        .get("tool_choice")
-        .and_then(map_responses_tool_choice_to_chat)
-    {
-        out.insert("tool_choice".to_string(), tool_choice);
+    if let Some(choice) = req.get("tool_choice").filter(|value| !value.is_null()) {
+        let mapped = map_responses_tool_choice_to_chat(choice).unwrap_or_else(|| choice.clone());
+        out.insert("tool_choice".to_string(), mapped);
     }
     if let Some(parallel) = req.get("parallel_tool_calls") {
         if !parallel.is_null() {
@@ -297,6 +341,16 @@ fn responses_text_format_to_chat(req: &Value) -> oxllm_core::Result<Option<Value
     let format = format
         .as_object()
         .ok_or_else(|| invalid("text.format must be an object"))?;
+    let allowed: &[&str] = if format.get("type").and_then(Value::as_str) == Some("json_schema") {
+        &["type", "name", "schema", "strict", "description"]
+    } else {
+        &["type"]
+    };
+    if let Some(key) = format.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(oxllm_core::Error::BadRequest(format!(
+            "text.format.{key} has no lossless chat-bridge representation; use a supported format or a native Responses endpoint"
+        )));
+    }
     match format.get("type").and_then(Value::as_str) {
         Some("text") => Ok(None),
         Some("json_object") => Ok(Some(json!({"type":"json_object"}))),
@@ -380,8 +434,12 @@ fn map_responses_tool_to_chat(tool: &Value) -> Option<Value> {
     match tool.get("type").and_then(|v| v.as_str()) {
         Some("function") => {
             let mut parameters = tool.get("parameters").cloned().unwrap_or_else(|| json!({}));
-            if parameters.get("type").is_none() {
-                parameters["type"] = json!("object");
+            if tool.get("strict").and_then(Value::as_bool) != Some(true)
+                && let Some(schema) = parameters.as_object_mut()
+            {
+                // Preserve compatibility normalization only for advisory
+                // tools. A strict schema must cross every bridge unchanged.
+                schema.entry("type").or_insert_with(|| json!("object"));
             }
             let mut function = Map::new();
             function.insert(
@@ -416,13 +474,19 @@ fn map_responses_tool_choice_to_chat(tool_choice: &Value) -> Option<Value> {
     if object.get("function").and_then(|f| f.get("name")).is_some() {
         return Some(tool_choice.clone());
     }
+    if object.keys().any(|key| {
+        key != "type"
+            && !(object.get("type").and_then(Value::as_str) == Some("function") && key == "name")
+    }) {
+        return Some(tool_choice.clone());
+    }
     match object.get("type").and_then(|v| v.as_str()) {
         Some("auto") => Some(json!("auto")),
         Some("none") => Some(json!("none")),
         Some("required") | Some("tool") | Some("any") => Some(json!("required")),
         Some("function") => match object.get("name").and_then(|v| v.as_str()) {
             Some(name) => Some(json!({"type": "function", "function": {"name": name}})),
-            None => Some(json!("required")),
+            None => Some(tool_choice.clone()),
         },
         _ => Some(tool_choice.clone()),
     }
@@ -1815,10 +1879,62 @@ mod tests {
         let chat = responses_to_chat_request(&req);
         assert_eq!(chat["tools"][0]["type"], "function");
         assert_eq!(chat["tools"][0]["function"]["name"], "get_weather");
-        assert_eq!(chat["tools"][0]["function"]["parameters"]["type"], "object");
+        assert_eq!(
+            chat["tools"][0]["function"]["parameters"],
+            req["tools"][0]["parameters"]
+        );
         assert_eq!(chat["tools"][0]["function"]["strict"], true);
         assert_eq!(chat["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(chat["parallel_tool_calls"], false);
+    }
+
+    #[test]
+    fn responses_strict_schemas_are_not_repaired_by_the_bridge() {
+        for schema in [
+            json!({"properties":{"strict":{"type":"boolean"}},"additionalProperties":false}),
+            json!({"type":"object","properties":{"entries":{"type":"array","uniqueItems":true,"items":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}}),
+            json!(false),
+        ] {
+            let request = json!({"model":"m","input":"extract","tools":[{"type":"function","name":"extract","strict":true,"parameters":schema}]});
+            let chat = super::responses_to_chat_request(&request).unwrap();
+            assert_eq!(chat["tools"][0]["function"]["parameters"], schema);
+        }
+    }
+
+    #[test]
+    fn responses_strict_non_function_tools_are_rejected_without_a_substitution() {
+        for kind in [
+            "web_search",
+            "computer_use_preview",
+            "custom",
+            "future_tool",
+        ] {
+            for strict in [json!(true), json!("true")] {
+                let request = json!({"model":"m","input":"extract","tools":[{"type":kind,"name":"extract","strict":strict}]});
+                let error = super::responses_to_chat_request(&request).unwrap_err();
+                assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+                assert!(
+                    error
+                        .to_string()
+                        .contains("strict tool type has no native chat-bridge representation")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn responses_unrepresentable_choices_keep_their_constraints_for_errors() {
+        for choice in [
+            json!(false),
+            json!({"type":"function"}),
+            json!({"type":"required","mode":"restricted"}),
+            json!({"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"extract"}]}),
+        ] {
+            let body = responses_to_chat_request(
+                &json!({"model":"m","input":"extract","tool_choice":choice}),
+            );
+            assert_eq!(body["tool_choice"], choice);
+        }
     }
 
     #[test]

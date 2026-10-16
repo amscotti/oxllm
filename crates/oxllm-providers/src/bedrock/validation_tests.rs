@@ -15,6 +15,290 @@ fn deployment(model: &str, converse: bool) -> Deployment {
 }
 
 #[test]
+fn strict_tools_are_forwarded_in_invoke_and_converse_without_schema_rewrites() {
+    let schema = json!({"type":"object","additionalProperties":true,"properties":{"data":{"type":"array","uniqueItems":true,"items":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}});
+    for converse in [false, true] {
+        let body=BedrockProvider.transform_request(&json!({"messages":[],"tools":[{"type":"function","function":{"name":"extract","strict":true,"parameters":schema}}]}),&deployment("anthropic.claude-haiku-5-5",converse)).unwrap();
+        let tool = if converse {
+            &body["toolConfig"]["tools"][0]["toolSpec"]
+        } else {
+            &body["tools"][0]
+        };
+        assert_eq!(tool["strict"], true);
+        let forwarded = if converse {
+            &tool["inputSchema"]["json"]
+        } else {
+            &tool["input_schema"]
+        };
+        assert_eq!(forwarded, &schema);
+    }
+}
+
+#[test]
+fn native_messages_output_schema_maps_to_converse_without_leaking_format_alias() {
+    let schema = json!({"type":"object","additionalProperties":false,"properties":{"data":{"type":"string"}}});
+    let body=BedrockProvider.transform_request(&json!({"messages":[],"output_config":{"format":{"type":"json_schema","schema":schema},"effort":"low"}}),&deployment("anthropic.claude-haiku-5-5",true)).unwrap();
+    assert_eq!(
+        body["outputConfig"]["textFormat"]["structure"]["jsonSchema"]["schema"],
+        schema.to_string()
+    );
+    assert!(body["outputConfig"].get("format").is_none());
+    assert_eq!(body["outputConfig"]["effort"], "low");
+    assert!(body.get("toolConfig").is_none());
+}
+
+#[test]
+fn converse_native_tool_specs_reject_misplaced_strict_metadata() {
+    let request = json!({"messages":[],"tools":[{"toolSpec":{"name":"extract","inputSchema":{"json":{"type":"object","strict":true}}}}]});
+    assert!(matches!(
+        BedrockProvider
+            .transform_request(&request, &deployment("anthropic.claude-haiku-5-5", true)),
+        Err(oxllm_core::Error::BadRequest(_))
+    ));
+}
+
+#[test]
+fn converse_native_null_strict_is_omitted_like_canonical_function_null() {
+    let body=BedrockProvider.transform_request(&json!({"messages":[],"tools":[{"toolSpec":{"name":"extract","strict":null,"inputSchema":{"json":{"type":"object","additionalProperties":false}}}}]}),&deployment("anthropic.claude-haiku-5-5",true)).unwrap();
+    assert!(
+        body["toolConfig"]["tools"][0]["toolSpec"]
+            .get("strict")
+            .is_none()
+    );
+}
+
+#[test]
+fn converse_camel_format_alias_is_translated_without_an_unknown_native_member() {
+    let schema = json!({"type":"object","additionalProperties":false});
+    let body=BedrockProvider.transform_request(&json!({"messages":[],"outputConfig":{"format":{"type":"json_schema","schema":schema},"effort":"low"}}),&deployment("anthropic.claude-haiku-5-5",true)).unwrap();
+    assert_eq!(
+        body["outputConfig"]["textFormat"]["structure"]["jsonSchema"]["schema"],
+        schema.to_string()
+    );
+    assert!(body["outputConfig"].get("format").is_none());
+    assert_eq!(body["outputConfig"]["effort"], "low");
+}
+
+#[test]
+fn converse_must_not_discard_unrepresentable_native_format_options() {
+    let request = json!({"messages":[],"output_config":{"format":{"type":"json_schema","schema":{"type":"object"},"vendor_option":true}}});
+    assert!(matches!(
+        BedrockProvider
+            .transform_request(&request, &deployment("anthropic.claude-haiku-5-5", true)),
+        Err(oxllm_core::Error::BadRequest(_))
+    ));
+}
+
+#[test]
+fn converse_conflicting_format_definitions_are_not_silently_overwritten() {
+    let format =
+        json!({"type":"json_schema","schema":{"type":"object","additionalProperties":false}});
+    for (fields, message) in [
+        (
+            json!({"response_format":{"type":"text"},"outputConfig":{"format":format}}),
+            "text conflicts with outputConfig.format",
+        ),
+        (
+            json!({"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}},"output_config":{"format":format}}),
+            "response_format conflicts with output_config.format",
+        ),
+        (
+            json!({"output_config":{"format":format},"outputConfig":{"format":{"type":"json_schema","schema":{"type":"object"}}}}),
+            "output_config.format conflicts with outputConfig.format",
+        ),
+        (
+            json!({"outputConfig":{"format":format,"textFormat":{"type":"json_schema","structure":{"jsonSchema":{"schema":"{}"}}}}}),
+            "conflict",
+        ),
+        (
+            json!({"response_format":{"type":"text"},"outputConfig":{"textFormat":{"type":"json_schema","structure":{"jsonSchema":{"schema":"{}"}}}}}),
+            "conflict",
+        ),
+        (json!({"outputConfig":[]}), "outputConfig must be an object"),
+    ] {
+        let error = BedrockProvider
+            .transform_request(&fields, &deployment("anthropic.claude-haiku-5-5", true))
+            .unwrap_err();
+        assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+        assert!(error.to_string().contains(message), "{fields}: {error}");
+    }
+}
+
+#[test]
+fn converse_null_native_text_format_is_absent_not_a_schema_override() {
+    let schema = json!({"type":"object","additionalProperties":false});
+    let body=BedrockProvider.transform_request(&json!({"messages":[],"outputConfig":{"format":{"type":"json_schema","schema":schema},"textFormat":null,"effort":"low"}}),&deployment("anthropic.claude-haiku-5-5",true)).unwrap();
+    assert_eq!(
+        body["outputConfig"]["textFormat"]["structure"]["jsonSchema"]["schema"],
+        schema.to_string()
+    );
+    assert_eq!(body["outputConfig"]["effort"], "low");
+}
+
+#[test]
+fn converse_unsupported_strict_choices_are_not_replaced_by_parallel_auto_defaults() {
+    for choice in [
+        json!({"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"extract"}]}),
+        json!({"type":"function","function":{"name":"extract","native_option":true}}),
+        json!({"type":"auto","native_option":true}),
+    ] {
+        let request = json!({"messages":[],"tools":[{"type":"function","function":{"name":"extract","strict":true,"parameters":{"type":"object","additionalProperties":false}}}],"tool_choice":choice,"parallel_tool_calls":false});
+        let error = BedrockProvider
+            .transform_request(&request, &deployment("anthropic.claude-haiku-5-5", true))
+            .unwrap_err();
+        assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+        assert!(error.to_string().contains("tool choice"));
+    }
+}
+
+#[test]
+fn converse_native_tool_choices_and_aliases_cannot_disagree() {
+    for fields in [
+        json!({"additionalModelRequestFields":{"tool_choice":{"type":"any"}},"additional_model_request_fields":{"tool_choice":{"type":"auto"}}}),
+        json!({"tool_choice":"required","additionalModelRequestFields":{"tool_choice":{"type":"auto"}}}),
+        json!({"parallel_tool_calls":false,"additionalModelRequestFields":{"tool_choice":{"type":"tool","name":"extract","disable_parallel_tool_use":false}}}),
+    ] {
+        let mut request = json!({"messages":[],"tools":[{"type":"function","function":{"name":"extract","strict":true,"parameters":{"type":"object","additionalProperties":false}}}]});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        let error = BedrockProvider
+            .transform_request(&request, &deployment("anthropic.claude-haiku-5-5", true))
+            .unwrap_err();
+        assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+        assert!(error.to_string().contains("conflict"), "{error}");
+    }
+}
+
+#[test]
+fn converse_equivalent_native_and_canonical_choices_keep_native_options() {
+    for serial in [false, true] {
+        let choice = json!({"type":"any","native_option":true});
+        let mut request = json!({"messages":[],"tools":[{"type":"function","function":{"name":"extract","strict":true,"parameters":{"type":"object","additionalProperties":false}}}],"tool_choice":"required","additionalModelRequestFields":{"tool_choice":choice},"additional_model_request_fields":{"tool_choice":choice}});
+        if serial {
+            request["parallel_tool_calls"] = json!(false);
+        }
+        let body = BedrockProvider
+            .transform_request(&request, &deployment("anthropic.claude-haiku-5-5", true))
+            .unwrap();
+        let mut expected = choice.clone();
+        if serial {
+            expected["disable_parallel_tool_use"] = json!(true);
+        }
+        assert_eq!(
+            body["additionalModelRequestFields"]["tool_choice"],
+            expected
+        );
+        assert!(body["toolConfig"].get("toolChoice").is_none());
+    }
+}
+
+#[test]
+fn converse_native_choices_share_the_tool_name_encoding() {
+    for canonical in [false, true] {
+        for alias in [
+            "additionalModelRequestFields",
+            "additional_model_request_fields",
+        ] {
+            let mut request = json!({"messages":[],"tools":[{"type":"function","function":{"name":"my.tool","strict":true,"parameters":{"type":"object"}}}],"parallel_tool_calls":false});
+            request[alias] = json!({"tool_choice":{"type":"tool","name":"my.tool"}});
+            if canonical {
+                request["tool_choice"] = json!({"type":"function","function":{"name":"my.tool"}});
+            }
+            let body = BedrockProvider
+                .transform_request(&request, &deployment("anthropic.claude-haiku-5-5", true))
+                .unwrap();
+            assert_eq!(
+                body["toolConfig"]["tools"][0]["toolSpec"]["name"],
+                "my_tool"
+            );
+            assert_eq!(
+                body["additionalModelRequestFields"]["tool_choice"]["name"],
+                "my_tool"
+            );
+        }
+    }
+}
+
+#[test]
+fn converse_choice_alias_conflicts_are_errors_even_without_tools() {
+    for request in [
+        json!({"messages":[],"additionalModelRequestFields":{"tool_choice":{"type":"auto"}},"additional_model_request_fields":{"tool_choice":{"type":"none"}}}),
+        json!({"messages":[],"tool_choice":"none","additionalModelRequestFields":{"tool_choice":{"type":"any"}}}),
+    ] {
+        assert!(matches!(
+            BedrockProvider
+                .transform_request(&request, &deployment("anthropic.claude-haiku-5-5", true)),
+            Err(oxllm_core::Error::BadRequest(_))
+        ));
+    }
+}
+
+#[test]
+fn converse_direct_schema_annotations_are_not_wrapper_metadata() {
+    let schema = json!({"type":"object","description":"Schema annotation","properties":{}});
+    let body = BedrockProvider
+        .transform_request(
+            &json!({"messages":[],"response_format":{"type":"json_schema","json_schema":schema}}),
+            &deployment("anthropic.claude-haiku-5-5", true),
+        )
+        .unwrap();
+    let wire = &body["outputConfig"]["textFormat"]["structure"]["jsonSchema"];
+    assert_eq!(wire["schema"], schema.to_string());
+    assert!(wire.get("description").is_none());
+}
+
+#[test]
+fn converse_native_schema_strings_can_supply_json_mode_and_preserve_their_encoding() {
+    for alias in ["outputConfig", "output_config"] {
+        let format = json!({"type":"json_schema","structure":{"jsonSchema":{"schema":"{ \"type\": \"object\" }"}}});
+        for generic_mode in [false, true] {
+            let mut request = json!({"messages":[],"response_format":if generic_mode {json!({"type":"json_object"})} else {json!({"type":"json_schema","json_schema":{"schema":{"type":"object"}}})}});
+            request[alias] = json!({"textFormat":format});
+            let body = BedrockProvider
+                .transform_request(&request, &deployment("anthropic.claude-haiku-5-5", true))
+                .unwrap();
+            assert_eq!(body["outputConfig"]["textFormat"], format);
+        }
+    }
+}
+
+#[test]
+fn converse_schema_label_defaults_merge_without_reserializing_the_native_schema() {
+    let schema = "{ \"type\": \"object\" }";
+    let body=BedrockProvider.transform_request(&json!({"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"record","description":"Label","schema":{"type":"object"}}},"outputConfig":{"textFormat":{"type":"json_schema","structure":{"jsonSchema":{"schema":schema}}}}}),&deployment("anthropic.claude-haiku-5-5",true)).unwrap();
+    assert_eq!(
+        body["outputConfig"]["textFormat"]["structure"]["jsonSchema"],
+        json!({"name":"record","description":"Label","schema":schema})
+    );
+}
+
+#[test]
+fn converse_empty_native_tool_inputs_are_arguments_not_json_response_text() {
+    let request = json!({"model":"anthropic.claude-haiku-5-5","tools":[{"type":"function","function":{"name":"json_tool_call","strict":true,"parameters":{"type":"object","properties":{},"additionalProperties":false}}}]});
+    let mut state = None;
+    let start=BedrockProvider.transform_stream_chunk_stateful(&json!({"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"call-empty","name":"json_tool_call"}}}).to_string(),&mut state,&request).unwrap().unwrap();
+    assert_eq!(
+        start["choices"][0]["delta"]["tool_calls"][0]["function"]["name"],
+        "json_tool_call"
+    );
+    let stop = BedrockProvider
+        .transform_stream_chunk_stateful(
+            &json!({"contentBlockIndex":0}).to_string(),
+            &mut state,
+            &request,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stop["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+        "{}"
+    );
+    assert!(stop["choices"][0]["delta"].get("content").is_none());
+}
+
+#[test]
 fn validation_converse_native_schema_has_the_aws_wire_shape_for_each_family() {
     for model in ["anthropic.claude-sonnet-4-5", "zai.glm-5", "deepseek.v3.2"] {
         let request = json!({
@@ -30,7 +314,7 @@ fn validation_converse_native_schema_has_the_aws_wire_shape_for_each_family() {
         assert!(body.get("model").is_none());
         assert!(body.get("response_format").is_none());
         assert!(body.get("toolConfig").is_none());
-        let expected_schema = json!({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"], "additionalProperties": false});
+        let expected_schema = request["response_format"]["json_schema"]["schema"].clone();
         assert_eq!(
             body["outputConfig"],
             json!({"textFormat": {
@@ -71,13 +355,15 @@ fn validation_converse_json_schema_is_not_silently_ignored() {
         "amazon.nova-pro-v1:0",
         "anthropic.claude-3-5-sonnet",
     ] {
-        let error = BedrockProvider.transform_request(&json!({
+        let body = BedrockProvider.transform_request(&json!({
             "messages": [{"role": "user", "content": "extract"}],
             "response_format": {"type": "json_schema", "json_schema": {"schema": {"type": "object"}}},
-        }), &deployment(model, true)).unwrap_err();
-        assert!(
-            matches!(error, oxllm_core::Error::BadRequest(message) if message.contains("json_schema"))
+        }), &deployment(model, true)).unwrap();
+        assert_eq!(
+            body["outputConfig"]["textFormat"]["structure"]["jsonSchema"]["schema"],
+            "{\"type\":\"object\"}"
         );
+        assert!(body.get("toolConfig").is_none());
     }
     for format in [
         json!({"type": "json_schema"}),
@@ -363,8 +649,10 @@ fn validation_converse_stream_identity_is_stable_across_interleaving_and_threads
 }
 
 #[test]
-fn validation_converse_json_tool_stream_returns_json_text_and_stop() {
-    let request = json!({"model": "amazon.nova-pro-v1:0", "messages": [{"role": "user", "content": "json"}], "response_format": {"type": "json_object"}});
+fn validation_converse_explicit_json_named_tool_stream_remains_tool_calls() {
+    let request = json!({"model": "amazon.nova-pro-v1:0", "messages": [{"role": "user", "content": "json"}],
+        "tools":[{"type":"function", "function":{"name":"json_tool_call", "strict":true, "parameters":{"type":"object", "additionalProperties":false}}}],
+        "tool_choice":{"type":"function", "function":{"name":"json_tool_call"}}});
     let body = BedrockProvider
         .transform_request(&request, &deployment("amazon.nova-pro-v1:0", true))
         .unwrap();
@@ -389,8 +677,12 @@ fn validation_converse_json_tool_stream_returns_json_text_and_stop() {
             .unwrap()
         {
             let delta = &chunk["choices"][0]["delta"];
-            assert!(delta.get("tool_calls").is_none());
-            text.push_str(delta["content"].as_str().unwrap_or(""));
+            assert!(delta.get("content").is_none());
+            text.push_str(
+                delta["tool_calls"][0]["function"]["arguments"]
+                    .as_str()
+                    .unwrap_or(""),
+            );
             if !chunk["choices"][0]["finish_reason"].is_null() {
                 finish = chunk["choices"][0]["finish_reason"].clone();
             }
@@ -400,7 +692,7 @@ fn validation_converse_json_tool_stream_returns_json_text_and_stop() {
         serde_json::from_str::<Value>(&text).unwrap(),
         json!({"answer": 42})
     );
-    assert_eq!(finish, "stop");
+    assert_eq!(finish, "tool_calls");
 }
 
 #[test]

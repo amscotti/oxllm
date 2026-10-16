@@ -100,6 +100,90 @@ fn config_with_semantic_cache(
     }
 }
 
+#[tokio::test]
+async fn semantic_hits_keep_tool_and_output_schema_scopes_exact() {
+    for tools in [false, true] {
+        let chat = MockServer::start_async().await;
+        let embeddings = MockServer::start_async().await;
+        let chat_hit=chat.mock_async(|when,then| {
+            when.method(httpmock::Method::POST).path("/chat/completions");
+            then.status(200).json_body(json!({"id":"scoped","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"{\"answer\":\"ok\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}));
+        }).await;
+        let embedding_hit=embeddings.mock_async(|when,then| {
+            when.method(httpmock::Method::POST).path("/embeddings");
+            then.status(200).json_body(json!({"object":"list","model":"text-embedding-3-small","data":[{"object":"embedding","index":0,"embedding":[0.12,0.45,0.78]}],"usage":{"prompt_tokens":5,"total_tokens":5}}));
+        }).await;
+        let handle = start_oxllm(config_with_semantic_cache(
+            &chat.base_url(),
+            &embeddings.base_url(),
+            0.95,
+        ))
+        .await
+        .unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap();
+        for (index, (text, other, cached)) in [
+            (
+                "Please extract the answer for the first record.",
+                "one",
+                false,
+            ),
+            (
+                "Please extract the answer for the second record.",
+                "two",
+                false,
+            ),
+            (
+                "Please extract the answer for the first record again.",
+                "one",
+                true,
+            ),
+            (
+                "Please extract the answer for the second record again.",
+                "two",
+                true,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let schema = json!({"type":"object","properties":{"answer":{"type":"string","enum":["ok",other]}},"required":["answer"],"additionalProperties":false});
+            let mut payload = json!({"model":"gpt-4o","messages":[{"role":"user","content":text}],"cache":{"insert":true}});
+            if tools {
+                payload["tools"] = json!([{"type":"function","function":{"name":"extract","strict":true,"parameters":schema}}]);
+                payload["tool_choice"] = json!("auto");
+            } else {
+                payload["response_format"] = json!({"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":schema}});
+            }
+            let response = client
+                .post(handle.url("/v1/chat/completions"))
+                .json(&payload)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200, "tools={tools} request={index}");
+            assert_eq!(
+                response.headers().contains_key("x-oxllm-cache-hit"),
+                cached,
+                "tools={tools} request={index}"
+            );
+            let body: Value = response.json().await.unwrap();
+            assert_eq!(
+                body["choices"][0]["message"]["content"],
+                "{\"answer\":\"ok\"}"
+            );
+        }
+        chat_hit.assert_hits_async(2).await;
+        assert!(
+            embedding_hit.hits_async().await >= 4,
+            "semantic matching must actually fetch embeddings"
+        );
+        let _ = handle.shutdown_tx.send(());
+    }
+}
+
 /// Two chat requests that look different but should produce identical
 /// embeddings (the mock returns the same vector for any input) → the second
 /// must short-circuit via the semantic cache.

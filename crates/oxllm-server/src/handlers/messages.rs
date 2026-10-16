@@ -49,6 +49,28 @@ pub async fn messages(
     headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    match messages_inner(shared, auth, headers, body).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            let status = error.status;
+            let message = error.message.clone();
+            let preserved = preserved_response_headers(error.into_response().headers());
+            Ok(anthropic_error_response(
+                status,
+                status_to_anthropic_error_type(status),
+                &message,
+                &preserved,
+            ))
+        }
+    }
+}
+
+async fn messages_inner(
+    shared: SharedState,
+    auth: AuthUser,
+    headers: axum::http::HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
     let state = shared.load_full();
     let request_body: Value = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;

@@ -3649,30 +3649,26 @@ mod converse_tests {
     }
 
     // ========================================================================
-    // Batch 2: response_format → outputConfig / synthetic tool
+    // Native response_format forwarding without synthetic tools.
     // ========================================================================
 
     /// Schema-less JSON mode cannot be represented by a closed native schema.
     #[test]
-    fn converse_request_response_format_json_on_anthropic_uses_tool_fallback() {
+    fn converse_request_schema_less_json_on_anthropic_is_not_emulated() {
         let req = json!({
             "messages": [{"role": "user", "content": "Return JSON."}],
             "response_format": {"type": "json_object"},
         });
-        let out = converse::transform_request_converse(
+        let error = converse::transform_request_converse(
             &req,
             "anthropic.claude-3-5-sonnet",
             &empty_extra(),
         )
-        .expect("ok");
-        assert!(out.get("outputConfig").is_none());
-        assert_eq!(
-            out["toolConfig"]["toolChoice"]["tool"]["name"],
-            "json_tool_call"
-        );
+        .expect_err("no native schema-less mapping");
+        assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
     }
 
-    /// Meta's Converse toolChoice cannot force a specific JSON tool.
+    /// Schema-less JSON mode has no native Converse representation on any family.
     #[test]
     fn converse_request_response_format_json_on_meta_is_rejected() {
         let req = json!({
@@ -3684,14 +3680,13 @@ mod converse_tests {
             "meta.llama3-1-70b-instruct-v1:0",
             &empty_extra(),
         )
-        .expect_err("forced JSON tool unsupported");
+        .expect_err("schema-less JSON mode unsupported");
         assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
     }
 
-    /// `response_format: json_object` with a JSON schema on non-Anthropic
-    /// → the schema is embedded in the synthetic tool's `inputSchema`.
+    /// A supplied schema always uses the native outputConfig representation.
     #[test]
-    fn converse_request_response_format_json_with_schema_embeds_in_synthetic_tool() {
+    fn converse_request_response_format_with_schema_uses_native_output_config() {
         let req = json!({
             "messages": [{"role": "user", "content": "Return JSON."}],
             "response_format": {
@@ -3709,15 +3704,15 @@ mod converse_tests {
         let out =
             converse::transform_request_converse(&req, "amazon.nova-pro-v1:0", &empty_extra())
                 .expect("ok");
-        let schema = &out["toolConfig"]["tools"][0]["toolSpec"]["inputSchema"]["json"];
+        let schema = native_schema(&out);
         assert_eq!(schema["properties"]["temp"]["type"], "number");
         assert_eq!(schema["required"][0], "temp");
+        assert!(out.get("toolConfig").is_none());
     }
 
-    /// Non-`json_object` response_format (e.g. `text`) produces neither
-    /// `outputConfig` nor a synthetic tool.
+    /// Explicit text produces neither outputConfig nor tools.
     #[test]
-    fn converse_request_non_json_response_format_is_ignored() {
+    fn converse_request_text_response_format_adds_no_output_config() {
         let req = json!({
             "messages": [{"role": "user", "content": "hi"}],
             "response_format": {"type": "text"},
@@ -3732,11 +3727,9 @@ mod converse_tests {
         assert!(out.get("toolConfig").is_none());
     }
 
-    /// Synthetic json_tool_call response extraction: when the response
-    /// contains a `toolUse` block named `json_tool_call`, its input is
-    /// lifted as `content` (non-streaming path).
+    /// An explicit tool name never selects a different output representation.
     #[test]
-    fn converse_response_json_tool_call_lifted_as_content() {
+    fn converse_response_json_tool_call_remains_visible() {
         let body = json!({
             "output": {
                 "message": {
@@ -3755,16 +3748,14 @@ mod converse_tests {
         });
         let out = converse::transform_response_converse(&body, "meta.llama3-1-70b").expect("ok");
         let msg = &out["choices"][0]["message"];
-        // Content is the serialized JSON of the tool input.
-        let content = msg["content"].as_str().expect("string content");
+        let content = msg["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments string");
         let parsed: Value = serde_json::from_str(content).expect("valid json");
         assert_eq!(parsed["answer"], 42);
         assert_eq!(parsed["unit"], "C");
-        // The synthetic tool call must not leak.
-        assert!(
-            msg.get("tool_calls").is_none(),
-            "json_tool_call must be extracted, not left as a tool_call"
-        );
+        assert_eq!(msg["content"], "");
+        assert_eq!(out["choices"][0]["finish_reason"], "tool_calls");
     }
 
     // ========================================================================
@@ -4756,12 +4747,11 @@ mod converse_tests {
     }
 
     // ========================================================================
-    // Tier 2 — Item 6: additionalProperties:false for structured outputs
+    // Structured-output schemas remain caller-owned.
     // ========================================================================
 
     /// `response_format.type: "json_schema"` on an Anthropic model produces
-    /// an `outputConfig` carrying the schema with `additionalProperties:
-    /// false` injected at the root.
+    /// an `outputConfig` carrying the schema without repairs.
     #[test]
     fn converse_request_json_schema_produces_output_config_with_schema() {
         let req = json!({
@@ -4785,14 +4775,13 @@ mod converse_tests {
         )
         .expect("ok");
         let schema = native_schema(&out);
-        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(schema, req["response_format"]["json_schema"]["schema"]);
         assert_eq!(schema["properties"]["temp"]["type"], "number");
     }
 
-    /// `additionalProperties: false` is injected recursively into nested
-    /// object nodes (under `properties`, `items`, and combiners).
+    /// Missing annotations stay missing at every nesting depth.
     #[test]
-    fn converse_request_additional_properties_injected_recursively() {
+    fn converse_request_additional_properties_are_not_injected_recursively() {
         let req = json!({
             "messages": [{"role": "user", "content": "go"}],
             "response_format": {
@@ -4824,27 +4813,10 @@ mod converse_tests {
         )
         .expect("ok");
         let schema = native_schema(&out);
-        // Root.
-        assert_eq!(schema["additionalProperties"], false);
-        // Nested object.
-        assert_eq!(
-            schema["properties"]["nested"]["additionalProperties"],
-            false
-        );
-        // Array item object.
-        assert_eq!(
-            schema["properties"]["list"]["items"]["additionalProperties"],
-            false
-        );
+        assert_eq!(schema, req["response_format"]["json_schema"]["schema"]);
     }
 
-    /// A deeply nested caller-controlled schema must not overflow the stack
-    /// when walked by `inject_additional_properties_false`. The walker caps
-    /// recursion defensively; serde_json's own parse limit bounds the input
-    /// depth in practice, but the cap guarantees termination. Construct a
-    /// chain of nested `properties` objects well within serde_json's limit
-    /// but deeper than the walker's cap, and assert the request transform
-    /// completes without recursing into the deepest levels.
+    /// Deep caller schemas are serialized without a recursive repair pass.
     #[test]
     fn converse_request_deeply_nested_schema_does_not_overflow() {
         // Build a schema nested via `properties.deep` repeatedly, deeper than
@@ -4871,14 +4843,15 @@ mod converse_tests {
         let schema = out["outputConfig"]["textFormat"]["structure"]["jsonSchema"]["schema"]
             .as_str()
             .expect("wire schema string");
-        assert!(schema.contains("\"additionalProperties\":false"));
+        assert_eq!(
+            schema,
+            req["response_format"]["json_schema"]["schema"].to_string()
+        );
     }
 
-    /// `response_format.type: "json_object"` with a schema also gets the
-    /// schema embedded + additionalProperties injected (the existing
-    /// bare-`{format:{type:"json"}}` shape is kept when no schema).
+    /// The json_object-with-schema alias also forwards the original schema.
     #[test]
-    fn converse_request_json_object_with_schema_embeds_and_injects() {
+    fn converse_request_json_object_with_schema_is_native_and_unmodified() {
         let req = json!({
             "messages": [{"role": "user", "content": "go"}],
             "response_format": {
@@ -4895,7 +4868,7 @@ mod converse_tests {
         )
         .expect("ok");
         let schema = native_schema(&out);
-        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(schema, req["response_format"]["json_schema"]["schema"]);
         assert_eq!(schema["properties"]["a"]["type"], "string");
     }
 
@@ -5057,9 +5030,9 @@ mod converse_tests {
     // H10: $defs / definitions walked in additionalProperties injection
     // ========================================================================
 
-    /// `$defs` sub-schemas receive `additionalProperties: false` injection.
+    /// `$defs` sub-schemas keep their caller-supplied annotations.
     #[test]
-    fn converse_request_defs_walked_in_additional_properties_injection() {
+    fn converse_request_defs_are_preserved_without_injection() {
         let req = json!({
             "messages": [{"role": "user", "content": "go"}],
             "response_format": {
@@ -5086,16 +5059,14 @@ mod converse_tests {
         .expect("ok");
         let schema = native_schema(&out);
         let defs = &schema["$defs"]["thing"];
-        assert_eq!(
-            defs["additionalProperties"], false,
-            "$defs sub-schema must get additionalProperties:false"
-        );
+        assert!(defs.get("additionalProperties").is_none());
+        assert_eq!(schema, req["response_format"]["json_schema"]["schema"]);
         assert_eq!(defs["properties"]["name"]["type"], "string");
     }
 
-    /// `definitions` (draft-4 keyword) sub-schemas also receive the injection.
+    /// Legacy definitions remain unchanged too.
     #[test]
-    fn converse_request_definitions_walked_in_additional_properties_injection() {
+    fn converse_request_definitions_are_preserved_without_injection() {
         let req = json!({
             "messages": [{"role": "user", "content": "go"}],
             "response_format": {
@@ -5121,10 +5092,8 @@ mod converse_tests {
         .expect("ok");
         let schema = native_schema(&out);
         let def = &schema["definitions"]["widget"];
-        assert_eq!(
-            def["additionalProperties"], false,
-            "definitions sub-schema must get additionalProperties:false"
-        );
+        assert!(def.get("additionalProperties").is_none());
+        assert_eq!(schema, req["response_format"]["json_schema"]["schema"]);
     }
 
     // ========================================================================

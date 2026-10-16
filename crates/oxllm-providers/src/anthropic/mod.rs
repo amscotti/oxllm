@@ -29,12 +29,13 @@ pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 ///
 /// # Tags
 ///
-/// - [`BETA_STRUCTURED_OUTPUTS`]: native `output_format` (JSON structured outputs).
+/// - [`BETA_STRUCTURED_OUTPUTS`]: historical structured-output beta, retained for
+///   API compatibility; stable format forwarding does not select this tag.
 /// - [`BETA_FAST_MODE`]: `speed: "fast"` low-latency mode.
 /// - [`BETA_WEB_FETCH`]: hosted `web_search` tool.
 /// - [`BETA_CONTEXT_MANAGEMENT`]: automatic context compaction.
 pub const BETA_STRUCTURED_OUTPUTS: &str = "structured-outputs-2025-11-13";
-/// Beta tag for `speed: "fast"` (see [`BETA_STRUCTURED_OUTPUTS`] group docs).
+/// Beta tag for `speed: "fast"`, selected by [`collect_beta_headers`].
 pub const BETA_FAST_MODE: &str = "fast-mode-2026-02-01";
 /// Beta tag for the hosted `web_search` tool.
 pub const BETA_WEB_FETCH: &str = "web-fetch-2025-09-10";
@@ -53,9 +54,8 @@ pub const BETA_EFFORT: &str = "effort-2025-11-24";
 /// Beta tag for output configuration attached to individual conversation messages.
 pub const BETA_MID_CONVERSATION_OUTPUT_CONFIG: &str = "mid-conversation-output-config-2026-07-01";
 
-/// Marker name of the synthetic tool injected for `response_format:
-/// json_object`. Streaming detects this name to redirect the tool-call
-/// arguments back into `delta.content` (see feature #6).
+/// Historical JSON-helper name. It is no longer reserved: explicitly supplied
+/// tools with this name remain ordinary tool calls.
 pub const JSON_TOOL_CALL_NAME: &str = "json_tool_call";
 
 /// Cached stream metadata extracted from the `message_start` event.
@@ -83,7 +83,6 @@ struct StreamMeta {
     // value instead of 0 — the delta's own usage object only carries
     // `output_tokens`.
     prompt_tokens: u64,
-    json_tool: bool,
     speed: Option<String>,
     service_tier: Option<String>,
 }
@@ -142,26 +141,14 @@ thread_local! {
 
 // Per-thread tracker for the tool_use content blocks currently mid-stream.
 //
-// Two streaming fixes depend on knowing, for each Anthropic content-block
-// index, whether it is a tool_use block and (if so) whether it is the
-// synthetic `json_tool_call` we injected for `response_format: json_object`:
-//
-// - Feature #6 (streaming JSON mode): when the block is `json_tool_call`, the
-//   `input_json_delta` fragments must be emitted as `delta.content` text
-//   (the JSON the caller asked for), NOT as a `tool_calls` delta — otherwise
-//   OpenAI streaming clients see a phantom tool call instead of the JSON
-//   response. The `content_block_start` for such a block is also suppressed.
-// - Feature #7 (content_block_stop): when a real tool_use block stops with
-//   no accumulated `input_json_delta` arguments, Anthropic still means "call
-//   the tool with an empty object"; we emit a final `arguments: "{}"` delta
-//   so downstream accumulators don't see a malformed empty-arguments call.
+// Hosted server-tool fragments stay separate from client tools. A client
+// tool with no argument deltas still needs a final `arguments: "{}"` delta.
 //
 // Same scope/lifecycle rationale as `STREAM_META` / `TOOL_NAME_MAP`: a
 // `thread_local!` cell, cleared on every `message_start` so a new stream
 // never inherits a prior stream's block state.
 #[derive(Default, Clone)]
 struct ToolBlockState {
-    is_json_tool: bool,
     /// True for `server_tool_use` and `*_tool_result` blocks (web_search,
     /// code_execution, etc.). These blocks emit `input_json_delta` fragments
     /// that must NOT be forwarded as OpenAI `tool_calls` argument deltas —
@@ -257,8 +244,7 @@ impl ChatProvider for AnthropicProvider {
         // beta header cannot be injected here — the host must call
         // `collect_beta_headers(request)` and merge the result into the header
         // set alongside the version set above. The function is exposed and
-        // unit-tested so that wiring is a one-liner once the host side is in
-        // place.
+        // unit-tested; the host merges these tags with configured/client betas.
     }
 
     fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
@@ -331,15 +317,15 @@ impl ChatProvider for AnthropicProvider {
             out.insert("speed".to_string(), json!("fast"));
         }
 
-        // --- Tool list: caller tools + synthetic json_tool_call ---
-        //
-        // When `response_format.type == "json_object"`, register a hidden
-        // tool whose `input_schema` is the requested JSON schema and force
-        // the model to call it. In `transform_response` we then lift the
-        // tool call's arguments out as the response `content`. This is the
-        // same synthetic-tool trick (and the same `json_tool_call` marker
-        // name) the reference uses, and works on every Claude model — unlike
-        // `output_format`, which only some models accept.
+        // Only caller-supplied tools belong in the tool list.
+        if request
+            .get("tools")
+            .is_some_and(|tools| !tools.is_null() && !tools.is_array())
+        {
+            return Err(oxllm_core::Error::BadRequest(
+                "tools must be an array".into(),
+            ));
+        }
         let raw_tools = tools_from_request(request);
 
         // --- MCP server tools ---
@@ -374,85 +360,15 @@ impl ChatProvider for AnthropicProvider {
             }
         }
 
-        let mut injected_json_tool = false;
-        // On native-capable models, a supplied schema uses output_config
-        // instead of a synthetic tool. The response is then plain text
-        // (no tool call to strip), so the response side needs no changes.
-        let mut native_output_format: Option<Value> = None;
-        if let Some(rf) = request.get("response_format").and_then(|v| v.as_object()) {
-            // H8: accept BOTH `json_object` (the classic OpenAI JSON mode)
-            // and `json_schema` (the newer structured-outputs shape). Both
-            // nest the schema under `json_schema.schema`, so the schema
-            // extraction below is shared. Without this, `json_schema` was
-            // silently dropped on Anthropic — the whole point of structured
-            // outputs was lost.
-            let rf_type = rf.get("type").and_then(|v| v.as_str());
-            if matches!(rf_type, Some("json_object") | Some("json_schema")) {
-                // OpenAI spec nests the schema under `json_schema.schema`; some
-                // callers put the schema directly under `json_schema`. Accept
-                // both.
-                let schema = crate::util::response_format_schema(rf)?;
-                if rf_type == Some("json_schema") && schema.is_none() {
-                    return Err(oxllm_core::Error::BadRequest(
-                        "response_format json_schema requires an object schema".into(),
-                    ));
-                }
-                if !supports_native_output_format(model)
-                    && rf
-                        .get("json_schema")
-                        .and_then(|schema| schema.get("strict"))
-                        .and_then(Value::as_bool)
-                        == Some(true)
-                {
-                    return Err(oxllm_core::Error::BadRequest(
-                        "strict json_schema output requires a Claude model with native structured outputs".into(),
-                    ));
-                }
-                if supports_native_output_format(model) && schema.is_some() {
-                    // Anthropic's API now uses `output_config.format` (not the
-                    // deprecated `output_format`). The format type is always
-                    // `json_schema` (not `json`). Anthropic requires
-                    // `additionalProperties: false` on object schemas.
-                    let mut format_obj = Map::new();
-                    format_obj.insert("type".to_string(), json!("json_schema"));
-                    if let Some(mut s) = schema {
-                        // U32: Anthropic's
-                        // structured-output schema validator rejects several
-                        // JSON Schema keywords it does not implement
-                        // (`uniqueItems`, `contains`, `minProperties`,
-                        // `maxProperties`). Strip them recursively before
-                        // sending, otherwise the request 400s upstream. The
-                        // Bedrock Converse walker (which has the same schema
-                        // constraints) does not currently strip these — keep
-                        // this local to the Anthropic path until Bedrock is
-                        // confirmed to reject the same set.
-                        strip_unsupported_anthropic_schema_keywords(&mut s);
-                        // Anthropic requires `additionalProperties: false` on
-                        // every object node (recursively), not just the
-                        // top-level. Reuse the Bedrock Converse walker so both
-                        // paths stay in sync.
-                        crate::util::inject_additional_properties_false(&mut s);
-                        format_obj.insert("schema".to_string(), s);
-                    }
-                    native_output_format = Some(json!({"format": Value::Object(format_obj)}));
-                } else {
-                    let schema =
-                        schema.unwrap_or_else(|| json!({"type": "object", "properties": {}}));
-                    // Inject in OpenAI tool shape so the existing
-                    // `map_tool_to_anthropic` produces the right Anthropic tool
-                    // (top-level `name`/`input_schema`/`description`).
-                    tools.push(json!({
-                        "type": "function",
-                        "function": {
-                            "name": "json_tool_call",
-                            "description": "Call this tool with the JSON object you want to return.",
-                            "parameters": schema,
-                        }
-                    }));
-                    injected_json_tool = true;
-                }
-            }
-        }
+        // Forward schemas natively without a model-name gate or repairs. The
+        // selected provider owns model support and schema-subset validation.
+        let native_output_format = crate::util::native_output_format(
+            request,
+            &[
+                ("/output_config/format", "output_config.format"),
+                ("/output_format", "output_format"),
+            ],
+        )?;
 
         // --- web_search_options → hosted web_search tool (feature #3) ---
         //
@@ -514,7 +430,13 @@ impl ChatProvider for AnthropicProvider {
         });
 
         if !tools.is_empty() {
-            let mapped: Vec<Value> = tools.iter().filter_map(map_tool_to_anthropic).collect();
+            let mapped: Vec<Value> = tools
+                .iter()
+                .map(map_tool_to_anthropic)
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect();
             if !mapped.is_empty() {
                 out.insert("tools".to_string(), Value::Array(mapped));
             }
@@ -532,30 +454,20 @@ impl ChatProvider for AnthropicProvider {
 
         // --- tool_choice ---
         //
-        // Order: caller's tool_choice → response_format override (force json
-        // tool) → name forward-map → parallel_tool_calls override.
+        // Preserve the caller's choice; translate API shape and tool names.
         let mut tool_choice_value: Option<Value> = request
             .get("tool_choice")
             .and_then(map_tool_choice_to_anthropic);
-
-        if injected_json_tool {
-            tool_choice_value = Some(json!({"type": "tool", "name": "json_tool_call"}));
+        if request
+            .get("tool_choice")
+            .is_some_and(|value| !value.is_null())
+            && tool_choice_value.is_none()
+        {
+            return Err(oxllm_core::Error::BadRequest("tool choice has no lossless native Anthropic mapping; use auto, required, none or a named function".into()));
         }
 
-        // Apply the forward map to `tool_choice.name` (only when a specific
-        // tool is named and that name needed sanitization).
-        if let Some(Value::Object(tc_map)) = tool_choice_value.as_mut() {
-            if tc_map.get("type").and_then(|v| v.as_str()) == Some("tool") {
-                if let Some(Value::String(name)) = tc_map.get_mut("name") {
-                    if let Some(mapped) = forward.get(name) {
-                        if mapped != name {
-                            *name = mapped.clone();
-                        }
-                    }
-                }
-            }
-        }
-
+        // Names are encoded together once in the final forward-map pass.
+        // Encoding a choice here too can select another colliding tool name.
         // The flag belongs to tool_choice.auto/any/tool, never the request
         // root or tool_choice.none. Omitting tool_choice with tools means auto.
         if request.get("parallel_tool_calls").and_then(Value::as_bool) == Some(false)
@@ -567,6 +479,12 @@ impl ChatProvider for AnthropicProvider {
                     tc_map.get("type").and_then(Value::as_str),
                     Some("auto" | "any" | "tool")
                 ) {
+                    if tc_map
+                        .get("disable_parallel_tool_use")
+                        .is_some_and(|value| !value.is_null() && value.as_bool() != Some(true))
+                    {
+                        return Err(oxllm_core::Error::BadRequest("parallel_tool_calls false conflicts with native tool_choice.disable_parallel_tool_use".into()));
+                    }
                     tc_map.insert("disable_parallel_tool_use".to_string(), json!(true));
                 }
             }
@@ -576,13 +494,7 @@ impl ChatProvider for AnthropicProvider {
             out.insert("tool_choice".to_string(), tc);
         }
 
-        // Native structured outputs (P2): set `output_config` on the Anthropic
-        // body when the model supports it. The beta header
-        // `structured-outputs-2025-11-13` is added via `collect_beta_headers`
-        // (triggered by the OpenAI `response_format` field on the original
-        // request).
-        //
-        // C2: a caller-supplied top-level `output_config.effort` is preserved
+        // A caller-supplied top-level `output_config.effort` is preserved
         // here too, normalised per-model (e.g. Opus 4.5 `max`→`high`). When
         // both `native_output_format` and a caller `output_config.effort` are
         // present, the format and effort are merged into a single
@@ -593,16 +505,17 @@ impl ChatProvider for AnthropicProvider {
             .and_then(|e| e.as_str())
             .and_then(|e| normalize_effort_for_model(model, e))
             .map(Value::String);
-        // Preserve independent caller keys in every merge combination. The
-        // derived format wins, and effort goes through model normalization.
+        // Preserve independent caller keys. Format aliases have already been
+        // checked for conflicts; effort goes through model normalization.
         let mut output_config = request
             .get("output_config")
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
         output_config.remove("effort");
-        if let Some(Value::Object(format)) = native_output_format {
-            output_config.extend(format);
+        output_config.remove("format");
+        if let Some(format) = native_output_format {
+            output_config.insert("format".into(), format);
         }
         if let Some(effort) = caller_output_config_effort {
             output_config.insert("effort".into(), effort);
@@ -704,18 +617,6 @@ impl ChatProvider for AnthropicProvider {
         // API default apply. temperature 1 is kept.
         drop_temperature_incompatible_with_thinking(&mut out);
 
-        if injected_json_tool
-            && out
-                .get("thinking")
-                .and_then(|thinking| thinking.get("type"))
-                .and_then(Value::as_str)
-                .is_some_and(|kind| kind != "disabled")
-        {
-            return Err(oxllm_core::Error::BadRequest(
-                "JSON-mode tool fallback is incompatible with Claude thinking; supply a schema on a native structured-output model".into(),
-            ));
-        }
-
         Ok(Value::Object(out))
     }
 
@@ -763,9 +664,7 @@ impl ChatProvider for AnthropicProvider {
 
         // Restore caller tool names: `transform_request` may have sanitized
         // them to fit Anthropic's `[a-zA-Z0-9_-]{1,128}` rule. Look each name
-        // up in the reverse map and rewrite in place. The synthetic
-        // `json_tool_call` marker is a constant and is left as-is here; it is
-        // handled below.
+        // up in the reverse map and rewrite in place.
         if !tool_calls.is_empty() {
             reverse_map_tool_call_names_in(&mut tool_calls, &reverse_map);
         }
@@ -773,28 +672,7 @@ impl ChatProvider for AnthropicProvider {
         let mut message = Map::new();
         message.insert("role".to_string(), json!("assistant"));
 
-        // Synthetic `json_tool_call` extraction: when the request injected a
-        // hidden JSON tool via `response_format`, Anthropic responds with a
-        // single `tool_use` block named `json_tool_call` whose `input` is the
-        // JSON object the caller wanted. Lift it out as `content` and drop
-        // the synthetic tool call so it doesn't leak to OpenAI clients.
-        let json_idx = tool_calls.iter().position(|tc| {
-            tc.get("function")
-                .and_then(|f| f.get("name"))
-                .and_then(|n| n.as_str())
-                == Some("json_tool_call")
-        });
-        let final_content = if let Some(idx) = json_idx {
-            let tc = tool_calls.remove(idx);
-            tc.get("function")
-                .and_then(|f| f.get("arguments"))
-                .and_then(|a| a.as_str())
-                .unwrap_or(content.as_str())
-                .to_string()
-        } else {
-            content
-        };
-        message.insert("content".to_string(), Value::String(final_content));
+        message.insert("content".to_string(), Value::String(content));
 
         if !reasoning_content.is_empty() {
             // DeepSeek/Grok use `reasoning_content` for the model's chain of
@@ -813,8 +691,7 @@ impl ChatProvider for AnthropicProvider {
             message.insert("thinking_blocks".to_string(), Value::Array(thinking_blocks));
         }
         if !tool_calls.is_empty() {
-            // Index only visible calls: text/thinking and the removed JSON
-            // helper are not members of the caller's tool-call array.
+            // Text and thinking blocks are not members of the tool-call array.
             for (index, call) in tool_calls.iter_mut().enumerate() {
                 if let Some(call) = call.as_object_mut() {
                     call.insert("index".into(), json!(index));
@@ -870,18 +747,11 @@ impl ChatProvider for AnthropicProvider {
             );
         }
 
-        let mut finish_reason = body
+        let finish_reason = body
             .get("stop_reason")
             .and_then(|v| v.as_str())
             .map(map_stop_reason_to_openai)
             .unwrap_or_else(|| json!("stop"));
-        if json_idx.is_some()
-            && message.get("tool_calls").is_none()
-            && finish_reason == "tool_calls"
-        {
-            finish_reason = json!("stop");
-        }
-
         let usage = body.get("usage");
         let input_tokens = usage
             .and_then(|u| u.get("input_tokens"))
@@ -1109,6 +979,8 @@ impl ChatProvider for AnthropicProvider {
             // `drop_params` before the provider transform runs. Each one is
             // translated to its Anthropic equivalent inside `transform_request`.
             "response_format",
+            "output_config",
+            "output_format",
             "parallel_tool_calls",
             "user",
             "reasoning_effort",
@@ -2070,6 +1942,8 @@ fn map_tool_call_to_anthropic(tc: &Value) -> Value {
 /// nested schemas (a `properties` entry whose own `items` carries
 /// `uniqueItems`, etc.) are sanitized too. Schemas without any unsupported
 /// fields are returned unchanged.
+/// This compatibility pass is only for non-strict tools. Strict tools and
+/// native JSON outputs preserve the caller's schema without these rewrites.
 pub(crate) fn sanitize_tool_input_schema(schema: Value) -> Value {
     let mut map = match schema {
         Value::Object(map) => map,
@@ -2311,7 +2185,8 @@ fn extract_mcp_servers(tools: &[Value]) -> (Vec<Value>, Vec<Value>) {
     (remaining, mcp_servers)
 }
 
-fn map_tool_to_anthropic(tool: &Value) -> Option<Value> {
+fn map_tool_to_anthropic(tool: &Value) -> Result<Option<Value>> {
+    let strict = crate::util::strict_tool_definition(tool)?;
     // Hosted tools (computer / bash / text_editor / web_search / advisor /
     // tool_search) are passed through with their reserved shape — they must
     // NOT be wrapped in `input_schema` like a regular function tool. Returns
@@ -2323,13 +2198,58 @@ fn map_tool_to_anthropic(tool: &Value) -> Option<Value> {
         .map(|s| s != "function")
         .unwrap_or(false)
     {
-        if let Some(hosted) = map_hosted_tool(tool) {
-            return Some(hosted);
+        if let Some(mut hosted) = map_hosted_tool(tool) {
+            if let Some(object) = hosted.as_object_mut() {
+                object.remove("function");
+                if object.get("cache_control").is_some_and(Value::is_null) {
+                    object.remove("cache_control");
+                }
+                // Native fields take precedence over defaults/lifted legacy
+                // carrier values. Unknown native options are provider-owned.
+                if let Some(native) = tool.as_object() {
+                    for (field, value) in native {
+                        if field != "function" && !(field == "cache_control" && value.is_null()) {
+                            object.insert(field.clone(), value.clone());
+                        }
+                    }
+                }
+                // Explicit native null clears a legacy annotation. Do not
+                // enable provider caching by reviving that legacy value.
+                if tool.get("cache_control").is_none()
+                    && let Some(control) = tool
+                        .pointer("/function/cache_control")
+                        .filter(|value| !value.is_null())
+                {
+                    object
+                        .entry("cache_control".to_string())
+                        .or_insert_with(|| control.clone());
+                }
+                if strict {
+                    object.insert("strict".into(), json!(true));
+                } else {
+                    object.remove("strict");
+                }
+            }
+            return Ok(Some(hosted));
+        }
+        if strict {
+            if tool
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.starts_with("advisor_"))
+            {
+                return Err(oxllm_core::Error::BadRequest(
+                    "advisor tool requires a model field".into(),
+                ));
+            }
+            return Err(oxllm_core::Error::BadRequest(
+                "strict tool use has no native mapping for this tool type".into(),
+            ));
         }
         // Malformed hosted tool (e.g. advisor without model): drop entirely
         // rather than fall through to the function path, which would
         // synthesise an empty-name tool that 400s upstream.
-        return None;
+        return Ok(None);
     }
 
     let function = tool.get("function").cloned().unwrap_or_else(|| json!({}));
@@ -2342,13 +2262,19 @@ fn map_tool_to_anthropic(tool: &Value) -> Option<Value> {
 
     let mut out = Map::new();
     out.insert("name".to_string(), Value::String(name.to_string()));
-    // Anthropic's tool `input_schema` validator is stricter than the JSON
-    // Schema spec OpenAI callers use. Strip/rewrite the constructs it rejects
-    // before sending (see `sanitize_tool_input_schema`).
+    // Keep legacy normalization for advisory tools only. Strict schemas must
+    // reach the provider intact, including constraints it might reject.
     out.insert(
         "input_schema".to_string(),
-        sanitize_tool_input_schema(input_schema),
+        if strict {
+            input_schema
+        } else {
+            sanitize_tool_input_schema(input_schema)
+        },
     );
+    if strict {
+        out.insert("strict".into(), json!(true));
+    }
     if let Some(desc) = description {
         out.insert("description".to_string(), desc);
     }
@@ -2393,7 +2319,7 @@ fn map_tool_to_anthropic(tool: &Value) -> Option<Value> {
             }
         }
     }
-    Some(Value::Object(out))
+    Ok(Some(Value::Object(out)))
 }
 
 fn map_tool_choice_to_anthropic(tool_choice: &Value) -> Option<Value> {
@@ -2402,10 +2328,39 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value) -> Option<Value> {
             "auto" => json!({"type": "auto"}),
             "required" | "any" => json!({"type": "any"}),
             "none" => json!({"type": "none"}),
-            _ => json!({"type": "auto"}),
+            _ => return None,
         });
     }
     if let Some(obj) = tool_choice.as_object() {
+        if matches!(
+            obj.get("type").and_then(Value::as_str),
+            Some("auto" | "any" | "none" | "tool")
+        ) {
+            // Already-native choices keep all provider-owned options.
+            return Some(tool_choice.clone());
+        }
+        if obj.get("type").and_then(Value::as_str) == Some("required")
+            && obj
+                .keys()
+                .all(|key| matches!(key.as_str(), "type" | "disable_parallel_tool_use"))
+        {
+            let mut choice = obj.clone();
+            choice.insert("type".into(), json!("any"));
+            return Some(Value::Object(choice));
+        }
+        if obj
+            .keys()
+            .any(|key| !matches!(key.as_str(), "type" | "function"))
+            || obj
+                .get("type")
+                .is_some_and(|kind| kind.as_str() != Some("function"))
+            || obj
+                .get("function")
+                .and_then(Value::as_object)
+                .is_some_and(|function| function.keys().any(|key| key != "name"))
+        {
+            return None;
+        }
         if let Some(name) = obj
             .get("function")
             .and_then(|f| f.get("name"))
@@ -2456,9 +2411,7 @@ fn build_tool_name_maps(tools: &[Value]) -> (HashMap<String, String>, HashMap<St
 
     for tool in tools {
         // OpenAI-format caller tools carry the name under `function.name`.
-        // The synthetic `json_tool_call` we inject ourselves is already
-        // Anthropic-format (top-level `name`) and already valid — record it
-        // as identity so the reverse lookup still works for it.
+        // Hosted/native definitions may carry their name at the tool root.
         let name = tool
             .get("function")
             .and_then(|f| f.get("name"))
@@ -2676,12 +2629,9 @@ pub fn clamp_thinking_budget(thinking: &Value, max_tokens: u64) -> Option<Value>
 /// actually used. Inspect the OpenAI-shape request body and return the set of
 /// beta tags that should accompany it:
 ///
-/// - [`BETA_STRUCTURED_OUTPUTS`] when a native `output_format` field is set
-///   (Anthropic-native structured outputs), or when the caller supplies
-///   `output_config.format`, or an OpenAI `response_format:
-///   {type: "json_object"}` (which `transform_request` may convert to native
-///   `output_format` on supported models — P2). The beta tag is harmless for
-///   legacy models that fall back to the synthetic tool.
+/// Stable schema formats, including the translated legacy `output_format`
+/// alias, and strict tools do not require the structured-outputs beta.
+///
 /// - [`BETA_FAST_MODE`] when `speed == "fast"`.
 /// - [`BETA_WEB_FETCH`] when the request carries `web_search_options` or a
 ///   hosted `web_search_*` tool.
@@ -2702,29 +2652,6 @@ pub fn collect_beta_headers(request: &Value, model: &str) -> Vec<String> {
     let mut betas: Vec<String> = Vec::new();
     if uses_message_output_config(request) {
         betas.push(BETA_MID_CONVERSATION_OUTPUT_CONFIG.to_string());
-    }
-
-    // Native structured outputs: an explicit Anthropic-native `output_format`
-    // field on the request body, an OpenAI `response_format:
-    // {type: "json_object" | "json_schema"}` (which `transform_request` may
-    // convert to native `output_format` on supported models — P2 / H8), or a
-    // caller-supplied `output_config.format` (B4). The beta tag is harmless
-    // for legacy models that fall back to the synthetic tool.
-    let has_output_format = request.get("output_format").is_some();
-    let has_output_config_format = request
-        .get("output_config")
-        .and_then(|oc| oc.get("format"))
-        .is_some();
-    let has_json_response_format = matches!(
-        request
-            .get("response_format")
-            .and_then(|v| v.as_object())
-            .and_then(|o| o.get("type"))
-            .and_then(|v| v.as_str()),
-        Some("json_object") | Some("json_schema")
-    );
-    if has_output_format || has_output_config_format || has_json_response_format {
-        betas.push(BETA_STRUCTURED_OUTPUTS.to_string());
     }
 
     // Fast mode.
@@ -3021,9 +2948,9 @@ pub fn default_max_tokens_for_model(model: &str) -> u64 {
     }
 }
 
-/// Models documented to support native `output_config.format`. Claude 3.x,
-/// original Claude 4, and Opus 4.1 do not support native structured outputs.
-/// Match release families rather than treating every Claude name as capable.
+/// Legacy informational direct-API family hint, retained for API compatibility.
+/// Not used by request forwarding and not a promise of hosted-platform support:
+/// actual model/schema acceptance is provider-owned.
 pub fn supports_native_output_format(model: &str) -> bool {
     let model = model.to_ascii_lowercase().replace(['.', '_'], "-");
     [
@@ -3031,6 +2958,7 @@ pub fn supports_native_output_format(model: &str) -> bool {
         "claude-sonnet-4-6",
         "claude-sonnet-5",
         "claude-haiku-4-5",
+        "claude-haiku-5-5",
         "claude-opus-4-5",
         "claude-opus-4-6",
         "claude-opus-4-7",
@@ -3092,64 +3020,6 @@ fn map_context_management_to_edits(cm: &Value) -> Option<Vec<Value>> {
         return None;
     }
     Some(edits)
-}
-
-/// JSON Schema keywords Anthropic's structured-output (`output_config.format`)
-/// validator does NOT implement. Sending a schema that uses any of these
-/// causes a 400 from the Anthropic API, so they must be stripped before the
-/// request leaves the process. (U32.)
-///
-/// The set is intentionally minimal — only keywords Anthropic explicitly
-/// documents as unsupported for `output_format`. Other JSON Schema features
-/// (e.g. `pattern`, `format`, `enum`, `minimum`/`maximum`) are accepted.
-///
-/// - `uniqueItems`: array constraint, not honoured by Anthropic's validator.
-/// - `contains`: array constraint, same.
-/// - `minProperties` / `maxProperties`: object constraints, same.
-///
-/// The walk recurses through `properties`, `items`, `$defs` / `definitions`,
-/// and the `anyOf` / `oneOf` / `allOf` combiners — matching the traversal
-/// used by `inject_additional_properties_false` so the two passes stay in
-/// sync on which schema nodes they visit.
-fn strip_unsupported_anthropic_schema_keywords(schema: &mut Value) {
-    let Some(map) = schema.as_object_mut() else {
-        return;
-    };
-    for key in ["uniqueItems", "contains", "minProperties", "maxProperties"] {
-        map.remove(key);
-    }
-    if let Some(Value::Object(props)) = map.get_mut("properties") {
-        for (_, child) in props.iter_mut() {
-            strip_unsupported_anthropic_schema_keywords(child);
-        }
-    }
-    if let Some(items) = map.get_mut("items") {
-        // `items` may be either a sub-schema (object) or an array of
-        // sub-schemas (tuple validation). Walk both shapes.
-        match items {
-            Value::Object(_) => strip_unsupported_anthropic_schema_keywords(items),
-            Value::Array(arr) => {
-                for child in arr.iter_mut() {
-                    strip_unsupported_anthropic_schema_keywords(child);
-                }
-            }
-            _ => {}
-        }
-    }
-    for defs_key in ["$defs", "definitions"] {
-        if let Some(Value::Object(defs)) = map.get_mut(defs_key) {
-            for (_, child) in defs.iter_mut() {
-                strip_unsupported_anthropic_schema_keywords(child);
-            }
-        }
-    }
-    for combiner in ["anyOf", "oneOf", "allOf"] {
-        if let Some(Value::Array(arr)) = map.get_mut(combiner) {
-            for child in arr.iter_mut() {
-                strip_unsupported_anthropic_schema_keywords(child);
-            }
-        }
-    }
 }
 
 /// Walk Anthropic `content[]` blocks and split them into the OpenAI response
@@ -3432,21 +3302,11 @@ fn transform_stream_chunk_impl(
             tool_blocks.clear();
             Ok(Some(role_chunk))
         }
-        "content_block_start" => {
-            if value.pointer("/content_block/type").and_then(Value::as_str) == Some("tool_use")
-                && value.pointer("/content_block/name").and_then(Value::as_str)
-                    == Some(JSON_TOOL_CALL_NAME)
-            {
-                if let Some(meta) = meta.as_mut() {
-                    meta.json_tool = true;
-                }
-            }
-            Ok(build_content_block_start_chunk(
-                &value,
-                tool_blocks,
-                reverse_map,
-            ))
-        }
+        "content_block_start" => Ok(build_content_block_start_chunk(
+            &value,
+            tool_blocks,
+            reverse_map,
+        )),
         "content_block_delta" => Ok(build_delta_chunk(&value, tool_blocks)),
         "content_block_stop" => Ok(build_content_block_stop_chunk(&value, tool_blocks)),
         "message_delta" => Ok(Some(build_finish_chunk(&value, meta))),
@@ -3529,7 +3389,6 @@ fn extract_stream_meta(value: &Value) -> StreamMeta {
         ephemeral_5m_input_tokens,
         ephemeral_1h_input_tokens,
         prompt_tokens,
-        json_tool: false,
         speed: message
             .and_then(|m| m.get("speed"))
             .and_then(Value::as_str)
@@ -3672,7 +3531,6 @@ fn build_content_block_start_chunk(
         tool_blocks.insert(
             index,
             ToolBlockState {
-                is_json_tool: false,
                 is_server_tool: true,
                 accumulated_args: String::new(),
             },
@@ -3686,24 +3544,13 @@ fn build_content_block_start_chunk(
     let raw_name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let name = reverse_lookup_in(raw_name, reverse_map);
 
-    // Feature #6: when the block is the synthetic `json_tool_call` we injected
-    // for `response_format: json_object`, suppress the tool-call start chunk
-    // and remember this index. Subsequent `input_json_delta` events for it
-    // will be redirected to `delta.content` (the JSON the caller asked for)
-    // instead of leaking as a phantom tool call.
-    let is_json_tool = name == JSON_TOOL_CALL_NAME;
     tool_blocks.insert(
         index,
         ToolBlockState {
-            is_json_tool,
             is_server_tool: false,
             accumulated_args: String::new(),
         },
     );
-    if is_json_tool {
-        return None;
-    }
-
     // Preserve the Anthropic `caller` field (programmatic tool calling) on
     // the OpenAI tool_call start chunk so the caller-visible identity is
     // consistent with the non-streaming response.
@@ -3750,39 +3597,19 @@ fn build_delta_chunk(
             .unwrap_or("");
         let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        // Look up block state once: accumulate args regardless, and pick up
-        // both the json_tool_call redirect flag and the server_tool suppression
-        // flag. `input_json_delta` for `server_tool_use` / `*_tool_result`
+        // `input_json_delta` for `server_tool_use` / `*_tool_result`
         // blocks is the server-side argument assembly for hosted tools (web
         // search queries, code execution payloads) — not an OpenAI tool_call.
         // Suppress it entirely so streaming clients don't see phantom calls.
-        let (is_json_tool, is_server_tool) = if let Some(state) = tool_blocks.get_mut(&index) {
+        let is_server_tool = if let Some(state) = tool_blocks.get_mut(&index) {
             state.accumulated_args.push_str(partial);
-            (state.is_json_tool, state.is_server_tool)
+            state.is_server_tool
         } else {
-            (false, false)
+            false
         };
         if is_server_tool {
             return None;
         }
-        // Feature #6: if this index is the synthetic `json_tool_call`, the
-        // fragments ARE the JSON response the caller asked for — emit them as
-        // `delta.content` text, not as a tool-call argument delta. Accumulate
-        // anyway so a later `content_block_stop` sees consistent state.
-        if is_json_tool {
-            if partial.is_empty() {
-                return None;
-            }
-            return Some(json!({
-            "object": "chat.completion.chunk",
-            "choices": [{
-            "index": 0,
-            "delta": {"content": partial},
-            "finish_reason": null,
-            }],
-            }));
-        }
-
         if partial.is_empty() {
             return None;
         }
@@ -3890,9 +3717,8 @@ fn build_delta_chunk(
 /// arguments, Anthropic still means "call the tool with an empty object".
 /// Without a final arguments delta, downstream streaming accumulators would
 /// see a malformed empty-arguments tool call, so emit one closing
-/// `arguments: "{}"` delta for that index. Real (non-empty) tool blocks and
-/// the synthetic `json_tool_call` block (handled separately) produce nothing
-/// here. The block's tracked state is dropped once it stops.
+/// `arguments: "{}"` delta for that index. Non-empty tool blocks produce
+/// nothing here. The block's tracked state is dropped once it stops.
 fn build_content_block_stop_chunk(
     value: &Value,
     tool_blocks: &mut HashMap<u64, ToolBlockState>,
@@ -3901,12 +3727,11 @@ fn build_content_block_stop_chunk(
     let state = tool_blocks.remove(&index);
     match state {
         // Only emit a closing `arguments: "{}"` for real tool_use blocks
-        // (is_json_tool=false AND is_server_tool=false) that received no
+        // (is_server_tool=false) that received no
         // argument fragments. server_tool / *_tool_result blocks never
         // produced a tool-call start chunk, so they must NOT emit a closing
         // arguments delta either.
         Some(ToolBlockState {
-            is_json_tool: false,
             is_server_tool: false,
             accumulated_args,
         }) if accumulated_args.is_empty() => Some(json!({
@@ -3931,13 +3756,7 @@ fn build_finish_chunk(value: &Value, meta: &Option<StreamMeta>) -> Value {
         .get("delta")
         .and_then(|d| d.get("stop_reason"))
         .and_then(|v| v.as_str());
-    let finish_reason = stop_reason.map(|reason| {
-        if reason == "tool_use" && meta.as_ref().is_some_and(|meta| meta.json_tool) {
-            json!("stop")
-        } else {
-            map_stop_reason_to_openai(reason)
-        }
-    });
+    let finish_reason = stop_reason.map(map_stop_reason_to_openai);
 
     let mut chunk = json!({
     "object": "chat.completion.chunk",
@@ -4061,6 +3880,9 @@ fn anthropic_reasoning_tokens(usage: &Value) -> Option<u64> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod native_output_tests;
 
 pub mod count_tokens;
 

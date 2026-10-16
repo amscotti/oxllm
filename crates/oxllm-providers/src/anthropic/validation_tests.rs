@@ -305,7 +305,7 @@ fn validation_sse_lone_cr_and_multiline_data_keep_anthropic_dispatch() {
 }
 
 #[test]
-fn validation_schema_wrappers_and_unsupported_strict_mode_are_rejected() {
+fn validation_schema_wrappers_are_rejected_but_model_support_is_upstream_owned() {
     for wrapper in [
         json!({"name": "missing"}),
         json!({"schema": null}),
@@ -324,18 +324,22 @@ fn validation_schema_wrappers_and_unsupported_strict_mode_are_rejected() {
     }
     let mut legacy = deployment();
     legacy.oxllm_params.model = "anthropic/claude-3-5-sonnet".into();
-    assert!(matches!(
-        AnthropicProvider.transform_request(
+    let forwarded = AnthropicProvider
+        .transform_request(
             &json!({
                 "messages": [{"role": "user", "content": "json"}],
                 "response_format": {"type": "json_schema", "json_schema": {
                     "strict": true, "schema": {"type": "object", "properties": {}}
                 }},
             }),
-            &legacy
-        ),
-        Err(oxllm_core::Error::BadRequest(_))
-    ));
+            &legacy,
+        )
+        .unwrap();
+    assert_eq!(
+        forwarded["output_config"]["format"]["schema"],
+        json!({"type":"object", "properties":{}})
+    );
+    assert!(forwarded.get("tools").is_none());
 }
 
 #[test]

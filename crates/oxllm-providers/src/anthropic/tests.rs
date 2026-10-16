@@ -22,9 +22,8 @@ fn deployment() -> Deployment {
     }
 }
 
-/// Deployment using a legacy model that does NOT support native
-/// `output_format` — used to exercise the synthetic `json_tool_call` path
-/// after P2 made claude-3-5-sonnet use native structured outputs.
+/// A legacy identifier used to verify that native forwarding does not depend
+/// on a local capability guess. Actual model support is provider-owned.
 fn legacy_deployment() -> Deployment {
     Deployment {
         model_name: "claude-3-opus".to_string(),
@@ -756,7 +755,7 @@ fn response_with_thinking_blocks() {
 // a variant with tool_calls check in message.
 
 #[test]
-fn response_tool_indexes_follow_visible_calls_after_thinking_and_hidden_json() {
+fn response_tool_indexes_include_explicit_legacy_named_tools_after_thinking() {
     let body = json!({"id":"msg-tools", "model":"claude-sonnet-4-5", "content":[
         {"type":"thinking", "thinking":"choose tools", "signature":"synthetic-signature"},
         {"type":"tool_use", "id":"hidden", "name":"json_tool_call", "input":{"answer":"ok"}},
@@ -771,15 +770,17 @@ fn response_tool_indexes_follow_visible_calls_after_thinking_and_hidden_json() {
     let calls = response["choices"][0]["message"]["tool_calls"]
         .as_array()
         .unwrap();
-    assert_eq!(calls.len(), 2);
+    assert_eq!(calls.len(), 3);
     assert_eq!(calls[0]["index"], 0);
     assert_eq!(calls[1]["index"], 1);
-    assert_eq!(calls[0]["id"], "first");
-    assert_eq!(calls[1]["id"], "second");
-    assert_eq!(calls[0]["caller"], json!({"type":"direct"}));
+    assert_eq!(calls[2]["index"], 2);
+    assert_eq!(calls[0]["function"]["name"], "json_tool_call");
+    assert_eq!(calls[1]["id"], "first");
+    assert_eq!(calls[2]["id"], "second");
+    assert_eq!(calls[1]["caller"], json!({"type":"direct"}));
     assert_eq!(
         response["choices"][0]["message"]["content"],
-        "{\"answer\":\"ok\"}"
+        "checkingand another"
     );
 }
 
@@ -953,14 +954,10 @@ fn response_with_citations_document_block() {
 }
 
 // --- Structured output (response_format json_object) in request ---
-// Ported from: test_anthropic_structured_output
-// Tests that response_format json_object is mapped to a synthetic
-// `json_tool_call` tool + forced `tool_choice`, the approach the reference uses to
-// back-fill structured outputs on Claude models that predate native
-// `output_format` support.
+// Schema-less JSON mode has no native Anthropic representation.
 
 #[test]
-fn request_json_object_response_format_injects_synthetic_tool() {
+fn request_json_object_response_format_without_schema_is_rejected() {
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-3-5-sonnet",
@@ -972,33 +969,15 @@ fn request_json_object_response_format_injects_synthetic_tool() {
         "temperature": 0,
         "response_format": {"type": "json_object"},
     });
-    let out = p.transform_request(&req, &legacy_deployment()).expect("ok");
-    // The OpenAI `response_format` field itself is dropped (Anthropic has no
-    // top-level equivalent on most models).
-    assert!(
-        out.get("response_format").is_none(),
-        "response_format should be dropped"
-    );
-    // A synthetic `json_tool_call` tool is injected.
-    let tools = out["tools"].as_array().expect("tools array injected");
-    let json_tool = tools
-        .iter()
-        .find(|t| t["name"] == "json_tool_call")
-        .expect("json_tool_call injected");
-    assert_eq!(json_tool["input_schema"]["type"], "object");
-    // tool_choice forces the model to call it.
-    assert_eq!(out["tool_choice"]["type"], "tool");
-    assert_eq!(out["tool_choice"]["name"], "json_tool_call");
-    // System/user messages still map correctly.
-    assert_eq!(out["system"], "Always respond in JSON.");
-    assert_eq!(out["messages"][0]["role"], "user");
+    assert!(matches!(
+        p.transform_request(&req, &legacy_deployment()),
+        Err(oxllm_core::Error::BadRequest(_))
+    ));
 }
 
 #[test]
 fn request_json_object_response_format_with_schema_uses_schema() {
-    // When the caller nests a JSON schema, the synthetic tool's
-    // `input_schema` must mirror it verbatim so Anthropic shapes the tool
-    // call arguments to match.
+    // The historical json_object-with-schema alias still maps natively.
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-3-5-sonnet",
@@ -1017,24 +996,15 @@ fn request_json_object_response_format_with_schema_uses_schema() {
         },
     });
     let out = p.transform_request(&req, &legacy_deployment()).expect("ok");
-    let tools = out["tools"].as_array().expect("tools array");
-    let json_tool = tools
-        .iter()
-        .find(|t| t["name"] == "json_tool_call")
-        .expect("json_tool_call injected");
-    assert_eq!(json_tool["input_schema"]["type"], "object");
     assert_eq!(
-        json_tool["input_schema"]["properties"]["name"]["type"],
-        "string"
+        out["output_config"]["format"]["schema"],
+        req["response_format"]["json_schema"]["schema"]
     );
-    assert_eq!(json_tool["input_schema"]["required"], json!(["name"]));
+    assert!(out.get("tools").is_none());
 }
 
 #[test]
-fn request_json_object_response_format_passes_through() {
-    // Legacy compatibility: callers that only inspect `system` / `messages`
-    // continue to work when response_format is supplied. The synthetic tool
-    // is added in addition to (not instead of) the normal mapping.
+fn request_json_object_response_format_does_not_silently_drop_constraints() {
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-3-5-sonnet",
@@ -1046,13 +1016,8 @@ fn request_json_object_response_format_passes_through() {
         "temperature": 0,
         "response_format": {"type": "json_object"},
     });
-    let out = p.transform_request(&req, &deployment()).expect("ok");
-    assert_eq!(out["system"], "Always respond in JSON.");
-    assert_eq!(out["messages"][0]["role"], "user");
-    assert!(
-        out.get("response_format").is_none(),
-        "response_format should be dropped"
-    );
+    let error = p.transform_request(&req, &deployment()).unwrap_err();
+    assert!(error.to_string().contains("no native representation"));
 }
 
 // --- Response usage with tool_use stop_reason ---
@@ -1081,14 +1046,10 @@ fn response_stop_reason_tool_use_with_usage() {
 
 // --- Convert tool response to message (values extraction) ---
 // Ported from: test_convert_tool_response_to_message_with_values
-// When `response_format: {type: "json_object"}` injected a synthetic
-// `json_tool_call` tool, Anthropic responds with a single tool_use block of
-// that name whose `input` is the JSON the caller asked for. The transform
-// must lift that input out as the response `content` AND strip the synthetic
-// tool call so it doesn't leak into the OpenAI tool_calls surface.
+// Tool names never select a different response representation.
 
 #[test]
-fn response_tool_call_values_extraction() {
+fn response_legacy_named_tool_values_remain_tool_arguments() {
     let p = AnthropicProvider;
     let body = json!({
         "id": "msg_json",
@@ -1107,18 +1068,14 @@ fn response_tool_call_values_extraction() {
     let out = p
         .transform_response(&body, "claude-3-5-sonnet")
         .expect("ok");
-    // The JSON the model produced becomes the message content.
-    let content = out["choices"][0]["message"]["content"]
+    let content = out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
         .as_str()
         .expect("content string");
     let parsed: serde_json::Value = serde_json::from_str(content).expect("content is JSON");
     assert_eq!(parsed["values"]["name"], "John");
     assert_eq!(parsed["values"]["age"], 30);
-    // The synthetic tool call is stripped from the OpenAI tool_calls surface.
-    assert!(
-        out["choices"][0]["message"].get("tool_calls").is_none(),
-        "json_tool_call must not leak into tool_calls"
-    );
+    assert_eq!(out["choices"][0]["finish_reason"], "tool_calls");
+    assert_eq!(out["choices"][0]["message"]["content"], "");
 }
 
 // --- Empty string content in user message ---
@@ -2364,16 +2321,13 @@ fn top_k_passes_through() {
 }
 
 // =================================================================
-// Bedrock strict tools defensive test (#34388)
+// Strict function-tool forwarding
 // =================================================================
 //
-// Anthropic (and Bedrock-hosted Anthropic) reject the OpenAI `strict` field
-// on tool definitions. The tool mapper only forwards a known allow-list of
-// fields, so `strict` must never survive the transform. This guards against
-// a regression that blindly passes the function object through.
+// The provider decides whether its selected model accepts strict tool use.
 
 #[test]
-fn strict_field_dropped_from_tools() {
+fn strict_field_forwarded_on_tool_definition() {
     let p = AnthropicProvider;
     let dep = deployment();
     let req = json!({
@@ -2390,10 +2344,8 @@ fn strict_field_dropped_from_tools() {
         }],
     });
     let out = p.transform_request(&req, &dep).expect("ok");
-    assert!(
-        out["tools"][0].get("strict").is_none(),
-        "strict must be dropped"
-    );
+    assert_eq!(out["tools"][0]["strict"], true);
+    assert!(out["tools"][0]["input_schema"].get("strict").is_none());
 }
 
 // =================================================================
@@ -2879,15 +2831,13 @@ fn stream_combined_signature_and_thinking_delta_surfaces_both() {
 }
 
 // =================================================================
-// Feature 2: response_format / structured outputs (synthetic tool)
+// Native response_format / structured outputs
 // =================================================================
 
 #[test]
-fn response_format_other_types_are_dropped_silently() {
-    // `response_format.type` values other than `json_object` (e.g.
-    // `json_schema` mode without our json_object compat path, or `text`)
-    // must be dropped silently — Anthropic has no native equivalent on
-    // most models, and we should not error or inject a synthetic tool.
+fn response_format_text_does_not_add_a_native_format_or_tools() {
+    // Explicit text is unshaped output. Schema formats are handled natively;
+    // unknown modes and schema-less JSON mode are request errors.
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-3-5-sonnet",
@@ -2899,14 +2849,13 @@ fn response_format_other_types_are_dropped_silently() {
     assert!(out.get("response_format").is_none());
     assert!(
         out.get("tools").is_none(),
-        "non-json_object response_format must not inject tools"
+        "plain text must not inject tools"
     );
 }
 
 #[test]
 fn response_format_merges_with_existing_tools() {
-    // If the caller already supplies tools, the synthetic JSON tool is
-    // appended to the list (not replacing it).
+    // Native JSON output never adds a tool or changes the caller's choice.
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-3-5-sonnet",
@@ -2916,15 +2865,15 @@ fn response_format_merges_with_existing_tools() {
             "type": "function",
             "function": {"name": "get_weather", "parameters": {"type": "object"}}
         }],
-        "response_format": {"type": "json_object"},
+        "tool_choice":"auto",
+        "response_format": {"type": "json_schema", "json_schema":{"schema":{"type":"object", "additionalProperties":false}}},
     });
     let out = p.transform_request(&req, &legacy_deployment()).expect("ok");
     let tools = out["tools"].as_array().expect("tools");
-    assert_eq!(tools.len(), 2, "caller tool + synthetic json tool");
+    assert_eq!(tools.len(), 1);
     assert!(tools.iter().any(|t| t["name"] == "get_weather"));
-    assert!(tools.iter().any(|t| t["name"] == "json_tool_call"));
-    // tool_choice forces the JSON tool even if the caller requested auto.
-    assert_eq!(out["tool_choice"]["name"], "json_tool_call");
+    assert_eq!(out["tool_choice"], json!({"type":"auto"}));
+    assert_eq!(out["output_config"]["format"]["type"], "json_schema");
 }
 
 // =================================================================
@@ -3774,8 +3723,7 @@ fn golden_chat_request_003_response_format_translation() {
     let case: GoldenRequestCase =
         serde_json::from_str(GOLDEN_REQUEST_003_RESPONSE_FORMAT).expect("valid json");
     let provider = AnthropicProvider;
-    // P2: claude-3-5-sonnet now uses native `output_format`; the golden was
-    // recorded with the synthetic tool, so use a legacy model to exercise it.
+    // Model support is provider-owned even for legacy model identifiers.
     let dep = legacy_deployment();
     let out = provider
         .transform_request(&case.input, &dep)
@@ -4408,9 +4356,12 @@ fn beta_headers_web_fetch_for_hosted_web_search_tool() {
 }
 
 #[test]
-fn beta_headers_structured_outputs_for_output_format() {
-    let betas = collect_beta_headers(&json!({"output_format": {"type": "json"}}), "claude");
-    assert!(betas.contains(&BETA_STRUCTURED_OUTPUTS.to_string()));
+fn beta_headers_legacy_format_translation_does_not_select_the_retired_beta() {
+    let betas = collect_beta_headers(
+        &json!({"output_format": {"type": "json_schema", "schema": {"type": "object"}}}),
+        "claude",
+    );
+    assert!(!betas.contains(&BETA_STRUCTURED_OUTPUTS.to_string()));
 }
 
 #[test]
@@ -4637,27 +4588,22 @@ fn stream_role_chunk_includes_cache_creation_buckets() {
 }
 
 // =================================================================
-// Feature 6: Streaming JSON mode fix (json_tool_call → delta.content)
+// Explicit legacy-named tools remain tool calls while streaming.
 // =================================================================
 
 #[test]
-fn stream_json_tool_call_start_is_suppressed() {
-    // When the synthetic json_tool_call tool_use block starts, the OpenAI
-    // tool_calls start chunk must be suppressed (the JSON will be emitted as
-    // delta.content instead).
+fn stream_json_tool_call_start_is_preserved() {
     let p = AnthropicProvider;
     let raw = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"json_tool_call\",\"input\":{}}}";
-    assert!(
-        p.transform_stream_chunk(raw).expect("ok").is_none(),
-        "json_tool_call start must be suppressed"
+    let chunk = p.transform_stream_chunk(raw).unwrap().unwrap();
+    assert_eq!(
+        chunk["choices"][0]["delta"]["tool_calls"][0]["function"]["name"],
+        "json_tool_call"
     );
 }
 
 #[test]
-fn stream_json_tool_call_input_json_delta_emitted_as_content() {
-    // input_json_delta fragments for the json_tool_call block must be emitted
-    // as delta.content (the JSON the caller asked for), not as a tool_calls
-    // argument delta.
+fn stream_json_tool_call_input_json_delta_remains_tool_arguments() {
     let p = AnthropicProvider;
     // Prime the block via content_block_start.
     let start = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"json_tool_call\",\"input\":{}}}";
@@ -4668,14 +4614,10 @@ fn stream_json_tool_call_input_json_delta_emitted_as_content() {
         .expect("ok")
         .expect("content delta");
     assert_eq!(
-        out["choices"][0]["delta"]["content"],
+        out["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
         "{\"hello\": \"world\"}"
     );
-    // Must NOT leak as a tool_calls delta.
-    assert!(
-        out["choices"][0]["delta"].get("tool_calls").is_none(),
-        "json_tool_call must not surface as a tool_calls delta"
-    );
+    assert!(out["choices"][0]["delta"].get("content").is_none());
 }
 
 // =================================================================
@@ -4730,18 +4672,24 @@ fn stream_content_block_stop_silent_for_text_block() {
 #[test]
 fn stream_tool_block_state_cleared_on_new_message_start() {
     // A new stream's message_start must clear the per-stream tool-block
-    // tracker so a json_tool_call flag from a prior stream doesn't bleed in.
+    // tracker so accumulated arguments from a prior stream cannot bleed in.
     let p = AnthropicProvider;
-    // Stream A: prime a json_tool_call block.
+    // Stream A: prime an ordinary tool block with the historical helper name.
     let a_start = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_A\",\"model\":\"claude\",\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}";
     p.transform_stream_chunk(a_start).expect("ok");
     let a_block = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"json_tool_call\",\"input\":{}}}";
     p.transform_stream_chunk(a_block).expect("ok");
 
-    // Stream B: a normal get_weather tool at the same index 0 must NOT be
-    // treated as json_tool_call (its start chunk must emit, not be suppressed).
+    // Stream B: the same index belongs to a new get_weather call. Its start
+    // must identify that call independently of stream A.
     let b_start = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_B\",\"model\":\"claude\",\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}";
     p.transform_stream_chunk(b_start).expect("ok");
+    let stale_stop =
+        "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}";
+    assert!(
+        p.transform_stream_chunk(stale_stop).unwrap().is_none(),
+        "stream A's pending empty arguments must have been cleared"
+    );
     let b_block = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"get_weather\",\"input\":{}}}";
     let out = p
         .transform_stream_chunk(b_block)
@@ -4754,15 +4702,11 @@ fn stream_tool_block_state_cleared_on_new_message_start() {
 }
 
 // =================================================================
-// Feature 10 (heuristic only): native output_format model detection
+// Legacy informational model-family hint (never used for forwarding)
 // =================================================================
 //
-// Native `output_format` wiring (feature #10) is DEFERRED — switching
-// claude-3-5-sonnet to native output_format would break the immutable golden
-// file `chat_request_003_response_format.json` (which expects the synthetic
-// tool for that model), and the file constraint forbids editing goldens. The
-// model-capability heuristic is implemented and unit-tested here so the
-// feature is a one-line wire-up once the golden is regenerated.
+// Preserve the public helper's informational behavior without using its
+// model-name guesses to gate schemas or select an emulation strategy.
 
 #[test]
 fn supports_native_output_format_newer_claude_models() {
@@ -4774,7 +4718,7 @@ fn supports_native_output_format_newer_claude_models() {
 }
 
 #[test]
-fn supports_native_output_format_old_models_fall_back() {
+fn supports_native_output_format_legacy_models_are_not_known_family_hints() {
     assert!(!supports_native_output_format("claude-3-5-sonnet"));
     assert!(!supports_native_output_format("claude-3-7-sonnet"));
     assert!(!supports_native_output_format("claude-sonnet-4-20250514"));
@@ -5140,7 +5084,7 @@ fn request_native_output_format_with_schema() {
 }
 
 #[test]
-fn request_bare_json_object_uses_tool_instead_of_an_empty_closed_schema() {
+fn request_bare_json_object_is_not_emulated_even_for_known_native_models() {
     let p = AnthropicProvider;
     let dep = Deployment {
         model_name: "claude-sonnet-4".to_string(),
@@ -5156,22 +5100,14 @@ fn request_bare_json_object_uses_tool_instead_of_an_empty_closed_schema() {
         "max_tokens": 100,
         "response_format": {"type": "json_object"},
     });
-    let out = p.transform_request(&req, &dep).expect("ok");
-    assert!(out.get("output_config").is_none());
-    assert_eq!(
-        out["tool_choice"],
-        json!({"type": "tool", "name": "json_tool_call"})
-    );
-    let schema = &out["tools"][0]["input_schema"];
-    assert_eq!(schema["type"], "object");
-    assert!(schema.get("additionalProperties").is_none());
+    assert!(matches!(
+        p.transform_request(&req, &dep),
+        Err(oxllm_core::Error::BadRequest(_))
+    ));
 }
 
 #[test]
-fn request_native_output_format_schema_recursive_additional_properties_false() {
-    // Bug #2: `additionalProperties: false` must be injected recursively at
-    // every object node, not just the top level. Anthropic requires it on
-    // every nested object.
+fn request_native_output_format_schema_is_not_repaired_recursively() {
     let p = AnthropicProvider;
     let dep = Deployment {
         model_name: "claude-sonnet-4".to_string(),
@@ -5213,23 +5149,16 @@ fn request_native_output_format_schema_recursive_additional_properties_false() {
     });
     let out = p.transform_request(&req, &dep).expect("ok");
     let schema = &out["output_config"]["format"]["schema"];
-    // Top-level object.
-    assert_eq!(schema["additionalProperties"], json!(false));
-    // Nested `address` object.
-    let address = &schema["properties"]["address"];
-    assert_eq!(address["additionalProperties"], json!(false));
-    // Deeply-nested `geo` object (two levels down).
-    let geo = &address["properties"]["geo"];
-    assert_eq!(
-        geo["additionalProperties"],
-        json!(false),
-        "recursive injection must reach deeply nested objects"
+    assert_eq!(schema, &req["response_format"]["json_schema"]["schema"]);
+    assert!(
+        schema["properties"]["address"]["properties"]["geo"]
+            .get("additionalProperties")
+            .is_none()
     );
 }
 
 #[test]
-fn request_legacy_model_uses_synthetic_tool_for_response_format() {
-    // Legacy models (claude-3-opus) fall back to the synthetic tool.
+fn request_legacy_model_does_not_gain_schema_less_json_mode() {
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-3-opus",
@@ -5237,14 +5166,10 @@ fn request_legacy_model_uses_synthetic_tool_for_response_format() {
         "max_tokens": 10,
         "response_format": {"type": "json_object"},
     });
-    let out = p.transform_request(&req, &legacy_deployment()).expect("ok");
-    assert!(
-        out.get("output_format").is_none(),
-        "legacy model must not use output_format"
-    );
-    let tools = out["tools"].as_array().expect("tools");
-    assert!(tools.iter().any(|t| t["name"] == "json_tool_call"));
-    assert_eq!(out["tool_choice"]["name"], "json_tool_call");
+    assert!(matches!(
+        p.transform_request(&req, &legacy_deployment()),
+        Err(oxllm_core::Error::BadRequest(_))
+    ));
 }
 
 // =================================================================
@@ -5254,8 +5179,8 @@ fn request_legacy_model_uses_synthetic_tool_for_response_format() {
 // OpenAI's structured-outputs API sends `response_format: {type: "json_schema",
 // json_schema: {schema: {...}}}`. Before H8 the Anthropic transform only
 // matched `type == "json_object"` and silently dropped `json_schema`, losing
-// structured output entirely. H8 routes both through the same native
-// `output_config.format` (Claude 3.5+) or synthetic-tool (legacy) path.
+// structured output entirely. Both schema-bearing shapes now use native
+// `output_config.format`; the provider decides model/schema acceptance.
 
 fn sonnet4_deployment() -> Deployment {
     Deployment {
@@ -5342,13 +5267,10 @@ fn request_json_schema_response_format_without_schema_is_rejected() {
     assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
 }
 
-/// H8 test 3: `response_format: {type: "json_schema", json_schema: {strict:
-/// true, schema: {...}}}` — the `strict` flag is OpenAI's structured-outputs
-/// marker. The native path must produce a schema Anthropic accepts:
-/// `additionalProperties: false` injected on every object node and the
-/// caller's `required` list preserved.
+/// Strict JSON output preserves the complete caller schema, including missing
+/// annotations that the provider may reject rather than repair.
 #[test]
-fn request_json_schema_strict_injects_additional_properties_false() {
+fn request_json_schema_strict_preserves_additional_properties_and_required() {
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-sonnet-4",
@@ -5384,27 +5306,16 @@ fn request_json_schema_strict_injects_additional_properties_false() {
         json!(["name", "address"]),
         "caller's required list must be preserved"
     );
-    // additionalProperties: false injected at the top level.
-    assert_eq!(schema["additionalProperties"], json!(false));
-    // And recursively at every nested object node (Anthropic requires it on
-    // every object, not just the root).
+    assert!(schema.get("additionalProperties").is_none());
     let address = &schema["properties"]["address"];
-    assert_eq!(
-        address["additionalProperties"],
-        json!(false),
-        "recursive injection must reach nested objects"
-    );
+    assert!(address.get("additionalProperties").is_none());
+    assert_eq!(schema, &req["response_format"]["json_schema"]["schema"]);
 }
 
-/// U32: Anthropic's structured-output schema
-/// validator rejects JSON Schema keywords it does not implement
-/// (`uniqueItems`, `contains`, `minProperties`, `maxProperties`). The
-/// native `output_config.format` path must strip them recursively before
-/// sending, otherwise the request 400s upstream. This test feeds a schema
-/// using all four unsupported keywords at multiple depths and asserts
-/// none survive on the transformed Anthropic body.
+/// Unsupported schema constraints are provider errors, not permission to remove
+/// caller requirements at any nesting depth.
 #[test]
-fn request_json_schema_strips_unsupported_anthropic_schema_keywords() {
+fn request_json_schema_preserves_provider_unsupported_schema_keywords() {
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-sonnet-4",
@@ -5438,31 +5349,14 @@ fn request_json_schema_strips_unsupported_anthropic_schema_keywords() {
         .transform_request(&req, &sonnet4_deployment())
         .expect("ok");
     let schema = &out["output_config"]["format"]["schema"];
-    // Top-level object constraints stripped.
-    assert!(
-        schema.get("minProperties").is_none(),
-        "minProperties must be stripped from the top-level schema: {schema}"
-    );
-    assert!(
-        schema.get("maxProperties").is_none(),
-        "maxProperties must be stripped from the top-level schema: {schema}"
-    );
-    // Array constraints stripped from `tags`.
+    assert_eq!(schema, &req["response_format"]["json_schema"]["schema"]);
+    assert_eq!(schema["minProperties"], 1);
+    assert_eq!(schema["maxProperties"], 10);
     let tags = &schema["properties"]["tags"];
-    assert!(
-        tags.get("uniqueItems").is_none(),
-        "uniqueItems must be stripped from array properties: {tags}"
-    );
-    assert!(
-        tags.get("contains").is_none(),
-        "contains must be stripped from array properties: {tags}"
-    );
-    // Nested object constraints stripped recursively.
+    assert_eq!(tags["uniqueItems"], true);
+    assert_eq!(tags["contains"], json!({"type":"string"}));
     let nested = &schema["properties"]["nested"];
-    assert!(
-        nested.get("minProperties").is_none(),
-        "minProperties must be stripped recursively from nested objects: {nested}"
-    );
+    assert_eq!(nested["minProperties"], 2);
     // Sanity: supported keywords survive.
     assert_eq!(
         tags["items"]["type"], "string",
@@ -5471,15 +5365,11 @@ fn request_json_schema_strips_unsupported_anthropic_schema_keywords() {
     assert_eq!(nested["properties"]["a"]["type"], "string");
 }
 
-/// U32 unit test for the schema-walker helper directly: it must strip the
-/// four unsupported keywords from every node it visits, recurse through
-/// `$defs` / combiners / tuple `items`, and leave every other keyword
-/// untouched. This isolates the walker from the full `transform_request`
-/// pipeline so future refactors of the request transform cannot silently
-/// drop the stripping pass.
+/// Nested constraints and definitions must reach the provider unchanged;
+/// schema-subset errors belong to the provider, not a lossy local filter.
 #[test]
-fn strip_unsupported_anthropic_schema_keywords_walks_all_nodes() {
-    let mut schema = json!({
+fn native_output_schema_preserves_all_nodes() {
+    let schema = json!({
         "type": "object",
         "minProperties": 1,
         "maxProperties": 5,
@@ -5512,37 +5402,11 @@ fn strip_unsupported_anthropic_schema_keywords_walks_all_nodes() {
             "Old": {"type": "object", "uniqueItems": true}
         }
     });
-    strip_unsupported_anthropic_schema_keywords(&mut schema);
-
-    // Top-level.
-    assert!(schema.get("minProperties").is_none());
-    assert!(schema.get("maxProperties").is_none());
-    // properties.arr — array keywords.
-    assert!(schema["properties"]["arr"].get("uniqueItems").is_none());
-    assert!(schema["properties"]["arr"].get("contains").is_none());
-    // properties.tuple.items — tuple (array) form, each element walked.
-    assert!(
-        schema["properties"]["tuple"]["items"][0]
-            .get("minProperties")
-            .is_none()
-    );
-    assert!(
-        schema["properties"]["tuple"]["items"][1]
-            .get("maxProperties")
-            .is_none()
-    );
-    // $defs.
-    assert!(schema["$defs"]["Def"].get("minProperties").is_none());
-    // anyOf combiner.
-    assert!(schema["anyOf"][0].get("maxProperties").is_none());
-    // legacy `definitions`.
-    assert!(schema["definitions"]["Old"].get("uniqueItems").is_none());
-
-    // Supported keywords survive (the walker is a filter, not a replace).
-    assert_eq!(schema["type"], "object");
-    assert_eq!(schema["properties"]["arr"]["type"], "array");
-    assert_eq!(schema["$defs"]["Def"]["properties"]["x"]["type"], "string");
-    assert_eq!(schema["anyOf"][1]["type"], "string");
+    let request = json!({"messages":[], "response_format":{"type":"json_schema", "json_schema":{"schema":schema}}});
+    let body = AnthropicProvider
+        .transform_request(&request, &deployment())
+        .unwrap();
+    assert_eq!(body["output_config"]["format"]["schema"], schema);
 }
 
 /// H8 test 4: regression — `response_format: {type: "json_object"}` must
@@ -5584,11 +5448,10 @@ fn request_json_object_still_works_after_json_schema_support() {
     assert!(out.get("tools").is_none());
 }
 
-/// H8 test 5: legacy models fall back to the synthetic `json_tool_call` tool
-/// when `response_format: {type: "json_schema"}` is used — the same fallback
-/// `json_object` uses. This keeps H8 consistent across model generations.
+/// Even legacy identifiers use native forwarding and get model-support errors
+/// from the provider; the proxy must never synthesize a tool instead.
 #[test]
-fn request_json_schema_on_legacy_model_uses_synthetic_tool() {
+fn request_json_schema_on_legacy_model_is_forwarded_natively() {
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude-3-opus",
@@ -5607,28 +5470,15 @@ fn request_json_schema_on_legacy_model_uses_synthetic_tool() {
         },
     });
     let out = p.transform_request(&req, &legacy_deployment()).expect("ok");
-    assert!(
-        out.get("output_config").is_none(),
-        "legacy model must not use native output_config"
-    );
-    let tools = out["tools"].as_array().expect("tools array");
-    let json_tool = tools
-        .iter()
-        .find(|t| t["name"] == "json_tool_call")
-        .expect("json_tool_call injected for json_schema on legacy model");
-    assert_eq!(json_tool["input_schema"]["type"], "object");
     assert_eq!(
-        json_tool["input_schema"]["properties"]["name"]["type"],
-        "string"
+        out["output_config"]["format"]["schema"],
+        req["response_format"]["json_schema"]["schema"]
     );
-    // tool_choice forces the synthetic call.
-    assert_eq!(out["tool_choice"]["type"], "tool");
-    assert_eq!(out["tool_choice"]["name"], "json_tool_call");
+    assert!(out.get("tools").is_none());
+    assert!(out.get("tool_choice").is_none());
 }
 
-/// H8 test 6: `response_format: {type: "json_schema"}` must trigger the
-/// `structured-outputs` beta tag (same as `json_object`) so the host sends
-/// it alongside native `output_config.format`.
+/// Stable native schemas do not require the legacy output_format beta.
 #[test]
 fn beta_headers_structured_outputs_for_response_format_json_schema() {
     let betas = collect_beta_headers(
@@ -5636,22 +5486,21 @@ fn beta_headers_structured_outputs_for_response_format_json_schema() {
         "claude",
     );
     assert!(
-        betas.contains(&BETA_STRUCTURED_OUTPUTS.to_string()),
-        "json_schema response_format must trigger the structured-outputs beta"
+        !betas.contains(&BETA_STRUCTURED_OUTPUTS.to_string()),
+        "stable json_schema output must not trigger the legacy beta"
     );
 }
 
 #[test]
 fn beta_headers_structured_outputs_for_response_format_json_object() {
-    // P2: response_format:{type:"json_object"} triggers the structured-outputs
-    // beta tag (so the host sends it alongside native output_format).
+    // A legacy beta cannot manufacture a missing native JSON-object mode.
     let betas = collect_beta_headers(
         &json!({
             "response_format": {"type": "json_object"}
         }),
         "claude",
     );
-    assert!(betas.contains(&BETA_STRUCTURED_OUTPUTS.to_string()));
+    assert!(!betas.contains(&BETA_STRUCTURED_OUTPUTS.to_string()));
 }
 
 #[test]
@@ -6315,15 +6164,14 @@ fn beta_headers_no_context_management_when_no_memory_tool() {
 
 #[test]
 fn beta_headers_structured_outputs_for_output_config_format() {
-    // B4: a caller-supplied `output_config.format` triggers the
-    // structured-outputs beta, matching the existing `output_format` path.
+    // Native output_config.format is stable, unlike legacy output_format.
     let betas = collect_beta_headers(
         &json!({
             "output_config": {"format": {"type": "json_schema"}}
         }),
         "claude",
     );
-    assert!(betas.contains(&BETA_STRUCTURED_OUTPUTS.to_string()));
+    assert!(!betas.contains(&BETA_STRUCTURED_OUTPUTS.to_string()));
 }
 
 // =================================================================
@@ -7527,10 +7375,9 @@ fn request_stop_number_wrapped_in_array() {
 }
 
 #[test]
-fn request_tool_choice_object_without_function_name_dropped() {
+fn request_tool_choice_object_without_function_name_is_rejected() {
     // `tool_choice: {"type": "function"}` with no `function.name` cannot be
-    // mapped to an Anthropic tool selection — it must be dropped, not
-    // forwarded as an invalid body.
+    // mapped to an Anthropic tool selection; do not silently choose auto.
     let p = AnthropicProvider;
     let req = json!({
         "model": "claude",
@@ -7538,11 +7385,10 @@ fn request_tool_choice_object_without_function_name_dropped() {
         "max_tokens": 10,
         "tool_choice": {"type": "function"},
     });
-    let out = p.transform_request(&req, &deployment()).expect("ok");
-    assert!(
-        out.get("tool_choice").is_none(),
-        "nameless tool_choice must be dropped"
-    );
+    assert!(matches!(
+        p.transform_request(&req, &deployment()),
+        Err(oxllm_core::Error::BadRequest(_))
+    ));
 }
 
 #[test]

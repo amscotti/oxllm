@@ -55,8 +55,8 @@ use crate::anthropic::sanitize_tool_input_schema;
 /// | `tools[]`                       | `toolConfig.tools[]` (`toolSpec`)         |
 /// | `tool_choice`                   | `toolConfig.toolChoice`                   |
 /// | `reasoning_effort` (Anthropic)  | `additionalModelRequestFields.thinking`   |
-/// | `response_format: json_schema`  | `outputConfig.textFormat` (native models) |
-/// | `response_format: json_object`  | native schema or supported tool fallback |
+/// | `response_format: json_schema`  | `outputConfig.textFormat` (provider-validated) |
+/// | `response_format: json_object`  | native supplied schema, or unsupported error |
 /// | `extra.guardrail_id`            | `guardrailConfig`                         |
 /// | `extra.performance_config`      | `performanceConfig`                       |
 ///
@@ -82,6 +82,14 @@ pub(super) fn transform_request_converse_with_base_model(
 ) -> Result<Value> {
     let resolved_feature_model = resolve_feature_model(runtime_model, extra, metadata_base_model)?;
     let feature_model = resolved_feature_model.as_deref().unwrap_or("");
+    if request
+        .get("tools")
+        .is_some_and(|tools| !tools.is_null() && !tools.is_array())
+    {
+        return Err(oxllm_core::Error::BadRequest(
+            "tools must be an array".into(),
+        ));
+    }
     validate_profile_reasoning(request, runtime_model, feature_model)?;
     let mut system_blocks: Vec<Value> = Vec::new();
     let mut converse_messages: Vec<Value> = Vec::new();
@@ -150,11 +158,8 @@ pub(super) fn transform_request_converse_with_base_model(
         "inferenceConfig".to_string(),
         build_inference_config(request, feature_model),
     );
-    // Native schemas use outputConfig.textFormat. Schema-less JSON mode
-    // needs the explicit forced-tool fallback on a supporting model.
-    let json_tool_schema = apply_response_format(request, feature_model, runtime_model, &mut out)?;
-    let uses_json_tool = json_tool_schema.is_some();
-    if let Some(tc) = build_tool_config(request, feature_model, json_tool_schema)? {
+    apply_response_format(request, &mut out)?;
+    if let Some(tc) = build_tool_config(request, feature_model)? {
         out.insert("toolConfig".to_string(), tc);
     }
     // Deployment-level guardrail configuration (Converse puts these in the
@@ -186,12 +191,11 @@ pub(super) fn transform_request_converse_with_base_model(
     // so it survives concurrent and inter-thread request flows — a process-
     // wide cell cannot, since two in-flight requests with different tool sets
     // would clobber each other's reverse map.
-    if let Some(tools) = request.get("tools").and_then(Value::as_array) {
-        let (forward, _reverse) = build_tool_name_maps(tools);
-        if !forward.is_empty() {
-            apply_tool_name_forward_map(&mut out, &forward);
-        }
-    }
+    let forward = request
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| build_tool_name_maps(tools).0)
+        .unwrap_or_default();
     // Pass-through Converse-native top-level fields when the caller has
     // pre-shaped them. These run last so explicit caller values take
     // precedence over the feature-level defaults above. Each entry maps the
@@ -204,11 +208,37 @@ pub(super) fn transform_request_converse_with_base_model(
             if !v.is_null() {
                 if *canonical == "outputConfig" {
                     if let Some(caller) = v.as_object() {
+                        let mut caller = caller.clone();
+                        caller.remove("format");
+                        if caller.get("textFormat").is_some_and(Value::is_null) {
+                            caller.remove("textFormat");
+                        }
+                        if caller.contains_key("textFormat")
+                            && request
+                                .pointer("/response_format/type")
+                                .and_then(Value::as_str)
+                                == Some("text")
+                        {
+                            return Err(oxllm_core::Error::BadRequest(format!(
+                                "response_format text conflicts with {key}.textFormat"
+                            )));
+                        }
+                        if let Some(native) = caller.get_mut("textFormat")
+                            && let Some(mapped) = out
+                                .get("outputConfig")
+                                .and_then(|value| value.get("textFormat"))
+                        {
+                            *native = merge_text_formats(mapped, native).ok_or_else(|| {
+                                oxllm_core::Error::BadRequest(format!(
+                                    "requested output format conflicts with {key}.textFormat"
+                                ))
+                            })?;
+                        }
                         let output = out
                             .entry(canonical.to_string())
                             .or_insert_with(|| json!({}));
                         if let Some(output) = output.as_object_mut() {
-                            output.extend(caller.clone());
+                            output.extend(caller);
                         }
                         continue;
                     }
@@ -255,6 +285,11 @@ pub(super) fn transform_request_converse_with_base_model(
             }
         }
     }
+    // Model-specific choices are merged above; encode them in the same caller
+    // vocabulary as tool specifications and the common Converse choice.
+    if !forward.is_empty() {
+        apply_tool_name_forward_map(&mut out, &forward);
+    }
     apply_top_k(request, feature_model, &mut out)?;
     // Clamp thinking budget to Bedrock's 1024-token minimum. Runs after
     // pass-through so caller-supplied values are also clamped.
@@ -269,23 +304,10 @@ pub(super) fn transform_request_converse_with_base_model(
     // Express serial-tool requests for Anthropic-family models through the
     // model-specific `additionalModelRequestFields`; other families have no
     // equivalent field.
-    apply_parallel_tool_calls(feature_model, request, &mut out)?;
+    apply_parallel_tool_calls(feature_model, request, &mut out, &forward)?;
 
     if modify_params {
         repair_converse_history(request, &mut out);
-    }
-
-    if uses_json_tool
-        && out
-            .get("additionalModelRequestFields")
-            .and_then(|fields| fields.get("thinking"))
-            .and_then(|thinking| thinking.get("type"))
-            .and_then(Value::as_str)
-            .is_some_and(|kind| kind != "disabled")
-    {
-        return Err(oxllm_core::Error::BadRequest(
-            "JSON-mode tool fallback is incompatible with Claude thinking; supply a schema on a native structured-output model".into(),
-        ));
     }
 
     Ok(Value::Object(out))
@@ -554,34 +576,6 @@ const PASS_THROUGH_TOP_LEVEL_KEYS: &[(&str, &str)] = &[
 /// Opaque application profile ARNs cannot establish Anthropic support.
 fn is_anthropic_model(model: &str) -> bool {
     super::detect_bedrock_provider(model) == super::BedrockVendor::Anthropic
-}
-
-fn is_application_inference_profile(model: &str) -> bool {
-    model.contains(":application-inference-profile/")
-}
-
-/// Bedrock GLM-5 (`zai.glm-5`, `glm-5`) supports native Converse
-/// `outputConfig.textFormat` structured output.
-fn is_glm5_model(model: &str) -> bool {
-    let m = model.to_lowercase();
-    m.contains("glm-5") || m.contains("glm_5")
-}
-
-/// Bedrock DeepSeek V3.2 (`deepseek.v3.2`, `deepseek.v3-v1`) supports native
-/// Converse `outputConfig.textFormat` structured output.
-fn is_deepseek_native_json_model(model: &str) -> bool {
-    let m = model.to_lowercase();
-    m.contains("deepseek.v3.2")
-        || m.contains("deepseek.v3-v1")
-        || m.contains("deepseek-v3.2")
-        || m.contains("deepseek-v3-v1")
-}
-
-fn supports_native_structured_output(model: &str) -> bool {
-    is_application_inference_profile(model)
-        || (is_anthropic_model(model) && crate::anthropic::supports_native_output_format(model))
-        || is_glm5_model(model)
-        || is_deepseek_native_json_model(model)
 }
 
 /// Is this a known Bedrock Amazon Nova model id?
@@ -914,19 +908,73 @@ fn drop_temperature_incompatible_with_thinking(out: &mut Map<String, Value>) {
 /// `type` discriminator), mirroring how the reference serves
 /// `enable_parallel_tool_use` on Bedrock Claude. Other model families have no
 /// equivalent field, so an explicit `parallel_tool_calls: false` is rejected
-/// rather than silently ignored.
+/// rather than silently ignored. An already-native model-specific choice is
+/// preserved, and duplicate native/canonical selections must agree.
 fn apply_parallel_tool_calls(
     model: &str,
     request: &Value,
     out: &mut Map<String, Value>,
+    forward: &HashMap<String, String>,
 ) -> Result<()> {
-    let Some(false) = request.get("parallel_tool_calls").and_then(Value::as_bool) else {
-        return Ok(());
+    let inline_serial = request
+        .pointer("/tool_choice/disable_parallel_tool_use")
+        .filter(|value| !value.is_null());
+    if inline_serial.is_some_and(|value| !value.is_boolean()) {
+        return Err(oxllm_core::Error::BadRequest(
+            "tool_choice.disable_parallel_tool_use must be a boolean".into(),
+        ));
+    }
+    let serial = request.get("parallel_tool_calls").and_then(Value::as_bool) == Some(false)
+        || inline_serial.and_then(Value::as_bool) == Some(true);
+    if serial && inline_serial.and_then(Value::as_bool) == Some(false) {
+        return Err(oxllm_core::Error::BadRequest(
+            "parallel_tool_calls false conflicts with tool_choice.disable_parallel_tool_use".into(),
+        ));
+    }
+    let native = out
+        .get("additionalModelRequestFields")
+        .and_then(|fields| fields.get("tool_choice"))
+        .filter(|value| !value.is_null())
+        .cloned();
+    let normalize = |value: &Value| {
+        let mut choice = value.clone();
+        remap_native_choice_name(&mut choice, forward);
+        choice
     };
-    if !out.contains_key("toolConfig") {
+    let camel = request
+        .pointer("/additionalModelRequestFields/tool_choice")
+        .filter(|value| !value.is_null())
+        .map(normalize);
+    let snake = request
+        .pointer("/additional_model_request_fields/tool_choice")
+        .filter(|value| !value.is_null())
+        .map(normalize);
+    if camel
+        .zip(snake)
+        .is_some_and(|(camel, snake)| camel != snake)
+    {
+        return Err(oxllm_core::Error::BadRequest("additionalModelRequestFields.tool_choice conflicts with additional_model_request_fields.tool_choice".into()));
+    }
+    let canonical_none = request.get("tool_choice").is_some_and(|choice| {
+        choice.as_str() == Some("none")
+            || choice.get("type").and_then(Value::as_str) == Some("none")
+    });
+    if canonical_none
+        && native
+            .as_ref()
+            .is_some_and(|choice| choice.get("type").and_then(Value::as_str) != Some("none"))
+    {
+        return Err(oxllm_core::Error::BadRequest(
+            "tool_choice none conflicts with additionalModelRequestFields.tool_choice".into(),
+        ));
+    }
+    if !out.contains_key("toolConfig") || (!serial && native.is_none()) {
         return Ok(());
     }
     if !is_anthropic_model(model) {
+        if !serial {
+            return Ok(());
+        }
         return Err(oxllm_core::Error::BadRequest(
             "parallel_tool_calls false is unsupported by the Bedrock Converse adapter for this \
              model; use a Claude model, or configure model_info.base_model/base_model for a \
@@ -934,19 +982,42 @@ fn apply_parallel_tool_calls(
                 .into(),
         ));
     }
-    // Derive the Anthropic-shaped `tool_choice` from the Converse-native one
-    // so an explicit forced tool survives the move instead of silently
-    // relaxing to `auto`.
-    let mut choice = match out.get("toolConfig").and_then(|tc| tc.get("toolChoice")) {
+    // Only derive a selection when none was supplied in the model-specific
+    // native container. Adding the serial flag must not replace a caller's
+    // required/named choice with an automatic default.
+    let mapped = match out.get("toolConfig").and_then(|tc| tc.get("toolChoice")) {
         Some(Value::Object(t)) if t.contains_key("tool") => {
             let name = t["tool"].get("name").cloned().unwrap_or(Value::Null);
-            json!({"type": "tool", "name": name})
+            Some(json!({"type": "tool", "name": name}))
         }
-        Some(Value::Object(t)) if t.contains_key("any") => json!({"type": "any"}),
-        _ => json!({"type": "auto"}),
+        Some(Value::Object(t)) if t.contains_key("any") => Some(json!({"type": "any"})),
+        Some(Value::Object(t)) if t.contains_key("auto") => Some(json!({"type": "auto"})),
+        _ => None,
     };
-    if let Some(choice) = choice.as_object_mut() {
-        choice.insert("disable_parallel_tool_use".to_string(), json!(true));
+    if let (Some(native), Some(mapped)) = (&native, &mapped)
+        && (native.get("type") != mapped.get("type") || native.get("name") != mapped.get("name"))
+    {
+        return Err(oxllm_core::Error::BadRequest(
+            "tool_choice conflicts with additionalModelRequestFields.tool_choice".into(),
+        ));
+    }
+    let mut choice = native.or(mapped).unwrap_or_else(|| json!({"type":"auto"}));
+    if serial && choice.get("type").and_then(Value::as_str) != Some("none") {
+        if choice
+            .get("disable_parallel_tool_use")
+            .is_some_and(|value| !value.is_null() && value.as_bool() != Some(true))
+        {
+            return Err(oxllm_core::Error::BadRequest("parallel_tool_calls false conflicts with native tool_choice.disable_parallel_tool_use".into()));
+        }
+        choice
+            .as_object_mut()
+            .ok_or_else(|| {
+                oxllm_core::Error::BadRequest(
+                    "native tool_choice must be an object to preserve parallel_tool_calls false"
+                        .into(),
+                )
+            })?
+            .insert("disable_parallel_tool_use".to_string(), json!(true));
     }
     // Remove the Bedrock-native choice so the request does not carry two
     // `tool_choice` encodings for the same call.
@@ -956,44 +1027,74 @@ fn apply_parallel_tool_calls(
     let additional = out
         .entry("additionalModelRequestFields".to_string())
         .or_insert_with(|| json!({}));
-    if let Some(additional) = additional.as_object_mut() {
-        additional.insert("tool_choice".to_string(), choice);
-    }
+    additional
+        .as_object_mut()
+        .ok_or_else(|| {
+            oxllm_core::Error::BadRequest(
+                "additionalModelRequestFields must be an object to preserve tool_choice".into(),
+            )
+        })?
+        .insert("tool_choice".to_string(), choice);
     Ok(())
 }
 
 /// Converse has one structured-output wire shape across model families:
 /// `outputConfig.textFormat.structure.jsonSchema.schema` is a JSON string.
-/// Schema-less JSON mode uses a forced tool only on models supporting it;
-/// a closed empty native schema would incorrectly restrict the answer to `{}`.
-/// Returns the synthetic tool's schema when that fallback is needed.
-fn apply_response_format(
-    request: &Value,
-    model: &str,
-    runtime_model: &str,
-    out: &mut Map<String, Value>,
-) -> Result<Option<Value>> {
-    let rf = match request.get("response_format").and_then(|v| v.as_object()) {
-        Some(rf) => rf,
-        None => return Ok(None),
-    };
-    let rf_type = rf.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let schema = match rf_type {
-        "json_object" | "json_schema" => crate::util::response_format_schema(rf)?,
-        _ => return Ok(None),
-    };
-    if rf_type == "json_schema" && schema.is_none() {
-        return Err(oxllm_core::Error::BadRequest(
-            "response_format.json_schema requires an object schema".into(),
-        ));
+/// Forward caller-supplied schemas without a model-name gate or repairs.
+/// Unsupported models/schema features are rejected by Bedrock itself.
+fn apply_response_format(request: &Value, out: &mut Map<String, Value>) -> Result<()> {
+    let paths = [
+        ("/output_config/format", "output_config.format"),
+        ("/outputConfig/format", "outputConfig.format"),
+        ("/output_format", "output_format"),
+    ];
+    let bare_json = request.get("response_format").is_some_and(|format| {
+        format.get("type").and_then(Value::as_str) == Some("json_object")
+            && format.get("json_schema").is_none()
+    });
+    if bare_json
+        && !paths
+            .iter()
+            .any(|(path, _)| request.pointer(path).is_some_and(|value| !value.is_null()))
+        && ["/outputConfig/textFormat", "/output_config/textFormat"]
+            .iter()
+            .any(|path| {
+                request.pointer(path).is_some_and(|format| {
+                    format.get("type").and_then(Value::as_str) == Some("json_schema")
+                        && format
+                            .pointer("/structure/jsonSchema/schema")
+                            .and_then(Value::as_str)
+                            .is_some_and(|schema| serde_json::from_str::<Value>(schema).is_ok())
+                })
+            })
+    {
+        // The caller already supplied a complete native schema. Preserve its
+        // string/options in the pass-through merge below, without rebuilding it.
+        return Ok(());
     }
-    if let Some(mut s) = schema.clone().filter(|_| {
-        supports_native_structured_output(model)
-            || (model.is_empty() && is_application_inference_profile(runtime_model))
-    }) {
-        crate::util::inject_additional_properties_false(&mut s);
-        let mut json_schema = json!({"schema": s.to_string()});
-        if let Some(wrapper) = rf.get("json_schema") {
+    if let Some(format) = crate::util::native_output_format(request, &paths)? {
+        if format.get("type").and_then(Value::as_str) != Some("json_schema")
+            || !format.get("schema").is_some_and(Value::is_object)
+            || format.as_object().is_some_and(|format| {
+                format
+                    .keys()
+                    .any(|key| !matches!(key.as_str(), "type" | "schema"))
+            })
+        {
+            let source = paths
+                .iter()
+                .find(|(path, _)| request.pointer(path).is_some_and(|value| !value.is_null()))
+                .map(|(_, name)| *name)
+                .unwrap_or("response_format");
+            return Err(oxllm_core::Error::BadRequest(format!(
+                "{source} has no lossless native Converse mapping; use json_schema with only type and an object schema, or outputConfig.textFormat for Converse-native options"
+            )));
+        }
+        let mut json_schema = json!({"schema": format["schema"].to_string()});
+        if let Some(wrapper) = request
+            .pointer("/response_format/json_schema")
+            .filter(|wrapper| wrapper.get("schema").is_some())
+        {
             for key in ["name", "description"] {
                 if let Some(value) = wrapper.get(key).and_then(Value::as_str) {
                     json_schema[key] = json!(value);
@@ -1011,49 +1112,63 @@ fn apply_response_format(
                 }
             }),
         );
-        return Ok(None);
+        return Ok(());
     }
-    if rf_type == "json_schema" {
-        return Err(oxllm_core::Error::BadRequest(format!(
-            "response_format json_schema is not supported by the Bedrock adapter for model `{runtime_model}`; \
-             choose a model with native structured outputs"
-        )));
-    }
-    if !(is_anthropic_model(model) && !is_application_inference_profile(model)
-        || is_nova_model(model))
-    {
-        return Err(oxllm_core::Error::BadRequest(format!(
-            "response_format json_object requires a schema on a native structured-output model \
-              or a Claude/Nova forced-tool fallback; model `{runtime_model}` cannot translate this request"
-        )));
-    }
-    if request.get("tool_choice").is_some_and(|choice| {
-        choice.as_str() == Some("none")
-            || choice.get("type").and_then(Value::as_str) == Some("none")
-    }) {
-        return Err(oxllm_core::Error::BadRequest(
-            "response_format json_object needs a synthetic tool on this model and conflicts with tool_choice none".into(),
-        ));
-    }
-    if request
-        .get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| !tools.is_empty())
-    {
-        return Err(oxllm_core::Error::BadRequest(
-            "response_format json_object's forced-tool fallback cannot be combined with tools; use native json_schema output".into(),
-        ));
-    }
-    Ok(Some(schema.unwrap_or_else(
-        || json!({"type": "object", "properties": {}}),
-    )))
+    Ok(())
 }
 
-// Shared schema walker lives in `crate::util` so Anthropic can share it
-// without depending on the bedrock feature. Re-export under the historical
-// path for bedrock tests that call `converse::inject_additional_properties_false`.
-#[allow(unused_imports)] // re-export for tests / external module path stability
-pub(crate) use crate::util::inject_additional_properties_false;
+/// Normalize schema serialization only for comparison. Keep the caller's native
+/// schema string verbatim and merge optional, explicitly requested labels.
+fn merge_text_formats(mapped: &Value, native: &Value) -> Option<Value> {
+    if mapped == native {
+        return Some(native.clone());
+    }
+    const SCHEMA: &str = "/structure/jsonSchema/schema";
+    const CONFIG: &str = "/structure/jsonSchema";
+    let normalize = |format: &Value| {
+        if format.get("type").and_then(Value::as_str) != Some("json_schema") {
+            return None;
+        }
+        let schema: Value = serde_json::from_str(format.pointer(SCHEMA)?.as_str()?).ok()?;
+        let mut normalized = format.clone();
+        *normalized.pointer_mut(SCHEMA)? = schema;
+        Some(normalized)
+    };
+    let mut left = normalize(mapped)?;
+    let mut right = normalize(native)?;
+    for key in ["name", "description"] {
+        let l = left.pointer(CONFIG)?.get(key).cloned();
+        let r = right.pointer(CONFIG)?.get(key).cloned();
+        match (l, r) {
+            (Some(value), None) => {
+                right
+                    .pointer_mut(CONFIG)?
+                    .as_object_mut()?
+                    .insert(key.into(), value);
+            }
+            (None, Some(value)) => {
+                left.pointer_mut(CONFIG)?
+                    .as_object_mut()?
+                    .insert(key.into(), value);
+            }
+            _ => {}
+        }
+    }
+    if left != right {
+        return None;
+    }
+    let mut merged = native.clone();
+    for key in ["name", "description"] {
+        if let Some(value) = mapped.pointer(CONFIG)?.get(key) {
+            merged
+                .pointer_mut(CONFIG)?
+                .as_object_mut()?
+                .entry(key)
+                .or_insert_with(|| value.clone());
+        }
+    }
+    Some(merged)
+}
 
 /// Does this JSON value carry a non-null OpenAI-style `cache_control` hint?
 /// Used to decide whether to inject a Converse `cachePoint` breakpoint after
@@ -1568,13 +1683,7 @@ fn build_inference_config(request: &Value, model: &str) -> Value {
 /// inputSchema:{json}}}`. Anthropic-style tools (`{name, input_schema}`)
 /// are also recognised.
 ///
-/// `json_tool_schema` selects the validated JSON-mode fallback. The response
-/// and stream transforms lift the synthetic call back out as text content.
-fn build_tool_config(
-    request: &Value,
-    model: &str,
-    json_tool_schema: Option<Value>,
-) -> Result<Option<Value>> {
+fn build_tool_config(request: &Value, model: &str) -> Result<Option<Value>> {
     // Honour `tool_choice: "none"` by omitting toolConfig entirely. OpenAI
     // accepts both the object form (`{"type":"none"}`) and the bare string
     // (`"none"`); recognise both so a caller asking for "no tools" actually
@@ -1583,25 +1692,22 @@ fn build_tool_config(
         let is_none = choice.as_str() == Some("none")
             || choice.get("type").and_then(|v| v.as_str()) == Some("none");
         if is_none {
+            if choice
+                .as_object()
+                .is_some_and(|choice| choice.keys().any(|key| key != "type"))
+            {
+                return Err(oxllm_core::Error::BadRequest("tool choice none has no lossless native Converse mapping for additional options".into()));
+            }
+            if let Some(tools) = request.get("tools").and_then(Value::as_array) {
+                for tool in tools {
+                    crate::util::strict_tool_definition(tool)?;
+                }
+            }
             return Ok(None);
         }
     }
 
     let mut tool_specs: Vec<Value> = Vec::new();
-    let mut force_json_tool = false;
-
-    // The capability/conflict checks live in apply_response_format.
-    if let Some(schema) = json_tool_schema {
-        tool_specs.push(json!({
-            "toolSpec": {
-                "name": "json_tool_call",
-                "description": "Call this tool with the JSON object you want to return.",
-                "inputSchema": {"json": schema},
-            }
-        }));
-        force_json_tool = true;
-    }
-
     if let Some(tools) = request.get("tools").and_then(Value::as_array) {
         // Counter for unnamed tools so each gets a unique placeholder name
         // (collisions would make tool-result routing ambiguous).
@@ -1614,7 +1720,15 @@ fn build_tool_config(
                 || tool.get("cachePoint").is_some()
             {
                 validate_native_tool(tool)?;
-                tool_specs.push(tool.clone());
+                let mut tool = tool.clone();
+                if let Some(spec) = tool.get_mut("toolSpec").and_then(Value::as_object_mut)
+                    && spec
+                        .get("strict")
+                        .is_some_and(|value| value.is_null() || value.as_bool() == Some(false))
+                {
+                    spec.remove("strict");
+                }
+                tool_specs.push(tool);
                 continue;
             }
             let tool_type = tool.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -1646,31 +1760,35 @@ fn build_tool_config(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .unwrap_or(&name);
-            // Sanitize the schema through the shared recursive walker so
-            // Converse gains the same normalization the Anthropic path gets:
-            // `type:"custom"` → `"object"` (Claude Code custom-tool marker
-            // that Bedrock rejects), `oneOf` → `anyOf`, and `uniqueItems`
-            // stripping. The reference does the equivalent in
-            // `normalize_json_schema_custom_types_to_object`.
-            let schema = sanitize_tool_input_schema(
-                function
-                    .get("parameters")
-                    .or_else(|| function.get("input_schema"))
-                    .cloned()
-                    .unwrap_or_else(|| json!({"type": "object", "properties": {}})),
-            );
+            // Advisory tools retain legacy compatibility normalization;
+            // explicitly strict schemas bypass it without constraint changes.
+            let strict = crate::util::strict_tool_definition(tool)?;
+            let schema = function
+                .get("parameters")
+                .or_else(|| function.get("input_schema"))
+                .cloned()
+                .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+            let schema = if strict {
+                schema
+            } else {
+                sanitize_tool_input_schema(schema)
+            };
             if !is_tool_input_object_schema(&schema) {
                 return Err(oxllm_core::Error::BadRequest(
                     "Bedrock Converse function tools require an object input schema".into(),
                 ));
             }
-            tool_specs.push(json!({
+            let mut tool_spec = json!({
                 "toolSpec": {
                     "name": name,
                     "description": description,
                     "inputSchema": {"json": schema},
                 }
-            }));
+            });
+            if strict {
+                tool_spec["toolSpec"]["strict"] = json!(true);
+            }
+            tool_specs.push(tool_spec);
         }
     }
     // Nova web-search grounding: when `web_search_options` is present and the
@@ -1687,16 +1805,11 @@ fn build_tool_config(
 
     let mut tc = Map::new();
     tc.insert("tools".to_string(), Value::Array(tool_specs));
-    // When the synthetic json tool was injected, force the model to call it.
-    // Otherwise honour the caller's `tool_choice`.
-    if force_json_tool {
-        tc.insert(
-            "toolChoice".to_string(),
-            json!({"tool": {"name": "json_tool_call"}}),
-        );
-    } else if let Some(choice) = request.get("tool_choice") {
+    if let Some(choice) = request.get("tool_choice") {
         if let Some(mapped) = map_tool_choice(choice) {
             tc.insert("toolChoice".to_string(), mapped);
+        } else if !choice.is_null() {
+            return Err(oxllm_core::Error::BadRequest("tool choice has no lossless native Converse mapping; use auto, required or a named function".into()));
         }
     }
     Ok(Some(Value::Object(tc)))
@@ -1726,9 +1839,21 @@ fn map_tool_choice(choice: &Value) -> Option<Value> {
         });
     }
     let t = choice.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if choice.as_object().is_some_and(|object| {
+        object.keys().any(|key| {
+            !(matches!(key.as_str(), "type" | "disable_parallel_tool_use")
+                || t == "function" && key == "function")
+        })
+    }) || choice
+        .get("function")
+        .and_then(Value::as_object)
+        .is_some_and(|function| function.keys().any(|key| key != "name"))
+    {
+        return None;
+    }
     Some(match t {
         "auto" => json!({"auto": {}}),
-        "required" => json!({"any": {}}),
+        "required" | "any" => json!({"any": {}}),
         "function" => {
             let name = choice
                 .get("function")
@@ -1776,6 +1901,7 @@ fn validate_native_tool(tool: &Value) -> Result<()> {
                 unsupported_hosted_tool(kind)
             });
         }
+        crate::util::strict_function_tool(spec)?;
         let spec = spec.as_object().ok_or_else(invalid)?;
         let schema = spec
             .get("inputSchema")
@@ -1793,7 +1919,6 @@ fn validate_native_tool(tool: &Value) -> Result<()> {
             || spec
                 .get("description")
                 .is_some_and(|value| value.as_str().is_none_or(str::is_empty))
-            || spec.get("strict").is_some_and(|value| !value.is_boolean())
         {
             return Err(invalid());
         }
@@ -2096,6 +2221,12 @@ fn apply_tool_name_forward_map(out: &mut Map<String, Value>, forward: &HashMap<S
             }
         }
     }
+    if let Some(choice) = out
+        .get_mut("additionalModelRequestFields")
+        .and_then(|fields| fields.get_mut("tool_choice"))
+    {
+        remap_native_choice_name(choice, forward);
+    }
 
     if let Some(Value::Array(messages)) = out.get_mut("messages") {
         for msg in messages.iter_mut() {
@@ -2112,6 +2243,18 @@ fn apply_tool_name_forward_map(out: &mut Map<String, Value>, forward: &HashMap<S
                 }
             }
         }
+    }
+}
+
+fn remap_native_choice_name(choice: &mut Value, forward: &HashMap<String, String>) {
+    if choice.get("type").and_then(Value::as_str) == Some("tool")
+        && let Some(name) = choice
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        && let Some(mapped) = forward.get(&name)
+    {
+        choice["name"] = json!(mapped);
     }
 }
 
@@ -2169,22 +2312,6 @@ fn reverse_map_tool_call_names_in(tool_calls: &mut [Value], reverse_map: &HashMa
 /// * `{reasoningContent: {…}}` → `message.reasoning_content` + `thinking_blocks`
 ///   (so reasoning survives a subsequent tool-call turn)
 pub fn transform_response_converse(body: &Value, model: &str) -> Result<Value> {
-    transform_response_converse_impl(body, model, true)
-}
-
-pub(super) fn transform_response_converse_with_request(
-    body: &Value,
-    model: &str,
-    original_request: &Value,
-) -> Result<Value> {
-    transform_response_converse_impl(body, model, uses_synthetic_json_tool(original_request))
-}
-
-fn transform_response_converse_impl(
-    body: &Value,
-    model: &str,
-    synthetic_json: bool,
-) -> Result<Value> {
     let message = body.get("output").and_then(|o| o.get("message"));
 
     let mut content_str = String::new();
@@ -2230,43 +2357,13 @@ fn transform_response_converse_impl(
         }
     }
 
-    let mut finish_reason = map_finish_reason(body.get("stopReason").and_then(Value::as_str));
+    let finish_reason = map_finish_reason(body.get("stopReason").and_then(Value::as_str));
 
     // Restore caller tool names: `transform_request_converse` may have
     // sanitized them to fit Converse's `[a-zA-Z0-9_-]{1,64}` rule. Look
     // each name up in the reverse map and rewrite in place.
     if !tool_calls.is_empty() {
         reverse_map_tool_call_names(&mut tool_calls);
-    }
-
-    // Synthetic `json_tool_call` extraction: when the request injected a
-    // hidden JSON tool via `response_format` (non-Anthropic models),
-    // Converse responds with a single `toolUse` block named `json_tool_call`
-    // whose `input` is the JSON object the caller wanted. Lift it out as
-    // `content` and drop the synthetic tool call so it doesn't leak to
-    // OpenAI clients — mirrors the Anthropic provider's behaviour.
-    let json_idx = tool_calls.iter().position(|tc| {
-        synthetic_json
-            && tc
-                .get("function")
-                .and_then(|f| f.get("name"))
-                .and_then(|n| n.as_str())
-                == Some("json_tool_call")
-    });
-    if let Some(idx) = json_idx {
-        let tc = tool_calls.remove(idx);
-        if let Some(args) = tc
-            .get("function")
-            .and_then(|f| f.get("arguments"))
-            .and_then(Value::as_str)
-        {
-            if !args.is_empty() {
-                content_str = args.to_string();
-            }
-        }
-        if tool_calls.is_empty() && finish_reason == "tool_calls" {
-            finish_reason = json!("stop");
-        }
     }
 
     let usage = body.get("usage");
@@ -2452,14 +2549,12 @@ pub(super) struct ConverseStreamState {
     id: String,
     model: String,
     created: u64,
-    json_tool_blocks: HashMap<u64, bool>,
-    saw_json_tool: bool,
-    synthetic_json: bool,
     thinking_blocks: HashMap<u64, Value>,
+    tool_arguments: HashMap<u64, bool>,
 }
 
 impl ConverseStreamState {
-    pub(super) fn new(model: &str, synthetic_json: bool) -> Self {
+    pub(super) fn new(model: &str) -> Self {
         Self {
             id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
             model: model.to_string(),
@@ -2467,30 +2562,17 @@ impl ConverseStreamState {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_secs())
                 .unwrap_or(0),
-            json_tool_blocks: HashMap::new(),
-            saw_json_tool: false,
-            synthetic_json,
             thinking_blocks: HashMap::new(),
+            tool_arguments: HashMap::new(),
         }
     }
-}
-
-pub(super) fn uses_synthetic_json_tool(request: &Value) -> bool {
-    request
-        .pointer("/response_format/type")
-        .and_then(Value::as_str)
-        == Some("json_object")
-        && request
-            .get("tools")
-            .and_then(Value::as_array)
-            .is_none_or(Vec::is_empty)
 }
 
 // Compatibility for direct, single-threaded callers of the older entrypoints.
 // The production host supplies explicit state via BedrockStreamState instead.
 thread_local! {
     static STREAM_STATE: RefCell<ConverseStreamState> =
-        RefCell::new(ConverseStreamState::new("bedrock", true));
+        RefCell::new(ConverseStreamState::new("bedrock"));
 }
 
 /// Transform a single ConverseStream event payload into an OpenAI-shaped
@@ -2511,7 +2593,7 @@ thread_local! {
 /// | `contentBlockDelta` (text)| `delta:{content:"…"}`                         |
 /// | `contentBlockDelta` (tool)| `delta:{tool_calls:[{index, function.args}]}` |
 /// | `contentBlockDelta` (think)| `delta:{reasoning_content:"…"}`              |
-/// | `contentBlockStop`        | completed thinking block / empty JSON fallback |
+/// | `contentBlockStop`        | completed thinking block / empty tool args     |
 /// | `messageStop`             | `finish_reason` only                          |
 /// | `metadata`                | `usage` chunk (with empty choices)            |
 pub fn transform_stream_chunk_converse(line: &str) -> Result<Option<Value>> {
@@ -2563,70 +2645,62 @@ pub(super) fn transform_stream_chunk_converse_with_state(
         .unwrap_or(0);
     let mut chunk = match event_type {
         "messageStart" => {
-            *state = ConverseStreamState::new(&state.model, state.synthetic_json);
+            *state = ConverseStreamState::new(&state.model);
             Ok(Some(delta_chunk(json!({"role": "assistant"}), Value::Null)))
         }
         "contentBlockStart" => {
-            if state.synthetic_json
-                && payload
-                    .pointer("/start/toolUse/name")
-                    .and_then(Value::as_str)
-                    == Some("json_tool_call")
+            if payload
+                .pointer("/start/toolUse")
+                .is_some_and(Value::is_object)
             {
-                state.json_tool_blocks.insert(index, false);
-                state.saw_json_tool = true;
-                Ok(None)
-            } else {
-                handle_block_start(payload, reverse_map)
+                state.tool_arguments.insert(index, false);
             }
+            handle_block_start(payload, reverse_map)
         }
         "contentBlockDelta" => {
-            if let Some(received_args) = state.json_tool_blocks.get_mut(&index) {
-                let input = payload
+            if let Some(received) = state.tool_arguments.get_mut(&index) {
+                *received |= payload
                     .pointer("/delta/toolUse/input")
                     .and_then(Value::as_str)
-                    .unwrap_or("");
-                *received_args |= !input.is_empty();
-                Ok(
-                    (!input.is_empty())
-                        .then(|| delta_chunk(json!({"content": input}), Value::Null)),
-                )
-            } else {
-                if let Some(reasoning) = payload.pointer("/delta/reasoningContent") {
-                    let block = state
-                        .thinking_blocks
-                        .entry(index)
-                        .or_insert_with(|| json!({"type": "thinking", "thinking": ""}));
-                    if let Some(data) = reasoning.get("redactedContent") {
-                        if block.get("data").is_some() {
-                            // Each blob is independently base64 encoded; a
-                            // string append would corrupt the opaque bytes.
-                            return Err(oxllm_core::Error::Transform(
+                    .is_some_and(|input| !input.is_empty());
+            }
+            if let Some(reasoning) = payload.pointer("/delta/reasoningContent") {
+                let block = state
+                    .thinking_blocks
+                    .entry(index)
+                    .or_insert_with(|| json!({"type": "thinking", "thinking": ""}));
+                if let Some(data) = reasoning.get("redactedContent") {
+                    if block.get("data").is_some() {
+                        // Each blob is independently base64 encoded; a
+                        // string append would corrupt the opaque bytes.
+                        return Err(oxllm_core::Error::Transform(
                                 "fragmented Bedrock redactedContent cannot be replayed losslessly by this adapter".into(),
                             ));
-                        }
-                        *block = json!({"type": "redacted_thinking", "data": data});
-                    } else {
-                        for (source, target) in [("text", "thinking"), ("signature", "signature")] {
-                            if let Some(fragment) = reasoning.get(source).and_then(Value::as_str) {
-                                if let Some(object) = block.as_object_mut() {
-                                    let value = object
-                                        .entry(target.to_string())
-                                        .or_insert_with(|| json!(""));
-                                    if let Value::String(text) = value {
-                                        text.push_str(fragment);
-                                    }
+                    }
+                    *block = json!({"type": "redacted_thinking", "data": data});
+                } else {
+                    for (source, target) in [("text", "thinking"), ("signature", "signature")] {
+                        if let Some(fragment) = reasoning.get(source).and_then(Value::as_str) {
+                            if let Some(object) = block.as_object_mut() {
+                                let value = object
+                                    .entry(target.to_string())
+                                    .or_insert_with(|| json!(""));
+                                if let Value::String(text) = value {
+                                    text.push_str(fragment);
                                 }
                             }
                         }
                     }
                 }
-                handle_block_delta(payload)
             }
+            handle_block_delta(payload)
         }
         "contentBlockStop" => {
-            if state.json_tool_blocks.remove(&index) == Some(false) {
-                Ok(Some(delta_chunk(json!({"content": "{}"}), Value::Null)))
+            if state.tool_arguments.remove(&index) == Some(false) {
+                Ok(Some(delta_chunk(
+                    json!({"tool_calls":[{"index":index,"function":{"arguments":"{}"}}]}),
+                    Value::Null,
+                )))
             } else if let Some(block) = state.thinking_blocks.remove(&index) {
                 Ok(Some(delta_chunk(
                     json!({"thinking_blocks": [block]}),
@@ -2637,10 +2711,7 @@ pub(super) fn transform_stream_chunk_converse_with_state(
             }
         }
         "messageStop" => {
-            let mut finish = map_finish_reason(payload.get("stopReason").and_then(Value::as_str));
-            if state.saw_json_tool && finish == "tool_calls" {
-                finish = json!("stop");
-            }
+            let finish = map_finish_reason(payload.get("stopReason").and_then(Value::as_str));
             Ok(Some(delta_chunk(Value::Object(Map::new()), finish)))
         }
         "metadata" => handle_metadata(payload),

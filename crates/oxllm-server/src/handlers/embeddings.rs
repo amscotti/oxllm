@@ -356,6 +356,7 @@ async fn call_upstream_batch(
         &params,
         deployment.oxllm_params.allowed_openai_params.as_deref(),
         Some(&["model", "input", "encoding_format", "dimensions"]),
+        None,
     );
     // Deployment overrides are applied before the final drop pass.
     crate::orchestration::upstream::shape_outbound_body(

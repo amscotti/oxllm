@@ -619,13 +619,27 @@ fields, use `/anthropic/v1/messages` with an Anthropic deployment (Anthropic SDK
 `base_url="http://localhost:4000/anthropic"`). Native features are not automatically
 portable through the translated route. See endpoint tests for exact coverage.
 
-`/v1/responses` translates `text.format` JSON-schema and JSON-object output
-constraints through the shared chat pipeline, including streams. Schema names,
-strictness and descriptions are retained, and formats participate in cache
-identity. Malformed formats return a local 400. SDK response parsers consume
+`/v1/responses` translates `text.format` through the shared chat pipeline,
+including streams, when the selected adapter has a native representation.
+JSON-object mode requires native JSON-object support; Anthropic/Converse require
+a supplied JSON schema instead. Schema names, strictness and descriptions reach
+the provider transform, and formats participate in cache identity. Malformed
+formats return a local 400. SDK response parsers consume
 the returned `output_text` content and input/output token usage.
 Schema names are trimmed and must use 1–64 ASCII letters, digits, underscores
 or hyphens. `text.verbosity` is not translated by the chat bridge.
+
+Structured JSON output uses the provider's native schema API, never a synthetic
+tool or a repaired substitute schema. Explicit strict function tools forward
+`strict: true` in the native tool definition and stay tool calls. The selected
+provider owns model/schema support checks; unsupported features remain errors.
+Schema-less JSON-object mode returns 400 on Anthropic/Converse, which have no
+native equivalent, rather than falling back to tool calling. See the
+[native-output contract](docs/operations.md#native-structured-outputs-and-strict-tools)
+for API mapping, migration guidance, cache isolation and deployment-policy safeguards.
+The safeguards include native Messages/Responses relay body shaping, message-level formats,
+and explicit tool choices even when the tools are not strict. Unmappable choices
+fail rather than silently defaulting to automatic selection.
 
 OpenAI-shaped inference surfaces return HTTP 400 with `code: model_not_found`
 for an unconfigured model after authorized fallback handling; translated

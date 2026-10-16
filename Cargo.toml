@@ -155,6 +155,7 @@ live-tests = []
 
 [dev-dependencies]
 # workspace-level integration tests
+base64.workspace = true
 httpmock.workspace = true
 reqwest.workspace = true
 tokio.workspace = true

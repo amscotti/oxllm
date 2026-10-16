@@ -83,11 +83,23 @@ pub(crate) fn anthropic_to_openai_request(req: &Value) -> Value {
         if !mapped.is_empty() {
             out.insert("tools".to_string(), Value::Array(mapped));
         }
+    } else if let Some(tools) = req.get("tools").filter(|value| !value.is_null()) {
+        // Preserve malformed native fields so the adapter/provider rejects
+        // them, rather than silently turning the request into plain text.
+        out.insert("tools".into(), tools.clone());
     }
 
-    if let Some(tool_choice) = req.get("tool_choice") {
-        if let Some(mapped) = map_anthropic_tool_choice_to_openai(tool_choice) {
-            out.insert("tool_choice".to_string(), mapped);
+    if let Some(tool_choice) = req.get("tool_choice").filter(|value| !value.is_null()) {
+        // Preserve unrepresentable native choices for adapter/provider errors,
+        // never silently turn a required/restricted choice into automatic use.
+        let mapped =
+            map_anthropic_tool_choice_to_openai(tool_choice).unwrap_or_else(|| tool_choice.clone());
+        out.insert("tool_choice".to_string(), mapped);
+        if let Some(disabled) = tool_choice
+            .get("disable_parallel_tool_use")
+            .and_then(Value::as_bool)
+        {
+            out.insert("parallel_tool_calls".into(), json!(!disabled));
         }
     }
 
@@ -99,6 +111,7 @@ pub(crate) fn anthropic_to_openai_request(req: &Value) -> Value {
         "top_k",
         "metadata",
         "output_config",
+        "output_format",
         "speed",
         "service_tier",
         "prompt_cache_options",
@@ -106,6 +119,36 @@ pub(crate) fn anthropic_to_openai_request(req: &Value) -> Value {
         if let Some(val) = req.get(*key) {
             if !val.is_null() {
                 out.insert(key.to_string(), val.clone());
+            }
+        }
+    }
+
+    // Canonicalize a native JSON-schema response into the shared chat form.
+    // Only map the known lossless shape; leave future native options intact.
+    let modern_format = req
+        .pointer("/output_config/format")
+        .filter(|value| !value.is_null());
+    let legacy_format = req.get("output_format").filter(|value| !value.is_null());
+    let conflicting_formats = modern_format
+        .zip(legacy_format)
+        .is_some_and(|(modern, legacy)| modern != legacy);
+    if !conflicting_formats
+        && let Some(format) = modern_format.or(legacy_format).filter(|format| {
+            format.get("type").and_then(Value::as_str) == Some("json_schema")
+                && format.get("schema").is_some_and(Value::is_object)
+                && format.as_object().is_some_and(|format| {
+                    format
+                        .keys()
+                        .all(|key| matches!(key.as_str(), "type" | "schema"))
+                })
+        })
+    {
+        out.insert("response_format".into(), json!({"type":"json_schema", "json_schema":{"name":"structured_response", "strict":true, "schema":format["schema"]}}));
+        out.remove("output_format");
+        if let Some(Value::Object(config)) = out.get_mut("output_config") {
+            config.remove("format");
+            if config.is_empty() {
+                out.remove("output_config");
             }
         }
     }
@@ -407,6 +450,13 @@ fn convert_tool_result_content(content: Option<&Value>) -> Value {
 }
 
 fn map_anthropic_tool_to_openai(tool: &Value) -> Value {
+    if tool
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind != "custom")
+    {
+        return tool.clone();
+    }
     let name = tool.get("name").cloned().unwrap_or_else(|| json!(""));
     let description = tool.get("description").cloned();
     let input_schema = tool
@@ -420,6 +470,9 @@ fn map_anthropic_tool_to_openai(tool: &Value) -> Value {
         function.insert("description".to_string(), desc);
     }
     function.insert("parameters".to_string(), input_schema);
+    if let Some(strict) = tool.get("strict") {
+        function.insert("strict".to_string(), strict.clone());
+    }
 
     let mut mapped = json!({"type": "function", "function": Value::Object(function)});
     if let Some(control) = tool.get("cache_control") {
@@ -433,7 +486,17 @@ fn map_anthropic_tool_choice_to_openai(tool_choice: &Value) -> Option<Value> {
         return Some(json!(s));
     }
     let obj = tool_choice.as_object()?;
-    let tc_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("auto");
+    let tc_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if obj.keys().any(|key| {
+        !(matches!(key.as_str(), "type" | "disable_parallel_tool_use")
+            || tc_type == "tool" && key == "name")
+    }) || obj
+        .get("disable_parallel_tool_use")
+        .is_some_and(|value| !value.is_boolean())
+        || tc_type == "none" && obj.contains_key("disable_parallel_tool_use")
+    {
+        return Some(tool_choice.clone());
+    }
     Some(match tc_type {
         "auto" => json!("auto"),
         "any" => json!("required"),
@@ -442,7 +505,7 @@ fn map_anthropic_tool_choice_to_openai(tool_choice: &Value) -> Option<Value> {
             let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
             json!({"type": "function", "function": {"name": name}})
         }
-        other => json!(other),
+        _ => tool_choice.clone(),
     })
 }
 
@@ -1070,6 +1133,111 @@ pub(crate) fn process_openai_sse_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_tool_strictness_survives_the_messages_bridge() {
+        for strict in [
+            serde_json::json!(true),
+            serde_json::json!(false),
+            Value::Null,
+        ] {
+            let body = anthropic_to_openai_request(
+                &serde_json::json!({"messages":[], "tools":[{"name":"extract", "strict":strict, "input_schema":{"type":"object", "properties":{"strict":{"type":"boolean"}}}}]}),
+            );
+            assert_eq!(body["tools"][0]["function"]["strict"], strict);
+            assert_eq!(
+                body["tools"][0]["function"]["parameters"]["properties"]["strict"]["type"],
+                "boolean"
+            );
+        }
+    }
+
+    #[test]
+    fn native_json_output_is_canonicalized_without_losing_schema_or_effort() {
+        let schema = serde_json::json!({"type":"object", "additionalProperties":true, "properties":{"data":{"type":"array","uniqueItems":true}}});
+        let body = anthropic_to_openai_request(
+            &serde_json::json!({"messages":[], "output_config":{"format":{"type":"json_schema", "schema":schema},"effort":"low"}}),
+        );
+        assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
+        assert_eq!(body["response_format"]["json_schema"]["strict"], true);
+        assert_eq!(body["output_config"], serde_json::json!({"effort":"low"}));
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn messages_legacy_schema_alias_is_canonicalized_without_selecting_tools() {
+        let format =
+            json!({"type":"json_schema","schema":{"type":"object","additionalProperties":false}});
+        for modern in [Value::Null, format.clone()] {
+            let body = anthropic_to_openai_request(
+                &json!({"messages":[],"output_format":format,"output_config":{"format":modern,"effort":"low"}}),
+            );
+            assert_eq!(
+                body["response_format"]["json_schema"]["schema"],
+                format["schema"]
+            );
+            assert_eq!(body["output_config"], json!({"effort":"low"}));
+            assert!(body.get("output_format").is_none());
+            assert!(body.get("tools").is_none());
+        }
+    }
+
+    #[test]
+    fn messages_preserves_conflicting_and_extended_native_formats_for_rejection_or_forwarding() {
+        let modern = json!({"type":"json_schema","schema":{"type":"object"},"native_option":true});
+        for legacy in [
+            Value::Null,
+            json!({"type":"json_schema","schema":{"type":"object","additionalProperties":false}}),
+        ] {
+            let body = anthropic_to_openai_request(
+                &json!({"messages":[],"output_config":{"format":modern},"output_format":legacy}),
+            );
+            assert_eq!(body["output_config"]["format"], modern);
+            assert!(body.get("response_format").is_none());
+            if !legacy.is_null() {
+                assert_eq!(body["output_format"], legacy);
+            }
+        }
+    }
+
+    #[test]
+    fn native_hosted_tools_are_not_recast_as_function_tools() {
+        let tool =
+            serde_json::json!({"type":"web_search_20250305","name":"web_search","strict":true});
+        let body = anthropic_to_openai_request(&serde_json::json!({"messages":[],"tools":[tool]}));
+        assert_eq!(body["tools"][0], tool);
+    }
+
+    #[test]
+    fn native_parallel_limits_are_not_lost_from_messages_tool_choices() {
+        for choice in [
+            json!({"type":"auto"}),
+            json!({"type":"any"}),
+            json!({"type":"tool","name":"extract"}),
+        ] {
+            let mut limited = choice.clone();
+            limited["disable_parallel_tool_use"] = json!(true);
+            let body = anthropic_to_openai_request(&json!({"messages":[],"tool_choice":limited}));
+            assert_eq!(body["parallel_tool_calls"], false);
+            assert_eq!(
+                body["tool_choice"],
+                map_anthropic_tool_choice_to_openai(&choice).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_native_choices_are_preserved_instead_of_becoming_auto() {
+        for choice in [
+            json!({"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"extract"}]}),
+            json!({"type":"auto","native_option":true}),
+            json!({"type":"auto","disable_parallel_tool_use":"true"}),
+            json!(["required"]),
+        ] {
+            let body = anthropic_to_openai_request(&json!({"messages":[],"tool_choice":choice}));
+            assert_eq!(body["tool_choice"], choice);
+        }
+    }
 
     #[test]
     fn replay_preserves_signed_thinking_and_mixed_content_order() {

@@ -408,6 +408,10 @@ pub fn cache_key_for(request: &Value, api_key_hash: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(api_key_hash.as_bytes());
     hasher.update(b"\x00");
+    if let Some(version) = crate::native_output_policy::cache_version(request) {
+        hasher.update(version.as_bytes());
+        hasher.update(b"\x00");
+    }
     let mut cache_input = request.clone();
     if let Some(object) = cache_input.as_object_mut() {
         object.remove("cache");
@@ -658,6 +662,76 @@ pub async fn store(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_output_cache_version_preserves_plain_keys_and_isolates_old_tool_keys() {
+        for (body, shaped) in [
+            (serde_json::json!({"messages":[]}), false),
+            (
+                serde_json::json!({"messages":[],"response_format":{"type":"text"}}),
+                false,
+            ),
+            (
+                serde_json::json!({"messages":[],"tools":[{"type":"function","function":{"name":"extract","strict":true}}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"tools":[{"type":"function","function":{"name":"json_tool_call"}}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"functions":[{"name":"extract","strict":true}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"output_format":{"type":"json_schema","schema":{"type":"object"}}}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"output_config":{"textFormat":{"type":"json_schema","structure":{"jsonSchema":{"schema":"{\"type\":\"object\"}"}}}}}),
+                true,
+            ),
+        ] {
+            let mut canonical = body.clone();
+            canonicalize_json(&mut canonical);
+            let mut legacy = Sha256::new();
+            legacy.update(b"principal");
+            legacy.update(b"\x00");
+            legacy.update(serde_json::to_vec(&canonical).unwrap());
+            let legacy = format!("resp:{:x}", legacy.finalize());
+            assert_eq!(cache_key_for(&body, "principal") == legacy, !shaped);
+        }
+    }
+
+    #[test]
+    fn guarded_keys_isolate_entries_from_the_previous_native_policy() {
+        for body in [
+            serde_json::json!({"input":"","text":{"format":{"type":"json_schema","name":"record","schema":{"type":"object"}}}}),
+            serde_json::json!({"messages":[],"tools":[{"type":"function","function":{"name":"extract","strict":true}}]}),
+            serde_json::json!({"messages":[{"role":"user","content":"","output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}}}]}),
+            serde_json::json!({"messages":[],"tool_choice":"required"}),
+        ] {
+            let mut canonical = body.clone();
+            canonicalize_json(&mut canonical);
+            for version in [
+                None,
+                Some("native-output-policy-v1"),
+                Some("native-output-policy-v2"),
+            ] {
+                let mut old = Sha256::new();
+                old.update(b"principal\x00");
+                if let Some(version) = version {
+                    old.update(version.as_bytes());
+                    old.update(b"\x00");
+                }
+                old.update(serde_json::to_vec(&canonical).unwrap());
+                assert_ne!(
+                    cache_key_for(&body, "principal"),
+                    format!("resp:{:x}", old.finalize())
+                );
+            }
+        }
+    }
     use crate::cache::InMemoryCache;
     use crate::cache::semantic::SemanticCache;
     use crate::config::types::SemanticCacheConfig;

@@ -740,7 +740,6 @@ impl ChatProvider for BedrockProvider {
                         .get("model")
                         .and_then(Value::as_str)
                         .unwrap_or("bedrock"),
-                    converse::uses_synthetic_json_tool(original_request),
                 ),
             })
         });
@@ -778,11 +777,7 @@ impl ChatProvider for BedrockProvider {
         }
         converse::seed_tool_name_map(converse::reverse_map_from_request(original_request));
         if converse::looks_like_converse_response(body) {
-            return converse::transform_response_converse_with_request(
-                body,
-                model,
-                original_request,
-            );
+            return converse::transform_response_converse(body, model);
         }
         self.transform_response(body, model)
     }

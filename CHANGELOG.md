@@ -5,6 +5,37 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 
 ## [Unreleased]
 
+### Native structured outputs and strict tools
+
+- Forward caller schemas through native Anthropic/Converse output fields without
+  model-name gating, schema repair or synthetic-tool substitution. Schema-less
+  JSON-object mode now returns 400 on routes with no native representation.
+- Preserve explicitly requested tool strictness across Chat, Responses and Messages,
+  including hosted Claude routes and Converse tool specifications. Reject malformed
+  or misplaced strict flags instead of silently discarding them.
+- Preserve required/named tool choices and parallel-call limits, including native
+  Converse aliases. Reject choices with no lossless mapping or conflicting
+  definitions instead of silently relaxing them to automatic selection.
+- Guard native Messages relay overrides and message-level output formats; compare
+  every requested schema/option envelope rather than accepting any surviving format.
+  Keep disabled-tool requests valid without permitting later policies to enable tools.
+- Preserve tool-root strict aliases and encode native Converse choice names alongside
+  their definitions. Reject malformed Responses entries/options and return native
+  Messages error envelopes for early validation failures as well as provider errors.
+- Remove historical JSON-helper response redirection; explicit tools with that name
+  remain tool calls in unary/streaming replies. Preserve provider refusals, truncation
+  and unsupported-model/schema errors without downgrade attempts.
+- Protect requested output contracts from conflicting deployment parameter policies
+  and isolate old ignored-strict/emulated-output cache entries. Add native-wire,
+  streaming, provider-error, fallback and cache regressions across five Claude routes.
+- Translate the legacy schema-bearing `output_format` alias to stable native fields,
+  reject conflicting format definitions, preserve hosted-tool options and advertise
+  native output configuration under `drop_params`. Plain/explicit-text cache keys
+  stay unchanged; tool/schema cache namespaces change once and warm on demand.
+- Isolate previously under-guarded native-policy cache entries, cover semantic
+  schema/tool scopes and cross-route binary streaming, and update credentialed
+  smoke tests to request native schemas without passing through a weaker fallback.
+
 ### Azure Cohere image embeddings
 
 - Enforce the native image option allow-list after deployment allow/body overrides,
@@ -37,14 +68,15 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 - Accept native plural and legacy tag-header aliases through the shared routing,
   budget and metering path. Preserve literal `key:value` pairs and allow their
   tag budgets, with exact alert-scope resets.
-- Translate Responses `text.format` JSON-schema/JSON-object constraints through
-  chat providers for unary and streaming requests, validate malformed formats
-  before upstream calls, and retain schema-sensitive cache identity.
+- Translate Responses `text.format` constraints through chat providers with native
+  representations for unary and streaming requests; schema-less JSON-object mode
+  is not supported on Anthropic/Converse. Validate malformed formats before
+  upstream calls and retain schema-sensitive cache identity.
 - Emit call-id and cumulative-spend migration aliases alongside native headers,
   with consistent conversion, error, cache and CORS behavior.
 - Persist/filter client session identities through additive schema version 17,
   including failed and partial requests and compatibility with older writers.
-- Index visible Anthropic unary tool calls after internal JSON-helper removal.
+- Index Anthropic unary tool calls independently of text/thinking content blocks.
 - Return terminal local invalid-model errors as 400 while retaining authorized
   default fallbacks, resource 404s, provider 404s and gateway timeout semantics.
 - Admit explicitly free deployment groups without the unpriced-alias reservation

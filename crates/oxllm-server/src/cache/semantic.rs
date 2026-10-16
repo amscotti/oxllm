@@ -615,9 +615,105 @@ pub fn semantic_scope_for(
         api_base.trim_end_matches('/'),
         compatible,
     ]);
+    if let Some(version) = crate::native_output_policy::cache_version(body) {
+        scope.as_array_mut()?.push(serde_json::json!(version));
+    }
     canonicalize_json(&mut scope);
     let serialized = serde_json::to_vec(&scope).ok()?;
     Some(format!("sem:v2:{:x}", Sha256::digest(serialized)))
+}
+
+#[cfg(test)]
+mod native_policy_tests {
+    use super::*;
+
+    #[test]
+    fn only_output_shaping_scopes_are_isolated_from_legacy_semantic_entries() {
+        for (body, shaped) in [
+            (serde_json::json!({"messages":[]}), false),
+            (
+                serde_json::json!({"messages":[],"response_format":{"type":"text"}}),
+                false,
+            ),
+            (
+                serde_json::json!({"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"tools":[{"type":"function","function":{"name":"extract","strict":true}}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"tools":[{"type":"function","function":{"name":"json_tool_call"}}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"functions":[{"name":"extract","strict":true}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"output_format":{"type":"json_schema","schema":{"type":"object"}}}),
+                true,
+            ),
+            (
+                serde_json::json!({"messages":[],"output_config":{"textFormat":{"type":"json_schema","structure":{"jsonSchema":{"schema":"{\"type\":\"object\"}"}}}}}),
+                true,
+            ),
+        ] {
+            let mut legacy = serde_json::json!([
+                "oxllm-semantic-v2",
+                "model",
+                "embedding",
+                "https://example.test",
+                body
+            ]);
+            canonicalize_json(&mut legacy);
+            let legacy = format!(
+                "sem:v2:{:x}",
+                Sha256::digest(serde_json::to_vec(&legacy).unwrap())
+            );
+            let current =
+                semantic_scope_for(&body, "model", "embedding", "https://example.test").unwrap();
+            assert_eq!(current == legacy, !shaped);
+        }
+    }
+
+    #[test]
+    fn guarded_scopes_isolate_entries_from_the_previous_native_policy() {
+        for body in [
+            serde_json::json!({"input":"","text":{"format":{"type":"json_schema","name":"record","schema":{"type":"object"}}}}),
+            serde_json::json!({"messages":[],"tools":[{"type":"function","function":{"name":"extract","strict":true}}]}),
+            serde_json::json!({"messages":[{"role":"user","content":"","output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}}}]}),
+            serde_json::json!({"messages":[],"tool_choice":"required"}),
+        ] {
+            let current =
+                semantic_scope_for(&body, "model", "embedding", "https://example.test").unwrap();
+            for version in [
+                None,
+                Some("native-output-policy-v1"),
+                Some("native-output-policy-v2"),
+            ] {
+                let mut old = serde_json::json!([
+                    "oxllm-semantic-v2",
+                    "model",
+                    "embedding",
+                    "https://example.test",
+                    body
+                ]);
+                if let Some(version) = version {
+                    old.as_array_mut().unwrap().push(serde_json::json!(version));
+                }
+                canonicalize_json(&mut old);
+                assert_ne!(
+                    current,
+                    format!(
+                        "sem:v2:{:x}",
+                        Sha256::digest(serde_json::to_vec(&old).unwrap())
+                    )
+                );
+            }
+        }
+    }
 }
 
 fn mask_user_text(content: &mut Value) {
