@@ -1552,22 +1552,14 @@ fn convert_assistant_content(
 fn thinking_block_to_converse(block: &Value) -> Option<Value> {
     match block.get("type").and_then(Value::as_str)? {
         "thinking" => {
-            // Missing text defaults to the empty string for signed blocks
-            // (the `display: omitted` replay shape; the reference
-            // `_thinking_text` applies the same default). Unsigned blanks
-            // cannot be replayed and are dropped.
-            let text = block
-                .get("thinking")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let signed = block
-                .get("signature")
-                .and_then(Value::as_str)
-                .is_some_and(|signature| !signature.is_empty());
-            if text.trim().is_empty() && !signed {
+            let mut block = block.clone();
+            crate::util::normalize_thinking_block(&mut block);
+            if crate::util::is_blank_unsigned_thinking_block(&block) {
                 return None;
             }
-            let mut text_block = json!({"text": text});
+            // Preserve malformed types for provider validation rather than
+            // silently repairing them to signed empty text.
+            let mut text_block = json!({"text": block.get("thinking").unwrap_or(&Value::Null)});
             if let Some(signature) = block.get("signature") {
                 text_block["signature"] = signature.clone();
             }

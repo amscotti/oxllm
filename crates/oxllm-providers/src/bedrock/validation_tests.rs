@@ -564,6 +564,151 @@ fn validation_converse_thinking_roundtrip_preserves_signed_and_redacted_blocks()
     assert_eq!(native["messages"][0]["content"], content);
 }
 
+fn replay_with_inline_thinking(text: &str, reasoning: Option<&str>) -> Value {
+    let mut assistant = json!({
+        "role": "assistant",
+        "content": [{"type": "thinking", "thinking": text, "signature": "original-signature"}],
+        "thinking_blocks": [{"type": "thinking", "signature": "original-signature"}],
+        "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}],
+    });
+    if let Some(reasoning) = reasoning {
+        assistant["reasoning_content"] = json!(reasoning);
+    }
+    BedrockProvider
+        .transform_request(
+            &json!({"messages": [
+                {"role": "user", "content": "check"}, assistant,
+                {"role": "tool", "tool_call_id": "call_1", "content": "found"},
+            ]}),
+            &deployment("anthropic.claude-sonnet-4-5", true),
+        )
+        .unwrap()
+}
+
+#[test]
+fn thinking_replay_regression_inline_empty_beats_missing_mirror() {
+    let body = replay_with_inline_thinking("", None);
+    assert_eq!(
+        body["messages"][1]["content"],
+        json!([
+            {"reasoningContent": {"reasoningText": {"text": "", "signature": "original-signature"}}},
+            {"toolUse": {"toolUseId": "call_1", "name": "lookup", "input": {}}},
+        ])
+    );
+    assert_eq!(
+        body["messages"][2]["content"][0]["toolResult"]["toolUseId"],
+        "call_1"
+    );
+}
+
+#[test]
+fn thinking_replay_regression_inline_text_beats_refilled_mirror() {
+    let body = replay_with_inline_thinking("plan", Some("plan"));
+    assert_eq!(
+        body["messages"][1]["content"],
+        json!([
+            {"reasoningContent": {"reasoningText": {"text": "plan", "signature": "original-signature"}}},
+            {"toolUse": {"toolUseId": "call_1", "name": "lookup", "input": {}}},
+        ])
+    );
+    assert_eq!(
+        body["messages"][2]["content"][0]["toolResult"]["toolUseId"],
+        "call_1"
+    );
+}
+
+#[test]
+fn thinking_replay_regression_explicit_signed_blank_is_not_refilled() {
+    for text in ["", " \t\r\n", "signed text"] {
+        let body = BedrockProvider
+            .transform_request(
+                &json!({"messages": [{
+                    "role": "assistant", "content": "answer",
+                    "thinking_blocks": [{"type": "thinking", "thinking": text, "signature": "original-signature"}],
+                    "reasoning_content": "different unsigned text",
+                }]}),
+                &deployment("anthropic.claude-sonnet-4-5", true),
+            )
+            .unwrap();
+        assert_eq!(
+            body["messages"][0]["content"][0],
+            json!({
+                "reasoningContent": {"reasoningText": {"text": text, "signature": "original-signature"}},
+            })
+        );
+    }
+}
+
+#[test]
+fn thinking_replay_converse_inline_normalization_preserves_block_order_and_malformed_types() {
+    for text in [
+        None,
+        Some(Value::Null),
+        Some(json!("")),
+        Some(json!(" \t\r\n")),
+        Some(json!("plan")),
+        Some(json!(42)),
+    ] {
+        let mut first = json!({"type": "thinking", "signature": "sig"});
+        if let Some(text) = &text {
+            first["thinking"] = text.clone();
+        }
+        let mut assistant = json!({
+            "role": "assistant", "content": [
+                first, {"type": "redacted_thinking", "data": "AA=="},
+                {"type": "thinking", "thinking": "second", "signature": "second-sig"},
+            ],
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}],
+            "reasoning_content": "not either signed block",
+        });
+        if text
+            .as_ref()
+            .is_none_or(|text| text.is_null() || text.is_string())
+        {
+            assistant["thinking_blocks"] = json!([
+                {"type": "thinking", "signature": "second-sig"},
+                {"type": "redacted_thinking", "data": "AA=="},
+                {"type": "thinking", "thinking": "conflicting mirror", "signature": "sig"},
+            ]);
+        }
+        let body = BedrockProvider
+            .transform_request(
+                &json!({"messages": [assistant]}),
+                &deployment("anthropic.claude-sonnet-4-5", true),
+            )
+            .unwrap();
+        let expected_text = text.filter(|text| !text.is_null()).unwrap_or(json!(""));
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!([
+                {"reasoningContent": {"reasoningText": {"text": expected_text, "signature": "sig"}}},
+                {"reasoningContent": {"redactedContent": "AA=="}},
+                {"reasoningContent": {"reasoningText": {"text": "second", "signature": "second-sig"}}},
+                {"toolUse": {"toolUseId": "call_1", "name": "lookup", "input": {}}},
+            ])
+        );
+    }
+}
+
+#[test]
+fn thinking_replay_converse_native_content_is_authoritative_for_signed_and_redacted_mirrors() {
+    for text in ["", " \t\r\n", "plan"] {
+        let content = json!([
+            {"reasoningContent": {"reasoningText": {"text": text, "signature": "sig"}}},
+            {"reasoningContent": {"redactedContent": "AA=="}},
+            {"toolUse": {"toolUseId": "call_1", "name": "lookup", "input": {}}},
+        ]);
+        let body = BedrockProvider.transform_request(&json!({"messages": [{
+            "role": "assistant", "content": content, "reasoning_content": "different text",
+            "thinking_blocks": [
+                {"type": "thinking", "thinking": "conflicting mirror", "signature": "sig"},
+                {"type": "redacted_thinking", "data": "AA==", "cache_control": {"type": "ephemeral"}},
+            ],
+        }]}), &deployment("anthropic.claude-sonnet-4-5", true)).unwrap();
+        assert_eq!(body["messages"][0]["content"], content);
+    }
+}
+
 #[test]
 fn validation_invoke_claude_response_restores_tool_names_on_another_thread() {
     let request = json!({

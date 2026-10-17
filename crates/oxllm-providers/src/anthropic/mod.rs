@@ -1965,15 +1965,7 @@ fn normalize_message(msg: &Value) -> Result<Option<Value>> {
                     // blocks (oxllm's streaming spelling) normalize to the
                     // empty-text form the API accepts.
                     let mut block = block.clone();
-                    if block.get("type").and_then(Value::as_str) == Some("thinking")
-                        && block.get("thinking").and_then(Value::as_str).is_none()
-                        && block
-                            .get("signature")
-                            .and_then(Value::as_str)
-                            .is_some_and(|signature| !signature.is_empty())
-                    {
-                        block["thinking"] = json!("");
-                    }
+                    crate::util::normalize_thinking_block(&mut block);
                     if crate::util::is_blank_unsigned_thinking_block(&block) {
                         continue;
                     }

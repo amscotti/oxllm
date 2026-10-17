@@ -289,6 +289,119 @@ fn validation_thinking_replay_avoids_duplicates_and_requires_signatures() {
     );
 }
 
+fn replay_with_inline_thinking(text: &str, reasoning: Option<&str>) -> Value {
+    let mut assistant = json!({
+        "role": "assistant",
+        "content": [{"type": "thinking", "thinking": text, "signature": "original-signature"}],
+        "thinking_blocks": [{"type": "thinking", "signature": "original-signature"}],
+        "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}],
+    });
+    if let Some(reasoning) = reasoning {
+        assistant["reasoning_content"] = json!(reasoning);
+    }
+    AnthropicProvider
+        .transform_request(
+            &json!({"messages": [
+                {"role": "user", "content": "check"}, assistant,
+                {"role": "tool", "tool_call_id": "call_1", "content": "found"},
+            ]}),
+            &deployment(),
+        )
+        .unwrap()
+}
+
+#[test]
+fn thinking_replay_regression_inline_empty_beats_missing_mirror() {
+    let body = replay_with_inline_thinking("", None);
+    assert_eq!(
+        body["messages"][1]["content"],
+        json!([
+            {"type": "thinking", "thinking": "", "signature": "original-signature"},
+            {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}},
+        ])
+    );
+    assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "call_1");
+}
+
+#[test]
+fn thinking_replay_regression_inline_text_beats_refilled_mirror() {
+    let body = replay_with_inline_thinking("plan", Some("plan"));
+    assert_eq!(
+        body["messages"][1]["content"],
+        json!([
+            {"type": "thinking", "thinking": "plan", "signature": "original-signature"},
+            {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}},
+        ])
+    );
+    assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "call_1");
+}
+
+#[test]
+fn thinking_replay_regression_explicit_signed_blank_is_not_refilled() {
+    for text in ["", " \t\r\n", "signed text"] {
+        let block =
+            json!({"type": "thinking", "thinking": text, "signature": "original-signature"});
+        let body = AnthropicProvider
+            .transform_request(
+                &json!({"messages": [{
+                    "role": "assistant", "content": "answer", "thinking_blocks": [block],
+                    "reasoning_content": "different unsigned text",
+                }]}),
+                &deployment(),
+            )
+            .unwrap();
+        assert_eq!(body["messages"][0]["content"][0], block);
+    }
+}
+
+#[test]
+fn thinking_replay_inline_normalization_preserves_block_order_and_malformed_types() {
+    for text in [
+        None,
+        Some(Value::Null),
+        Some(json!("")),
+        Some(json!(" \t\r\n")),
+        Some(json!("plan")),
+        Some(json!(42)),
+    ] {
+        let mut first = json!({"type": "thinking", "signature": "sig"});
+        if let Some(text) = &text {
+            first["thinking"] = text.clone();
+        }
+        let redacted = json!({"type": "redacted_thinking", "data": "AA==", "cache_control": {"type": "ephemeral"}});
+        let second = json!({"type": "thinking", "thinking": "second", "signature": "second-sig"});
+        let mut assistant = json!({
+            "role": "assistant", "content": [first, redacted, second],
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}],
+            "reasoning_content": "not either signed block",
+        });
+        // A malformed extension must error rather than be hidden by inline
+        // authority; malformed native fields still reach provider validation.
+        if text
+            .as_ref()
+            .is_none_or(|text| text.is_null() || text.is_string())
+        {
+            assistant["thinking_blocks"] = json!([
+                {"type": "thinking", "signature": "second-sig"},
+                {"type": "redacted_thinking", "data": "AA=="},
+                {"type": "thinking", "thinking": "conflicting mirror", "signature": "sig"},
+            ]);
+        }
+        let body = AnthropicProvider
+            .transform_request(&json!({"messages": [assistant]}), &deployment())
+            .unwrap();
+        let expected_text = text.filter(|text| !text.is_null()).unwrap_or(json!(""));
+        first["thinking"] = expected_text;
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!([
+                first, redacted, second,
+                {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}},
+            ])
+        );
+    }
+}
+
 #[test]
 fn validation_sse_lone_cr_and_multiline_data_keep_anthropic_dispatch() {
     let mut state = None;

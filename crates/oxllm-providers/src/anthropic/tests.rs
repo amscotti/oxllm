@@ -439,13 +439,15 @@ fn request_replays_signed_blank_thinking_blocks() {
     // The lone surviving text block collapses back to plain-string content.
     assert_eq!(out["messages"][0]["content"], "Answer.");
 
+    // Only the gateway's missing-text signature spelling may be refilled;
+    // an explicit empty/whitespace string is already signature-bound text.
     let filled = json!({
         "model": "claude-sonnet-4-5",
         "messages": [{
             "role": "assistant",
             "content": "Answer.",
             "reasoning_content": "from the stream",
-            "thinking_blocks": [{"type": "thinking", "thinking": "", "signature": "sig_fill"}],
+            "thinking_blocks": [{"type": "thinking", "signature": "sig_fill"}],
         }],
         "max_tokens": 100,
     });

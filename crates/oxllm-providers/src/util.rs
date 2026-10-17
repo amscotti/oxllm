@@ -480,27 +480,65 @@ pub(crate) fn strict_tool_definition(tool: &Value) -> oxllm_core::Result<bool> {
 #[cfg(any(feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn is_blank_unsigned_thinking_block(block: &Value) -> bool {
     block.get("type").and_then(Value::as_str) == Some("thinking")
-        && block
-            .get("thinking")
-            .and_then(Value::as_str)
-            .is_none_or(|text| text.trim().is_empty())
+        && match block.get("thinking") {
+            None | Some(Value::Null) => true,
+            Some(Value::String(text)) => text.trim().is_empty(),
+            _ => false,
+        }
+        && match block.get("signature") {
+            None | Some(Value::Null) => true,
+            Some(Value::String(signature)) => signature.is_empty(),
+            _ => false,
+        }
+}
+
+/// Normalize signed missing/null text to the provider's empty-text replay
+/// shape. Explicit strings (including whitespace) are signature-bound bytes;
+/// malformed field types must remain available to validation, not be repaired.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
+pub(crate) fn normalize_thinking_block(block: &mut Value) {
+    if block.get("type").and_then(Value::as_str) == Some("thinking")
+        && block.get("thinking").is_none_or(Value::is_null)
         && block
             .get("signature")
             .and_then(Value::as_str)
-            .is_none_or(|signature| signature.is_empty())
+            .is_some_and(|signature| !signature.is_empty())
+    {
+        block["thinking"] = json!("");
+    }
 }
 
-/// A `thinking` block whose text is missing or whitespace, signed or not.
-/// Used to decide whether a single block may be refilled from
-/// `reasoning_content` (the streaming-aggregation shape); replay dropping is
-/// decided by [`is_blank_unsigned_thinking_block`] instead.
+/// Inline content is authoritative for a mirrored signed/redacted block,
+/// even when its text spelling or metadata differs from the extension copy.
+/// Signatures identify thinking blocks; redacted data is itself opaque identity.
 #[cfg(any(feature = "anthropic", feature = "bedrock"))]
-pub(crate) fn is_blank_thinking_block(block: &Value) -> bool {
-    block.get("type").and_then(Value::as_str) == Some("thinking")
-        && block
-            .get("thinking")
-            .and_then(Value::as_str)
-            .is_none_or(|text| text.trim().is_empty())
+fn is_inline_thinking_mirror(inline: &Value, block: &Value) -> bool {
+    if inline == block {
+        return true;
+    }
+    match block.get("type").and_then(Value::as_str) {
+        Some("thinking") => {
+            let Some(signature) = block
+                .get("signature")
+                .and_then(Value::as_str)
+                .filter(|signature| !signature.is_empty())
+            else {
+                return false;
+            };
+            (inline.get("type").and_then(Value::as_str) == Some("thinking")
+                && inline.get("signature").and_then(Value::as_str) == Some(signature))
+                || inline
+                    .pointer("/reasoningContent/reasoningText/signature")
+                    .and_then(Value::as_str)
+                    == Some(signature)
+        }
+        Some("redacted_thinking") => {
+            (inline.get("type").and_then(Value::as_str) == Some("redacted_thinking")
+                && inline.get("data") == block.get("data"))
+                || inline.pointer("/reasoningContent/redactedContent") == block.get("data")
+        }
+        _ => false,
+    }
 }
 
 /// Restore provider-extension thinking blocks before assistant text/tool uses.
@@ -510,9 +548,11 @@ pub(crate) fn is_blank_thinking_block(block: &Value) -> bool {
 /// An unsigned thinking block with no text is omitted. A signed blank block
 /// — the `display: omitted` replay shape — is kept unchanged: its signature
 /// binds the original text, so refilling or dropping it would break replay.
-/// When there is exactly one blank block, non-empty `reasoning_content` fills
-/// it; several blank blocks are not split. A non-blank block still needs its
-/// signature when required.
+/// Only the gateway's signature-only extension spelling (no `thinking` key)
+/// may be refilled from non-empty `reasoning_content`, with exactly one block
+/// and no inline thinking association. Explicit empty/whitespace/null text is
+/// never refilled; several blocks are not split. A non-blank block still needs
+/// its signature when required.
 #[cfg(any(feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn thinking_blocks_for_replay(
     message: &Value,
@@ -536,49 +576,19 @@ pub(crate) fn thinking_blocks_for_replay(
             oxllm_core::Error::BadRequest("assistant thinking_blocks must be an array".into())
         })?;
         for block in blocks {
-            let mut block = block.clone();
-            // Content-array blocks take precedence over their mirrored
-            // `thinking_blocks` entry: compare the RAW block before any
-            // refill so a refilled copy is never replayed beside the inline
-            // original (two blocks sharing one signature cannot both
-            // validate).
-            if content.is_some_and(|blocks| blocks.contains(&block)) {
-                continue;
-            }
-            // Some streaming clients aggregate one signature block alongside
-            // reasoning_content — oxllm's own stream emits the thinking text
-            // and the signature separately, so the refill reconstructs
-            // exactly the text the signature covers. With exactly one block
-            // the association is unambiguous; never guess how to split text
-            // across several blocks. A genuine `display: omitted` block has
-            // no reasoning_content to fill, so the refill stays inert there.
-            if blocks.len() == 1 && is_blank_thinking_block(&block) {
-                if let Some(text) = message
-                    .get("reasoning_content")
+            let signature_only = block.get("type").and_then(Value::as_str) == Some("thinking")
+                && block.get("thinking").is_none()
+                && block
+                    .get("signature")
                     .and_then(Value::as_str)
-                    .filter(|text| !text.trim().is_empty())
-                {
-                    block["thinking"] = json!(text);
-                }
-            }
+                    .is_some_and(|signature| !signature.is_empty());
+            let mut block = block.clone();
+            normalize_thinking_block(&mut block);
             // An unsigned blank block cannot be replayed (the signature is
             // what makes a blank `display: omitted` block acceptable); a
             // signed blank stays, whatever its text.
             if is_blank_unsigned_thinking_block(&block) {
                 continue;
-            }
-            // oxllm's stream emits signature-only blocks (no `thinking`
-            // key). A signed block normalizes to the empty-text replay shape
-            // the API accepts; the reference applies the same default on the
-            // Converse surface (`_thinking_text`).
-            if block.get("type").and_then(Value::as_str) == Some("thinking")
-                && block.get("thinking").and_then(Value::as_str).is_none()
-                && block
-                    .get("signature")
-                    .and_then(Value::as_str)
-                    .is_some_and(|signature| !signature.is_empty())
-            {
-                block["thinking"] = json!("");
             }
             let valid = match block.get("type").and_then(Value::as_str) {
                 Some("thinking") => {
@@ -595,6 +605,30 @@ pub(crate) fn thinking_blocks_for_replay(
                      replay thinking text with its original signature or redacted_thinking data"
                         .into(),
                 ));
+            }
+            // Validate before suppressing a mirror so precedence cannot hide
+            // malformed extension fields. Raw JSON equality is insufficient:
+            // missing/null/empty text and streamed signature-only copies can
+            // all refer to the same inline signed block.
+            if content.is_some_and(|blocks| {
+                blocks
+                    .iter()
+                    .any(|inline| is_inline_thinking_mirror(inline, &block))
+            }) {
+                continue;
+            }
+            // The gateway stream emits text and signature separately. Refill
+            // only that spelling, never explicit signature-bound text, and do
+            // not assign concatenated reasoning to one of several blocks.
+            // Even whitespace-only stream text is signature-bound bytes.
+            if signature_only && blocks.len() == 1 && !native_thinking {
+                if let Some(text) = message
+                    .get("reasoning_content")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                {
+                    block["thinking"] = json!(text);
+                }
             }
             replay.push(block);
         }
@@ -620,6 +654,217 @@ pub(crate) fn thinking_blocks_for_replay(
 mod tests {
     use super::*;
     use oxllm_core::provider::ResolvedCredentials;
+
+    #[cfg(any(feature = "anthropic", feature = "bedrock"))]
+    mod thinking_replay {
+        use super::*;
+
+        fn signed(text: Option<Value>) -> Value {
+            let mut block = json!({"type": "thinking", "signature": "sig"});
+            if let Some(text) = text {
+                block["thinking"] = text;
+            }
+            block
+        }
+
+        #[test]
+        fn mixed_missing_null_empty_and_text_mirrors_respect_inline_authority() {
+            let spellings = [
+                None,
+                Some(Value::Null),
+                Some(json!("")),
+                Some(json!(" \t\r\n")),
+                Some(json!("plan")),
+            ];
+            for inline in &spellings {
+                for mirror in &spellings {
+                    let message = json!({
+                        "role": "assistant", "content": [signed(inline.clone())],
+                        "thinking_blocks": [signed(mirror.clone())],
+                        "reasoning_content": "different unsigned text",
+                    });
+                    assert!(
+                        thinking_blocks_for_replay(&message, true)
+                            .unwrap()
+                            .is_empty(),
+                        "{message}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn only_one_gateway_signature_only_extension_can_be_refilled() {
+            let reasoning = " \tplan\r\n ";
+            for spelling in [
+                None,
+                Some(Value::Null),
+                Some(json!("")),
+                Some(json!(" \t\r\n")),
+                Some(json!("signed text")),
+            ] {
+                let expected_text = match &spelling {
+                    None => json!(reasoning),
+                    Some(Value::Null) => json!(""),
+                    Some(text) => text.clone(),
+                };
+                let message = json!({
+                    "role": "assistant", "content": "answer", "thinking_blocks": [signed(spelling)],
+                    "reasoning_content": reasoning,
+                });
+                assert_eq!(
+                    thinking_blocks_for_replay(&message, true).unwrap(),
+                    vec![signed(Some(expected_text))]
+                );
+            }
+            for reasoning in [Value::Null, json!(""), json!(" \t\r\n")] {
+                let message = json!({
+                    "role": "assistant", "content": "answer", "thinking_blocks": [signed(None)],
+                    "reasoning_content": reasoning,
+                });
+                let expected_text = reasoning.as_str().unwrap_or("");
+                assert_eq!(
+                    thinking_blocks_for_replay(&message, true).unwrap(),
+                    vec![signed(Some(json!(expected_text)))]
+                );
+            }
+        }
+
+        #[test]
+        fn multiple_associations_never_guess_a_reasoning_split() {
+            let first = signed(None);
+            let second = json!({"type": "thinking", "signature": "second-sig"});
+            let redacted = json!({"type": "redacted_thinking", "data": "AA=="});
+            for blocks in [json!([first, second]), json!([first, redacted])] {
+                let message = json!({
+                    "role": "assistant", "content": "answer", "thinking_blocks": blocks,
+                    "reasoning_content": "concatenated reasoning with no block boundaries",
+                });
+                let replay = thinking_blocks_for_replay(&message, true).unwrap();
+                assert_eq!(replay.len(), 2);
+                assert_eq!(replay[0], signed(Some(json!(""))));
+                assert!(
+                    replay
+                        .iter()
+                        .all(|block| block.get("thinking").is_none_or(|text| text == ""))
+                );
+            }
+            // A single extension is not a single association when inline
+            // thinking also exists under a different signature.
+            let message = json!({
+                "role": "assistant", "content": [second], "thinking_blocks": [first],
+                "reasoning_content": "cannot assign this to either signature",
+            });
+            assert_eq!(
+                thinking_blocks_for_replay(&message, true).unwrap(),
+                vec![signed(Some(json!("")))]
+            );
+        }
+
+        #[test]
+        fn redacted_mirrors_use_opaque_data_without_losing_distinct_blocks() {
+            let block = json!({"type": "redacted_thinking", "data": "AA=="});
+            let distinct = json!({"type": "redacted_thinking", "data": "AQ=="});
+            for inline in [
+                json!({"type": "redacted_thinking", "data": "AA==", "cache_control": {"type": "ephemeral"}}),
+                json!({"reasoningContent": {"redactedContent": "AA=="}}),
+            ] {
+                let message = json!({
+                    "role": "assistant", "content": [inline], "thinking_blocks": [block, distinct],
+                });
+                assert_eq!(
+                    thinking_blocks_for_replay(&message, true).unwrap(),
+                    vec![distinct.clone()]
+                );
+            }
+        }
+
+        #[test]
+        fn malformed_extension_fields_cannot_be_repaired_or_hidden_by_inline_content() {
+            let inline = signed(Some(json!("authoritative")));
+            for thinking in [json!(false), json!(42), json!([]), json!({})] {
+                let mut malformed = signed(Some(thinking));
+                let original = malformed.clone();
+                normalize_thinking_block(&mut malformed);
+                assert_eq!(malformed, original);
+                assert!(!is_blank_unsigned_thinking_block(&malformed));
+                let message = json!({
+                    "role": "assistant", "content": [inline], "thinking_blocks": [malformed],
+                    "reasoning_content": "not a schema repair",
+                });
+                assert!(matches!(
+                    thinking_blocks_for_replay(&message, true),
+                    Err(oxllm_core::Error::BadRequest(_))
+                ));
+            }
+            for malformed in [
+                json!({"type": "thinking", "thinking": "", "signature": false}),
+                json!({"type": "thinking", "signature": 42}),
+                json!({"type": "thinking", "thinking": "text", "signature": []}),
+                json!({"type": "redacted_thinking", "data": null}),
+                json!({"type": "redacted_thinking", "data": 42}),
+                json!({"type": "redacted_thinking"}),
+                json!({"type": "unknown", "signature": "sig"}),
+                Value::Null,
+            ] {
+                let message = json!({
+                    "role": "assistant", "content": [inline], "thinking_blocks": [malformed],
+                });
+                assert!(
+                    matches!(
+                        thinking_blocks_for_replay(&message, true),
+                        Err(oxllm_core::Error::BadRequest(_))
+                    ),
+                    "{message}"
+                );
+            }
+            for malformed in [json!({}), json!("blocks"), json!(42)] {
+                let message =
+                    json!({"role": "assistant", "content": [inline], "thinking_blocks": malformed});
+                assert!(matches!(
+                    thinking_blocks_for_replay(&message, true),
+                    Err(oxllm_core::Error::BadRequest(_))
+                ));
+            }
+        }
+
+        #[test]
+        fn unsigned_errors_and_non_claude_signature_policy_are_preserved() {
+            let unsigned = json!({"type": "thinking", "thinking": "unsigned text"});
+            let message =
+                json!({"role": "assistant", "content": "answer", "thinking_blocks": [unsigned]});
+            assert!(matches!(
+                thinking_blocks_for_replay(&message, true),
+                Err(oxllm_core::Error::BadRequest(_))
+            ));
+            assert_eq!(
+                thinking_blocks_for_replay(&message, false).unwrap(),
+                vec![unsigned]
+            );
+            for thinking_blocks in [
+                Value::Null,
+                json!([]),
+                json!([{"type": "thinking"}]),
+                json!([{"type": "thinking", "thinking": " \t\n"}]),
+            ] {
+                let message = json!({
+                    "role": "assistant", "content": "answer", "thinking_blocks": thinking_blocks,
+                    "reasoning_content": "unsigned reasoning",
+                });
+                assert!(matches!(
+                    thinking_blocks_for_replay(&message, true),
+                    Err(oxllm_core::Error::BadRequest(_))
+                ));
+            }
+            let message =
+                json!({"role": "assistant", "content": "answer", "thinking_blocks": null});
+            assert!(
+                thinking_blocks_for_replay(&message, true)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
 
     // --- apply_bearer_auth ---
 

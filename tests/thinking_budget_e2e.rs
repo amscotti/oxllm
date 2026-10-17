@@ -1,4 +1,4 @@
-//! Explicit thinking budgets fail loudly when no valid budget window exists.
+//! Thinking budget validation and lossless signed-thinking replay over HTTP.
 
 mod common;
 
@@ -428,4 +428,217 @@ async fn old_plain_answers_cannot_bypass_thinking_validation_through_exact_or_se
     wire.assert_hits_async(0).await;
     embed.assert_hits_async(1).await;
     handle.shutdown();
+}
+
+fn thinking_replay_tool_content(route: Route, text: &str, redacted: bool) -> Value {
+    let converse = matches!(route, Route::Converse);
+    let mut blocks = vec![if converse {
+        json!({"reasoningContent":{"reasoningText":{"text":text,"signature":"original-signature"}}})
+    } else {
+        json!({"type":"thinking","thinking":text,"signature":"original-signature"})
+    }];
+    if redacted {
+        blocks.push(if converse {
+            json!({"reasoningContent":{"redactedContent":"AA=="}})
+        } else {
+            json!({"type":"redacted_thinking","data":"AA=="})
+        });
+    }
+    blocks.push(if converse {
+        json!({"text":"Checking."})
+    } else {
+        json!({"type":"text","text":"Checking."})
+    });
+    blocks.push(if converse {
+        json!({"toolUse":{"toolUseId":"call_1","name":"lookup","input":{"key":"x"}}})
+    } else {
+        json!({"type":"tool_use","id":"call_1","name":"lookup","input":{"key":"x"}})
+    });
+    json!(blocks)
+}
+
+#[tokio::test]
+async fn thinking_replay_roundtrip_keeps_one_signed_copy_before_tool_use() {
+    for route in [Route::Direct, Route::Converse] {
+        let upstream = MockServer::start_async().await;
+        let (handle, _) = common::start_oxllm(config(&upstream, route)).await.unwrap();
+        let client = common::http_client();
+        for api in APIS {
+            for (case, text, redacted) in [
+                ("empty", "", false),
+                ("whitespace", " \t\r\n", false),
+                ("text", "plan", false),
+                ("redacted", "plan", true),
+            ] {
+                let prompt = format!("replay {api} {case}");
+                let user = json!({"role":"user","content":prompt});
+                let mut payload = request(api, 3000);
+                payload["messages"] = json!([user]);
+                payload["thinking"] = json!({"type":"enabled","budget_tokens":2000});
+                let mut initial_wire = wire_body(route, 3000, Some(2000));
+                initial_wire["messages"][0]["content"] = if matches!(route, Route::Converse) {
+                    json!([{"text":prompt}])
+                } else {
+                    json!(prompt)
+                };
+                let tool_content = thinking_replay_tool_content(route, text, redacted);
+                let mut tool_reply = reply(route, false);
+                if matches!(route, Route::Converse) {
+                    tool_reply["output"]["message"]["content"] = tool_content.clone();
+                    tool_reply["stopReason"] = json!("tool_use");
+                } else {
+                    tool_reply["content"] = tool_content.clone();
+                    tool_reply["stop_reason"] = json!("tool_use");
+                }
+                let initial = upstream
+                    .mock_async(|when, then| {
+                        when.method(POST)
+                            .path(path(route))
+                            .json_body(initial_wire.clone());
+                        then.status(200).json_body(tool_reply);
+                    })
+                    .await;
+                let response = client
+                    .post(handle.url(api))
+                    .json(&payload)
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let body: Value = response.json().await.unwrap();
+                assert_eq!(status, 200, "{route:?} {api} {case}: {body}");
+
+                let (assistant, result) = if api == "/v1/messages" {
+                    assert_eq!(
+                        body["content"],
+                        thinking_replay_tool_content(Route::Direct, text, redacted)
+                    );
+                    (
+                        json!({"role":"assistant","content":body["content"]}),
+                        json!({"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"found"}]}),
+                    )
+                } else {
+                    let mut assistant = body["choices"][0]["message"].clone();
+                    let mut inline = assistant["thinking_blocks"].as_array().unwrap().clone();
+                    assert_eq!(
+                        inline[0],
+                        json!({"type":"thinking","thinking":text,"signature":"original-signature"})
+                    );
+                    inline.push(json!({"type":"text","text":assistant["content"]}));
+                    assistant["content"] = json!(inline);
+                    // Simulate a client retaining native blocks alongside the
+                    // gateway's streamed signature-only mirror. Inline text is
+                    // authoritative even if reasoning_content disagrees.
+                    assistant["thinking_blocks"][0]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("thinking");
+                    assistant["reasoning_content"] = json!(if text == "plan" {
+                        "plan"
+                    } else {
+                        "different unsigned text"
+                    });
+                    (
+                        assistant,
+                        json!({"role":"tool","tool_call_id":"call_1","content":"found"}),
+                    )
+                };
+                let mut continuation_wire = initial_wire.clone();
+                let result_wire = if matches!(route, Route::Converse) {
+                    json!({"role":"user","content":[{"toolResult":{"toolUseId":"call_1","content":[{"text":"found"}]}}]})
+                } else {
+                    json!({"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"found"}]})
+                };
+                continuation_wire["messages"] = json!([
+                    initial_wire["messages"][0], {"role":"assistant","content":tool_content}, result_wire,
+                ]);
+                let continuation = upstream
+                    .mock_async(|when, then| {
+                        when.method(POST)
+                            .path(path(route))
+                            .json_body(continuation_wire);
+                        then.status(200).json_body(reply(route, false));
+                    })
+                    .await;
+                payload["messages"] = json!([user, assistant, result]);
+                let response = client
+                    .post(handle.url(api))
+                    .json(&payload)
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let body: Value = response.json().await.unwrap();
+                assert_eq!(status, 200, "{route:?} {api} {case} continuation: {body}");
+                if api == "/v1/messages" {
+                    assert_eq!(body["content"][0]["text"], "Hi");
+                } else {
+                    assert_eq!(body["choices"][0]["message"]["content"], "Hi");
+                }
+                initial.assert_hits_async(1).await;
+                continuation.assert_hits_async(1).await;
+            }
+        }
+        handle.shutdown();
+    }
+}
+
+#[tokio::test]
+async fn thinking_replay_unsigned_and_malformed_histories_fail_before_http_upstream() {
+    for route in [Route::Direct, Route::Converse] {
+        let upstream = MockServer::start_async().await;
+        let wire = upstream
+            .mock_async(|when, then| {
+                when.method(POST);
+                then.status(200).json_body(reply(route, false));
+            })
+            .await;
+        let (handle, _) = common::start_oxllm(config(&upstream, route)).await.unwrap();
+        let client = common::http_client();
+        for api in APIS {
+            let mut assistants = Vec::new();
+            for block in [
+                json!({"type":"thinking","thinking":"unsigned"}),
+                json!({"type":"thinking","thinking":false,"signature":"sig"}),
+                json!({"type":"thinking","thinking":"","signature":false}),
+                json!({"type":"redacted_thinking","data":42}),
+            ] {
+                assistants.push(if api == "/v1/messages" {
+                    json!({"role":"assistant","content":[block,{"type":"text","text":"answer"}]})
+                } else {
+                    json!({"role":"assistant","content":"answer","thinking_blocks":[block]})
+                });
+            }
+            if api == "/v1/chat/completions" {
+                assistants.push(
+                    json!({"role":"assistant","content":"answer","reasoning_content":"unsigned"}),
+                );
+            }
+            for assistant in assistants {
+                for stream in [false, true] {
+                    let mut payload = request(api, 3000);
+                    payload["messages"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(assistant.clone());
+                    payload["stream"] = json!(stream);
+                    let response = client
+                        .post(handle.url(api))
+                        .json(&payload)
+                        .send()
+                        .await
+                        .unwrap();
+                    let status = response.status();
+                    let body: Value = response.json().await.unwrap();
+                    assert_eq!(
+                        status, 400,
+                        "{route:?} {api} stream={stream} {assistant}: {body}"
+                    );
+                    assert_eq!(body["error"]["type"], "invalid_request_error");
+                }
+            }
+        }
+        wire.assert_hits_async(0).await;
+        handle.shutdown();
+    }
 }
