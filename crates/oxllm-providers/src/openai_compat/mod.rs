@@ -262,6 +262,64 @@ fn gemini_flash_rejects_minimal(model: &str) -> bool {
     leaf.contains("gemini-3.7-flash") || leaf.contains("gemini-3.8-flash")
 }
 
+/// Response-only message fields the gateway may attach to a returned message
+/// (Anthropic thinking blocks, Responses-API reasoning items, provider
+/// extension fields). No strict OpenAI-compatible endpoint accepts them back
+/// on replay, so providers with `extra_forbidden` message schemas strip them
+/// (reference `LITELLM_RESPONSE_ONLY_MESSAGE_FIELDS`).
+pub(crate) const RESPONSE_ONLY_MESSAGE_FIELDS: &[&str] = &[
+    "thinking_blocks",
+    "reasoning_items",
+    "provider_specific_fields",
+];
+
+/// Strip [`RESPONSE_ONLY_MESSAGE_FIELDS`] (plus nested
+/// `tool_calls[].provider_specific_fields`, including the `function` level)
+/// from every message of an already-built OpenAI chat request body.
+///
+/// Every role is stripped. The reference gates by role on some providers
+/// (groq/together strip assistant messages only), but these keys are never
+/// legitimate non-assistant input either — a strict endpoint rejects them on
+/// any message — so the shared helper takes the safer superset.
+pub(crate) fn strip_response_only_fields(body: &mut Value) {
+    strip_message_fields(body, RESPONSE_ONLY_MESSAGE_FIELDS);
+}
+
+/// [`strip_response_only_fields`] plus `reasoning_content`, for endpoints
+/// that reject replayed reasoning text as well (reference
+/// `LITELLM_INTERNAL_MESSAGE_FIELDS`).
+pub(crate) fn strip_internal_message_fields(body: &mut Value) {
+    strip_message_fields(body, &["reasoning_content"]);
+    strip_response_only_fields(body);
+}
+
+fn strip_message_fields(body: &mut Value, dropped: &[&str]) {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for message in messages.iter_mut() {
+        let Some(map) = message.as_object_mut() else {
+            continue;
+        };
+        for field in dropped {
+            map.remove(*field);
+        }
+        // Provider extension fields also ride on individual tool calls and
+        // their `function` sub-objects; strict endpoints reject those too.
+        if let Some(tool_calls) = map.get_mut("tool_calls").and_then(Value::as_array_mut) {
+            for tool_call in tool_calls.iter_mut() {
+                let Some(call) = tool_call.as_object_mut() else {
+                    continue;
+                };
+                call.remove("provider_specific_fields");
+                if let Some(function) = call.get_mut("function").and_then(Value::as_object_mut) {
+                    function.remove("provider_specific_fields");
+                }
+            }
+        }
+    }
+}
+
 /// Build a chat request body using an explicit allow-list of param names.
 /// Providers with a narrower surface (e.g. Gemini via
 /// [`OpenAiCompatProvider::with_supported_params`]) pass their override so

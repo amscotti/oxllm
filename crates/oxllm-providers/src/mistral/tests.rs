@@ -504,6 +504,38 @@ fn mistral_strips_thinking_blocks_from_assistant_messages() {
 }
 
 #[test]
+fn mistral_strips_provider_specific_and_reasoning_item_fields() {
+    // Reference strip_litellm_internal_message_fields: provider extension
+    // fields and Responses-API reasoning items are equally rejected by
+    // Mistral's extra-forbidden message schema.
+    let p = MistralProvider;
+    let req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [{
+            "role": "assistant",
+            "content": "Hello",
+            "reasoning_items": [{"id": "rs_1"}],
+            "provider_specific_fields": {"a": 1},
+            "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "extract", "arguments": "{}", "provider_specific_fields": {"c": 3}},
+                "provider_specific_fields": {"b": 2}
+            }]
+        }],
+    });
+    let out = ChatProvider::transform_request(&p, &req, &deployment()).expect("ok");
+    let message = &out["messages"][0];
+    assert!(message.get("reasoning_items").is_none());
+    assert!(message.get("provider_specific_fields").is_none());
+    assert!(
+        message["tool_calls"][0]
+            .get("provider_specific_fields")
+            .is_none()
+    );
+    assert_eq!(message["tool_calls"][0]["function"]["name"], "extract");
+}
+
+#[test]
 fn mistral_leaves_non_assistant_reasoning_fields_untouched() {
     // H4 scope: only `assistant` messages are walked. A `user`/`system`/`tool`
     // message carrying these keys (unusual, but not ours to rewrite) is left
@@ -1294,4 +1326,23 @@ fn request_keeps_assistant_with_function_call_and_empty_content() {
     );
     assert_eq!(messages[1]["role"], "assistant");
     assert_eq!(messages[1]["function_call"]["name"], "f");
+}
+
+#[test]
+fn mistral_drops_a_reasoning_only_assistant_turn_after_stripping() {
+    // A turn that carried only gateway extension fields must not survive the
+    // strip as `content: ""` — Mistral rejects empty content (reference
+    // order: strip, then drop).
+    let p = MistralProvider;
+    let req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [
+            {"role": "assistant", "content": "", "reasoning_items": [{"id": "rs_1"}]},
+            {"role": "user", "content": "hi"},
+        ],
+    });
+    let out = ChatProvider::transform_request(&p, &req, &deployment()).expect("ok");
+    let messages = out["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1, "emptied turn dropped");
+    assert_eq!(messages[0]["content"], "hi");
 }

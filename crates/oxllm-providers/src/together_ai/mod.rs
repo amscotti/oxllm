@@ -61,6 +61,10 @@ pub fn strip_together_prefix(model: &str) -> &str {
 /// request body (the output of the shared compat `transform_request`).
 fn apply_together_request_transforms(out: &mut Value) {
     drop_text_response_format(out);
+    // Together's message schema is strict: response-only fields from a
+    // previous reply cannot be replayed (reference
+    // `strip_litellm_response_only_fields`).
+    crate::openai_compat::strip_response_only_fields(out);
 }
 
 /// Remove `response_format` when it equals `{"type": "text"}` (parity with

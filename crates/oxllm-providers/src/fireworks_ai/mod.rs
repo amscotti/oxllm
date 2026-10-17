@@ -96,6 +96,10 @@ fn apply_fireworks_request_transforms(out: &mut Value) {
     }
     map_tool_choice_required_to_any(out);
     ensure_stream_usage(out);
+    // Fireworks' message schema is strict: response-only fields from a
+    // previous reply cannot be replayed (reference
+    // `strip_litellm_response_only_fields`).
+    crate::openai_compat::strip_response_only_fields(out);
     strip_strict_from_tools(out);
 }
 

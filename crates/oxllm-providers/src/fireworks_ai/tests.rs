@@ -958,3 +958,39 @@ fn request_strips_strict_from_tool_function_definitions() {
     assert!(out["tools"][0]["function"].get("strict").is_none());
     assert_eq!(out["tools"][0]["function"]["name"], "get_weather");
 }
+
+#[test]
+fn request_strips_response_only_fields_from_replayed_messages() {
+    // The endpoint rejects unknown message fields; a reply carrying the
+    // gateway's thinking blocks or provider extension fields cannot be
+    // replayed verbatim (reference strip_litellm_response_only_fields).
+    let req = json!({
+        "model": "account/model",
+        "messages": [{
+            "role": "assistant",
+            "content": "earlier",
+            "reasoning_items": [{"id": "rs_1"}],
+            "thinking_blocks": [{"type": "thinking", "thinking": "x", "signature": "s"}],
+            "provider_specific_fields": {"a": 1},
+            "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "extract", "arguments": "{}", "provider_specific_fields": {"c": 3}},
+                "provider_specific_fields": {"b": 2}
+            }]
+        }, {
+            "role": "user", "content": "next"
+        }],
+    });
+    let out = ChatProvider::transform_request(&PROVIDER, &req, &deployment()).expect("ok");
+    let message = &out["messages"][0];
+    assert!(message.get("reasoning_items").is_none());
+    assert!(message.get("thinking_blocks").is_none());
+    assert!(message.get("provider_specific_fields").is_none());
+    assert!(
+        message["tool_calls"][0]
+            .get("provider_specific_fields")
+            .is_none()
+    );
+    assert_eq!(message["tool_calls"][0]["function"]["name"], "extract");
+    assert_eq!(out["messages"][1]["content"], "next");
+}

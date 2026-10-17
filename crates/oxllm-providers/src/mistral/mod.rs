@@ -215,7 +215,6 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
     if inject_prompt {
         inject_reasoning_into_messages(messages);
     }
-    messages.retain(|m| !is_empty_assistant_message(m));
     for message in messages.iter_mut() {
         let Some(map) = message.as_object_mut() else {
             continue;
@@ -228,6 +227,8 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
         if role == "assistant" {
             map.remove("reasoning_content");
             map.remove("thinking_blocks");
+            map.remove("reasoning_items");
+            map.remove("provider_specific_fields");
         }
         normalize_tool_calls(map);
         // Mistral only accepts `name` on tool messages (and only when
@@ -242,6 +243,11 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
             map.remove("name");
         }
     }
+    // Drop emptied assistant messages AFTER the strip: a turn that carried
+    // only gateway extension fields (e.g. a thinking-only replay) must not
+    // survive as `content: ""`, which Mistral rejects (reference order:
+    // strip, then normalize, then drop).
+    messages.retain(|m| !is_empty_assistant_message(m));
 }
 
 /// Rewrite a message's `tool_calls` array into Mistral's strict
@@ -259,7 +265,13 @@ fn normalize_tool_calls(map: &mut serde_json::Map<String, Value>) {
             continue;
         };
         let id = tc.remove("id").unwrap_or(Value::Null);
-        let function = tc.remove("function").unwrap_or(Value::Null);
+        let mut function = tc.remove("function").unwrap_or(Value::Null);
+        // Provider extension fields ride on the `function` sub-object too;
+        // Mistral's extra_forbidden validator rejects them there as well
+        // (reference `_tool_call_without_provider_specific_fields`).
+        if let Some(function_map) = function.as_object_mut() {
+            function_map.remove("provider_specific_fields");
+        }
         tc.clear();
         tc.insert("id".to_string(), id);
         tc.insert("type".to_string(), Value::String("function".to_string()));

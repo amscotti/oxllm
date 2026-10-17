@@ -56,6 +56,11 @@ pub fn strip_groq_prefix(model: &str) -> &str {
 /// request body (the output of the shared compat `transform_request`).
 fn apply_groq_request_transforms(out: &mut Value) {
     strip_null_fields_from_assistant_messages(out);
+    // Groq's message schema is strict: response-only fields the gateway
+    // attached to a previous reply (thinking blocks, provider extension
+    // fields) cannot be replayed (reference
+    // `strip_litellm_response_only_fields`).
+    crate::openai_compat::strip_response_only_fields(out);
 }
 
 /// Remove keys with `null` values from assistant messages (parity with
