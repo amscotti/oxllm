@@ -1552,6 +1552,10 @@ input_cost_per_token_priority = 3.600000e-6
 output_cost_per_token_priority = 1.800000e-5
 cache_read_input_token_cost_priority = 1.800000e-7
 input_cost_per_audio_token_priority = 3.600000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 5.000000e-6
+cache_read_input_token_cost_batches = 5.000000e-8
+input_cost_per_audio_token_batches = 1.000000e-6
 
 ["vertex_ai/gemini-4-argon-cyber-permissive"]
 input_cost_per_token = 4.000000e-6
@@ -1570,3 +1574,7 @@ input_cost_per_token_priority = 7.200000e-6
 output_cost_per_token_priority = 3.600000e-5
 cache_read_input_token_cost_priority = 3.600000e-7
 input_cost_per_audio_token_priority = 7.200000e-6
+input_cost_per_token_batches = 2.000000e-6
+output_cost_per_token_batches = 1.000000e-5
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_audio_token_batches = 2.000000e-6

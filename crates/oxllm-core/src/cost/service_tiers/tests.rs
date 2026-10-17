@@ -753,6 +753,69 @@ fn google_batch_long_context_and_cached_reads_use_published_rates() {
 }
 
 #[test]
+fn vertex_argon_batch_rates_cover_tokens_cache_reads_and_audio() {
+    // The published Vertex argon batch card halves the standard rates and,
+    // specifically, carries a distinct batch AUDIO rate — without it, batch
+    // audio input bills at the standard 2x rate (reference
+    // vertex_ai/gemini-4-argon rows in model_prices_and_context_window.json).
+    let mut models = vec![
+        ("vertex_ai/gemini-4-argon", 1e-6, 5e-6, 5e-8, 1e-6),
+        (
+            "vertex_ai/gemini-4-argon-cyber-permissive",
+            2e-6,
+            1e-5,
+            1e-7,
+            2e-6,
+        ),
+    ];
+    for (model, ..) in &models {
+        let pricing = crate::cost::lookup_pricing(model).expect("argon priced");
+        assert!(
+            pricing.service_tiers.contains_key("batches"),
+            "{model}: published batch rates must parse, not ride the flex fallback"
+        );
+    }
+    for (model, input, output, cache_read, audio) in models.drain(..) {
+        let pricing = crate::cost::lookup_pricing(model).expect("argon priced");
+        let rates = pricing.rates_for_service_tier(1_000, 0, Some("batches"));
+        assert_eq!(
+            (rates.input, rates.output, rates.cache_read, rates.audio),
+            (input, output, cache_read, audio),
+            "{model}"
+        );
+        let usage = UsageSummary {
+            prompt_tokens: 1_000,
+            completion_tokens: 100,
+            cache_read_input_tokens: Some(500),
+            audio_input_tokens: Some(200),
+            reasoning_tokens: Some(40),
+            ..Default::default()
+        };
+        let cost =
+            calculate_cost_for_service_tier(model, &usage, None, "vertex_ai", Some("batches"))
+                .expect("argon batch cost");
+        // Audio and cached reads are subsets of the prompt bucket.
+        let expected = 300.0 * input + 500.0 * cache_read + 200.0 * audio + 100.0 * output;
+        assert!((cost - expected).abs() < 1e-12, "{model}: {cost}");
+    }
+    // The AI-Studio card publishes the same batch discount without an audio
+    // rate (it has no standard audio rate either).
+    for model in ["gemini/gemini-4-argon", "gemini-4-argon"] {
+        let pricing = crate::cost::lookup_pricing(model).expect("ai-studio argon priced");
+        assert!(
+            pricing.service_tiers.contains_key("batches"),
+            "{model}: published batch rates must parse, not ride the flex fallback"
+        );
+        let rates = pricing.rates_for_service_tier(1_000, 0, Some("batches"));
+        assert_eq!(
+            (rates.input, rates.output, rates.cache_read),
+            (1e-6, 5e-6, 5e-8)
+        );
+        assert_eq!(rates.audio, 0.0, "{model} publishes no audio rate");
+    }
+}
+
+#[test]
 fn published_openai_batch_prices_are_applied_without_an_extra_discount() {
     let usage = UsageSummary {
         prompt_tokens: 1_000,
