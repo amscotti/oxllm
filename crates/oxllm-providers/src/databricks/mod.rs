@@ -6,14 +6,17 @@
 //!
 //! Because Databricks exposes an OpenAI-compatible surface, URL building,
 //! auth, stream parsing and the supported-params list are delegated to the
-//! shared [`OpenAiCompatProvider`] engine. Databricks diverges on one
-//! request-shape point (parity with the reference Databricks transform):
+//! shared [`OpenAiCompatProvider`] engine. Databricks diverges on these
+//! request-shape points (parity with the reference Databricks transform):
 //!
 //! - **Response-only message fields stripped**: Databricks rejects replayed
 //!   gateway extension fields (`thinking_blocks`, `reasoning_content`,
 //!   `reasoning_items`, `provider_specific_fields`) on messages; they are
 //!   removed from every message before forwarding (reference
 //!   `strip_litellm_internal_message_fields`).
+//! - **Bare assistant turns dropped**: after stripping, assistant messages
+//!   without content or tool/function calls are omitted. Other roles and
+//!   surviving message payloads are left intact.
 //!
 //! Databricks requires the per-workspace URL, so `api_base` is typically set
 //! per-deployment rather than relying on the generic default below. See
@@ -70,6 +73,38 @@ fn apply_databricks_request_transforms(out: &mut Value) {
     // including reasoning text — for every role (reference
     // `strip_litellm_internal_message_fields`).
     crate::openai_compat::strip_internal_message_fields(out);
+
+    // A thinking-only turn is now bare, which Databricks also rejects. Keep
+    // this cleanup local: stripping metadata is not universal compat behavior.
+    if let Some(messages) = out.get_mut("messages").and_then(Value::as_array_mut) {
+        messages.retain(|message| !is_bare_assistant_message(message));
+    }
+}
+
+fn is_bare_assistant_message(message: &Value) -> bool {
+    if message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return false;
+    }
+
+    // Only schema-valid empty values count as absent. Preserve malformed
+    // non-null fields so deleting the turn cannot hide invalid history.
+    let empty_content = match message.get("content") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(text)) => text.is_empty(),
+        Some(Value::Array(parts)) => parts.is_empty(),
+        _ => false,
+    };
+    let empty_tool_calls = match message.get("tool_calls") {
+        None | Some(Value::Null) => true,
+        Some(Value::Array(calls)) => calls.is_empty(),
+        _ => false,
+    };
+    let empty_function_call = match message.get("function_call") {
+        None | Some(Value::Null) => true,
+        Some(Value::Object(call)) => call.is_empty(),
+        _ => false,
+    };
+    empty_content && empty_tool_calls && empty_function_call
 }
 
 impl ChatProvider for DatabricksProvider {
