@@ -556,6 +556,244 @@ fn request_replays_signed_blank_thinking_blocks() {
     assert_eq!(content[0]["signature"], "sig_mirror");
 }
 
+#[test]
+fn empty_user_turns_keep_their_turn_with_a_placeholder() {
+    // Anthropic rejects `content: ""`, and dropping an empty user turn would
+    // end the conversation on an assistant message. Reference #41397: keep
+    // the turn with a placeholder block instead.
+    let p = AnthropicProvider;
+    // (content key present?, value) — covers missing, explicit null, empty
+    // string, whitespace-only and empty array.
+    for (present, content) in [
+        (false, json!("")),
+        (true, json!(null)),
+        (true, json!("")),
+        (true, json!("   ")),
+        (true, json!([])),
+    ] {
+        let mut message = json!({"role": "user"});
+        if present {
+            message["content"] = content.clone();
+        }
+        let req = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [message, {"role": "assistant", "content": "hi"}],
+            "max_tokens": 100,
+        });
+        let out = p.transform_request(&req, &deployment()).expect("ok");
+        // The whole user/tool run renders nothing, so the caller keeps it
+        // alive with exactly one placeholder turn. Empty STRINGS go through
+        // the per-message rewrite (collapsing to the placeholder string);
+        // missing/null/[] content keeps the run alive with a placeholder
+        // block (array form, matching the reference
+        // `_empty_user_turn_placeholder`).
+        let content = &out["messages"][0]["content"];
+        let placeholder = "[System: Empty message content sanitised to satisfy protocol]";
+        if let Some(text) = content.as_str() {
+            assert_eq!(text, placeholder, "present={present} content={content}");
+        } else {
+            assert_eq!(
+                content[0]["text"], placeholder,
+                "present={present} content={content}"
+            );
+            assert!(
+                content.as_array().is_some_and(|blocks| blocks.len() == 1),
+                "present={present} content={content}"
+            );
+        }
+    }
+
+    // A message-level cache_control on the empty turn rides on the
+    // placeholder block.
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [{
+            "role": "user",
+            "content": [],
+            "cache_control": {"type": "ephemeral"}
+        }],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    let content = out["messages"][0]["content"].as_array().expect("content");
+    assert_eq!(
+        content[0]["text"],
+        "[System: Empty message content sanitised to satisfy protocol]"
+    );
+    assert_eq!(content[0]["cache_control"]["type"], "ephemeral");
+}
+
+#[test]
+fn empty_user_beside_rendering_siblings_sends_nothing_extra() {
+    // Reference #41397: within one user/tool run, an empty user message
+    // beside siblings that render contributes nothing — no spurious
+    // placeholder turn is injected.
+    let p = AnthropicProvider;
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "user", "content": []},
+        ],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    assert_eq!(out["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(out["messages"][0]["content"], "hi");
+
+    // Beside a tool result, the empty user turn (and its cache_control
+    // breakpoint) is dropped rather than kept as an extra breakpoint.
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [
+            {"role": "assistant", "content": null, "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "extract", "arguments": "{}"}
+            }]},
+            {"role": "user", "content": [], "cache_control": {"type": "ephemeral"}},
+            {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+        ],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    let messages = out["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    let blocks = messages[1]["content"].as_array().unwrap();
+    assert_eq!(
+        blocks.len(),
+        1,
+        "only the tool_result block, no placeholder"
+    );
+    assert_eq!(blocks[0]["type"], "tool_result");
+
+    // A run of several empty user messages yields exactly ONE placeholder
+    // turn for the whole run.
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [
+            {"role": "user", "content": null},
+            {"role": "user", "content": []},
+            {"role": "user", "content": []},
+        ],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    let messages = out["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1, "one placeholder turn for the whole run");
+    assert_eq!(
+        messages[0]["content"][0]["text"],
+        "[System: Empty message content sanitised to satisfy protocol]"
+    );
+}
+
+#[test]
+fn empty_non_user_turns_are_dropped_instead_of_sent_as_empty_content() {
+    let p = AnthropicProvider;
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": null},
+            {"role": "user", "content": "hello?"},
+        ],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    let messages = out["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2, "the empty assistant turn is dropped");
+    assert_eq!(messages[0]["content"], "hi");
+    assert_eq!(messages[1]["content"], "hello?");
+
+    // An assistant turn with tool calls but no content keeps its tool_use
+    // blocks without any placeholder text.
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": null, "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "extract", "arguments": "{}"}
+            }]},
+        ],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    let content = out["messages"][1]["content"].as_array().expect("content");
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0]["type"], "tool_use");
+
+    // Empty STRING content is rewritten to the placeholder even with tool
+    // calls (reference `_sanitize_empty_text_content` runs for assistant
+    // strings too), so the text block precedes the tool_use block.
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": "call_2", "type": "function",
+                "function": {"name": "extract", "arguments": "{}"}
+            }]},
+        ],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    let content = out["messages"][1]["content"].as_array().expect("content");
+    assert_eq!(content.len(), 2);
+    assert_eq!(
+        content[0]["text"],
+        "[System: Empty message content sanitised to satisfy protocol]"
+    );
+    assert_eq!(content[1]["type"], "tool_use");
+}
+
+#[test]
+fn empty_text_blocks_are_rewritten_to_the_placeholder() {
+    // Reference `_sanitize_empty_text_content`: empty or whitespace-only
+    // text blocks inside a content array are rewritten in place (non-text
+    // blocks untouched) so the list never renders nothing.
+    let p = AnthropicProvider;
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "keep me"},
+                {"type": "text", "text": "   ", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": ""},
+            ]
+        }],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    let content = out["messages"][0]["content"].as_array().expect("content");
+    assert_eq!(content.len(), 3);
+    assert_eq!(content[0]["text"], "keep me");
+    assert_eq!(
+        content[1]["text"],
+        "[System: Empty message content sanitised to satisfy protocol]"
+    );
+    assert_eq!(content[1]["cache_control"]["type"], "ephemeral");
+    assert_eq!(
+        content[2]["text"],
+        "[System: Empty message content sanitised to satisfy protocol]"
+    );
+
+    // An assistant turn with empty string content gets the same rewrite.
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "  "},
+        ],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    assert_eq!(
+        out["messages"][1]["content"],
+        "[System: Empty message content sanitised to satisfy protocol]"
+    );
+}
+
 // --- User message with image content ---
 // Ported from: test_anthropic_tool_with_image
 // Tests that base64 image_url content is converted to Anthropic `image`
@@ -1189,7 +1427,8 @@ fn response_legacy_named_tool_values_remain_tool_arguments() {
 }
 
 // --- Empty string content in user message ---
-// Tests behavior when user content is an empty string (should produce empty content).
+// Empty content is rewritten to the reference placeholder instead of an
+// empty string (Anthropic rejects `content: ""`).
 
 #[test]
 fn request_empty_user_content() {
@@ -1204,8 +1443,8 @@ fn request_empty_user_content() {
     let out = p.transform_request(&req, &deployment()).expect("ok");
     let content = &out["messages"][0]["content"];
     assert_eq!(
-        content, "",
-        "empty string content should be preserved as empty string"
+        content, "[System: Empty message content sanitised to satisfy protocol]",
+        "empty string content is rewritten to the placeholder"
     );
 }
 

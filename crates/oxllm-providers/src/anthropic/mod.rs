@@ -1649,7 +1649,21 @@ fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>
     let mut out: Vec<Value> = Vec::new();
     let keep_midturn = supports_mid_conversation_system(model);
     let mut past_leading = false;
+    // Consecutive user/tool messages form one conversational turn. An empty
+    // user message beside siblings that render sends nothing extra; only a
+    // run that renders nothing is kept alive with one placeholder turn,
+    // carrying the LAST empty user message's cache_control (reference
+    // `_empty_user_turn_placeholder`). Runs end at assistant or kept
+    // mid-conversation system messages.
+    let mut run: Vec<(&Value, Option<Value>)> = Vec::new();
     for msg in arr {
+        let in_user_run = matches!(
+            msg.get("role").and_then(Value::as_str),
+            Some("user" | "tool")
+        );
+        if !in_user_run && !run.is_empty() {
+            flush_user_run(&mut run, &mut out);
+        }
         if is_system_role(msg) && !(keep_midturn && past_leading) {
             if let Some(content) = coerce_message_content(msg) {
                 system_blocks.push(content);
@@ -1657,8 +1671,15 @@ fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>
             continue;
         }
         past_leading = true;
-        out.push(normalize_message(msg)?);
+        if in_user_run {
+            run.push((msg, normalize_message(msg)?));
+        } else {
+            if let Some(message) = normalize_message(msg)? {
+                out.push(message);
+            }
+        }
     }
+    flush_user_run(&mut run, &mut out);
     if system_blocks.is_empty() {
         return Ok((None, out));
     }
@@ -1689,6 +1710,34 @@ fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>
     }
 }
 
+/// Flush one conversational run of user/tool messages. Messages that render
+/// nothing are dropped when a sibling renders; a run that renders nothing at
+/// all keeps exactly one placeholder user turn.
+fn flush_user_run(run: &mut Vec<(&Value, Option<Value>)>, out: &mut Vec<Value>) {
+    if run.is_empty() {
+        return;
+    }
+    if run.iter().any(|(_, normalized)| normalized.is_some()) {
+        for (_, normalized) in run.drain(..) {
+            if let Some(message) = normalized {
+                out.push(message);
+            }
+        }
+        return;
+    }
+    let cache_control = run
+        .iter()
+        .rev()
+        .find(|(message, _)| message.get("role").and_then(Value::as_str) == Some("user"))
+        .and_then(|(message, _)| message.get("cache_control"))
+        .cloned();
+    for _ in run.drain(..) {}
+    out.push(json!({
+        "role": "user",
+        "content": [placeholder_text_block(cache_control)],
+    }));
+}
+
 fn coerce_message_content(msg: &Value) -> Option<Value> {
     if let Some(control) = msg.get("cache_control").filter(|value| !value.is_null()) {
         if let Some(Value::String(text)) = msg.get("content") {
@@ -1715,6 +1764,23 @@ fn coerce_message_content(msg: &Value) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+/// Placeholder text for empty message content. Anthropic rejects messages
+/// whose content renders nothing, so empty or whitespace-only text is
+/// rewritten to this marker instead of silently dropping the turn (reference
+/// `_EMPTY_TEXT_PLACEHOLDER`).
+const EMPTY_TEXT_PLACEHOLDER: &str =
+    "[System: Empty message content sanitised to satisfy protocol]";
+
+/// A placeholder text block, optionally preserving the original block's
+/// `cache_control`.
+fn placeholder_text_block(cache_control: Option<Value>) -> Value {
+    let mut block = json!({"type": "text", "text": EMPTY_TEXT_PLACEHOLDER});
+    if let Some(control) = cache_control.filter(|value| !value.is_null()) {
+        block["cache_control"] = control;
+    }
+    block
 }
 
 /// Convert a single OpenAI content block into the Anthropic Messages shape.
@@ -1789,7 +1855,7 @@ fn drop_temperature_incompatible_with_thinking(out: &mut Map<String, Value>) {
     }
 }
 
-fn normalize_message(msg: &Value) -> Result<Value> {
+fn normalize_message(msg: &Value) -> Result<Option<Value>> {
     let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let role = if role == "developer" { "system" } else { role };
 
@@ -1827,7 +1893,7 @@ fn normalize_message(msg: &Value) -> Result<Value> {
         if let Some(config) = msg.get("output_config").filter(|value| !value.is_null()) {
             native["output_config"] = config.clone();
         }
-        return Ok(native);
+        return Ok(Some(native));
     }
 
     let mut out = Map::new();
@@ -1837,10 +1903,19 @@ fn normalize_message(msg: &Value) -> Result<Value> {
     }
 
     let mut content_blocks = crate::util::thinking_blocks_for_replay(msg, true)?;
+    // Anthropic rejects messages whose content renders nothing. Empty or
+    // whitespace-only text is rewritten to a placeholder (reference
+    // `_sanitize_empty_text_content`); other keys on a rewritten block are
+    // preserved. A turn that still renders nothing is dropped by the caller
+    // — except an all-empty user/tool run, which keeps one placeholder turn
+    // (reference `_empty_user_turn_placeholder`).
     if let Some(content) = msg.get("content") {
         match content {
-            Value::String(s) if !s.is_empty() => {
+            Value::String(s) if !s.trim().is_empty() => {
                 content_blocks.push(json!({"type": "text", "text": s}));
+            }
+            Value::String(_) => {
+                content_blocks.push(placeholder_text_block(None));
             }
             Value::Array(arr) => {
                 for block in arr {
@@ -1863,10 +1938,23 @@ fn normalize_message(msg: &Value) -> Result<Value> {
                     if crate::util::is_blank_unsigned_thinking_block(&block) {
                         continue;
                     }
+                    // Rewrite empty/whitespace/non-string text blocks in
+                    // place (non-text blocks are untouched) — a content list
+                    // that renders nothing is rejected just like an empty
+                    // string.
+                    if block.get("type").and_then(Value::as_str) == Some("text")
+                        && block
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .is_none_or(|text| text.trim().is_empty())
+                    {
+                        block["text"] = json!(EMPTY_TEXT_PLACEHOLDER);
+                        content_blocks.push(block);
+                        continue;
+                    }
                     content_blocks.push(convert_content_block_to_anthropic(&block));
                 }
             }
-            Value::String(_) => {}
             other if !other.is_null() => {
                 content_blocks.push(other.clone());
             }
@@ -1879,6 +1967,12 @@ fn normalize_message(msg: &Value) -> Result<Value> {
         }
     }
 
+    // A turn that renders nothing (missing/null/[] content, no tool calls,
+    // no thinking) is dropped rather than sent as `content: ""`.
+    if content_blocks.is_empty() {
+        return Ok(None);
+    }
+
     if let Some(control) = msg.get("cache_control").filter(|value| !value.is_null()) {
         if let Some(Value::Object(block)) = content_blocks.last_mut() {
             block
@@ -1887,9 +1981,7 @@ fn normalize_message(msg: &Value) -> Result<Value> {
         }
     }
 
-    if content_blocks.is_empty() {
-        out.insert("content".to_string(), Value::String(String::new()));
-    } else if content_blocks.len() == 1
+    if content_blocks.len() == 1
         && content_blocks[0].get("type").and_then(|t| t.as_str()) == Some("text")
         && content_blocks[0].get("cache_control").is_none()
         && msg.get("tool_calls").is_none()
@@ -1904,7 +1996,7 @@ fn normalize_message(msg: &Value) -> Result<Value> {
         out.insert("content".to_string(), Value::Array(content_blocks));
     }
 
-    Ok(Value::Object(out))
+    Ok(Some(Value::Object(out)))
 }
 
 fn map_tool_call_to_anthropic(tc: &Value) -> Value {

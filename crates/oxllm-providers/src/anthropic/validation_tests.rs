@@ -62,7 +62,9 @@ fn null_thinking_does_not_disable_requested_reasoning() {
 #[test]
 fn midturn_developer_messages_use_the_native_system_role() {
     assert_eq!(
-        normalize_message(&json!({"role":"developer","content":"new instruction"})).unwrap()["role"],
+        normalize_message(&json!({"role":"developer","content":"new instruction"}))
+            .unwrap()
+            .unwrap()["role"],
         "system"
     );
 }
