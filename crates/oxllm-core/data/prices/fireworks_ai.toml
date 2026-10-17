@@ -2116,3 +2116,9 @@ input_cost_per_token = 2.000000e-6
 output_cost_per_token = 6.000000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 2.500000e-7
+
+["fireworks_ai/accounts/fireworks/models/muse-spark-open"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 4.250000e-6
+max_input_tokens = 1048576
+cache_read_input_token_cost = 1.500000e-7

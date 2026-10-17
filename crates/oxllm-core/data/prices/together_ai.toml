@@ -513,3 +513,21 @@ max_input_tokens = 8192
 input_cost_per_token = 2.000000e-7
 output_cost_per_token = 2.000000e-7
 max_input_tokens = 16384
+
+["together_ai/meta-models/Muse-Spark-Open-816B-A42B"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 4.250000e-6
+max_input_tokens = 1048576
+cache_read_input_token_cost = 1.500000e-7
+
+["together_ai/nvidia/NVIDIA-Nemotron-3.5-Super-VL"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 262144
+cache_read_input_token_cost = 2.000000e-8
+
+["together_ai/reflection/Beam-1.0-501B-A23B"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+cache_read_input_token_cost = 4.000000e-8

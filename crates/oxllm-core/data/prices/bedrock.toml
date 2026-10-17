@@ -2439,12 +2439,20 @@ input_cost_per_token = 1.500000e-7
 output_cost_per_token = 6.000000e-7
 max_input_tokens = 128000
 max_output_tokens = 16384
+input_cost_per_token_flex = 7.500000e-8
+output_cost_per_token_flex = 3.000000e-7
+input_cost_per_token_priority = 2.625000e-7
+output_cost_per_token_priority = 1.050000e-6
 
 ["openai.gpt-oss-20b-1:0"]
 input_cost_per_token = 7.000000e-8
 output_cost_per_token = 3.000000e-7
 max_input_tokens = 128000
 max_output_tokens = 16384
+input_cost_per_token_flex = 3.500000e-8
+output_cost_per_token_flex = 1.500000e-7
+input_cost_per_token_priority = 1.225000e-7
+output_cost_per_token_priority = 5.250000e-7
 
 ["openai.gpt-oss-safeguard-120b"]
 input_cost_per_token = 1.500000e-7
@@ -4268,3 +4276,18 @@ max_input_tokens = 1000000
 max_output_tokens = 10000
 cache_read_input_token_cost = 6.250000e-7
 mode = "chat"
+
+["jp.amazon.nova-2-lite-v1:0"]
+input_cost_per_token = 3.960000e-7
+output_cost_per_token = 3.311000e-6
+max_input_tokens = 1000000
+max_output_tokens = 64000
+cache_read_input_token_cost = 9.900000e-8
+cache_read_input_token_cost_flex = 4.950000e-8
+input_cost_per_token_flex = 1.980000e-7
+output_cost_per_token_flex = 1.655500e-6
+cache_read_input_token_cost_priority = 1.732500e-7
+input_cost_per_token_priority = 6.930000e-7
+output_cost_per_token_priority = 5.794250e-6
+input_cost_per_token_batches = 1.980000e-7
+output_cost_per_token_batches = 1.655500e-6

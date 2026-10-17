@@ -7,3 +7,17 @@ cache_read_input_token_cost = 1.400000e-8
 max_input_tokens = 1048576
 max_output_tokens = 131072
 source = "https://inference.baseten.co/v1/models"
+
+["baseten/meta-models/muse-spark-open"]
+input_cost_per_token = 1.250000e-6
+output_cost_per_token = 4.250000e-6
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+cache_read_input_token_cost = 1.500000e-7
+
+["baseten/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+cache_read_input_token_cost = 4.000000e-8

@@ -1534,3 +1534,39 @@ mode = "chat"
 cache_read_input_token_cost_above_200k_tokens = 1.000000e-6
 input_cost_per_token_above_200k_tokens = 4.000000e-6
 output_cost_per_token_above_200k_tokens = 1.200000e-5
+
+["vertex_ai/gemini-4-argon"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+cache_read_input_token_cost = 1.000000e-7
+input_cost_per_audio_token = 2.000000e-6
+output_cost_per_reasoning_token = 1.000000e-5
+prompt_cache_min_tokens = 6144
+search_queries_cost_per_query = 1.400000e-2
+input_cost_per_token_flex = 1.000000e-6
+output_cost_per_token_flex = 5.000000e-6
+cache_read_input_token_cost_flex = 5.000000e-8
+input_cost_per_token_priority = 3.600000e-6
+output_cost_per_token_priority = 1.800000e-5
+cache_read_input_token_cost_priority = 1.800000e-7
+input_cost_per_audio_token_priority = 3.600000e-6
+
+["vertex_ai/gemini-4-argon-cyber-permissive"]
+input_cost_per_token = 4.000000e-6
+output_cost_per_token = 2.000000e-5
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+cache_read_input_token_cost = 2.000000e-7
+input_cost_per_audio_token = 4.000000e-6
+output_cost_per_reasoning_token = 2.000000e-5
+prompt_cache_min_tokens = 6144
+search_queries_cost_per_query = 1.400000e-2
+input_cost_per_token_flex = 2.000000e-6
+output_cost_per_token_flex = 1.000000e-5
+cache_read_input_token_cost_flex = 1.000000e-7
+input_cost_per_token_priority = 7.200000e-6
+output_cost_per_token_priority = 3.600000e-5
+cache_read_input_token_cost_priority = 3.600000e-7
+input_cost_per_audio_token_priority = 7.200000e-6

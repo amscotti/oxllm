@@ -4016,6 +4016,17 @@ cache_creation_input_token_cost_above_1hr = 8.000000e-6
 prompt_cache_min_tokens = 512
 search_queries_cost_per_query = 1.000000e-02
 
+["azure_ai/claude-opus-5-5-fast"]
+input_cost_per_token = 8.000000e-6
+output_cost_per_token = 4.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+cache_read_input_token_cost = 4.000000e-7
+cache_creation_input_token_cost = 1.000000e-5
+cache_creation_input_token_cost_above_1hr = 1.600000e-5
+prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 2.000000e-02
+
 ["azure_ai/cohere-command-a"]
 input_cost_per_token = 2.500000e-6
 output_cost_per_token = 1.000000e-5
@@ -4566,3 +4577,8 @@ input_cost_per_token = 5.000000e-6
 output_cost_per_token = 2.500000e-5
 cache_read_input_token_cost = 5.000000e-7
 mode = "chat"
+
+["gpt-5.5-cyber-preview"]
+input_cost_per_token = 1.250000e-5
+output_cost_per_token = 7.500000e-5
+cache_read_input_token_cost = 1.250000e-6
