@@ -209,6 +209,14 @@ pub(crate) fn extract_usage(value: &Value) -> Option<oxllm_core::UsageSummary> {
                 .and_then(Value::as_u64)
         });
 
+    // Groq `browser.open` executed actions, mirrored by the Groq transform
+    // under the same `server_tool_use` bucket. Only that transform ever sets
+    // the counter; it bills at Groq's flat provider rate.
+    let browser_open_requests = usage
+        .get("server_tool_use")
+        .and_then(|tool| tool.get("browser_open_requests"))
+        .and_then(Value::as_u64);
+
     Some(oxllm_core::UsageSummary {
         prompt_tokens: prompt_normalized,
         completion_tokens: completion,
@@ -230,6 +238,7 @@ pub(crate) fn extract_usage(value: &Value) -> Option<oxllm_core::UsageSummary> {
         reasoning_tokens,
         citation_tokens,
         web_search_requests,
+        browser_open_requests,
     })
 }
 
@@ -278,6 +287,10 @@ pub(crate) fn merge_streaming_usage(
             merge_max_bucket(
                 &mut existing.web_search_requests,
                 incoming.web_search_requests,
+            );
+            merge_max_bucket(
+                &mut existing.browser_open_requests,
+                incoming.browser_open_requests,
             );
         }
     }
@@ -352,6 +365,20 @@ mod tests {
         }}))
         .expect("native usage");
         assert_eq!(usage.web_search_requests, Some(3));
+    }
+
+    #[test]
+    fn groq_server_tool_use_browser_opens_map_to_their_own_bucket() {
+        // Groq's transform mirrors executed `browser.open` actions beside the
+        // search count; the extraction must land them in their own bucket so
+        // the flat provider rate bills them.
+        let usage = extract_usage(&json!({"usage":{
+            "input_tokens":100,"output_tokens":10,
+            "server_tool_use":{"web_search_requests":3,"browser_open_requests":4}
+        }}))
+        .expect("native usage");
+        assert_eq!(usage.web_search_requests, Some(3));
+        assert_eq!(usage.browser_open_requests, Some(4));
     }
 
     #[test]
@@ -928,6 +955,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: Some(2),
             web_search_requests: Some(1),
+            browser_open_requests: Some(3),
         });
         let incoming = oxllm_core::UsageSummary {
             prompt_tokens: 12,
@@ -940,6 +968,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: Some(5),
             web_search_requests: None,
+            browser_open_requests: None,
         };
         merge_streaming_usage(&mut acc, incoming);
         let acc = acc.expect("present");
@@ -948,6 +977,11 @@ mod tests {
             acc.web_search_requests,
             Some(1),
             "existing search count preserved when incoming is None"
+        );
+        assert_eq!(
+            acc.browser_open_requests,
+            Some(3),
+            "existing browser-open count preserved when incoming is None"
         );
     }
 
@@ -1063,6 +1097,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             ..Default::default()
         });
         let incoming = oxllm_core::UsageSummary {
@@ -1072,6 +1107,7 @@ mod tests {
             reasoning_tokens: Some(15),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             ..Default::default()
         };
         merge_streaming_usage(&mut acc, incoming);
@@ -1091,6 +1127,7 @@ mod tests {
             reasoning_tokens: Some(15),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             ..Default::default()
         });
         let incoming = oxllm_core::UsageSummary {
@@ -1100,6 +1137,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             ..Default::default()
         };
         merge_streaming_usage(&mut acc, incoming);
@@ -1262,6 +1300,7 @@ mod tests {
             reasoning_tokens: Some(10),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         });
         let incoming = oxllm_core::UsageSummary {
             prompt_tokens: 100,
@@ -1276,6 +1315,7 @@ mod tests {
             reasoning_tokens: Some(5),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         merge_streaming_usage(&mut acc, incoming);
         let merged = acc.expect("accumulated");
@@ -1300,6 +1340,7 @@ mod tests {
             reasoning_tokens: Some(10),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         });
         let incoming = oxllm_core::UsageSummary {
             prompt_tokens: 100,

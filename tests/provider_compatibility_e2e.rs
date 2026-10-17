@@ -102,6 +102,87 @@ async fn accelerated_deepseek_backend_rewrites_limits_and_meters_cached_tokens()
 }
 
 #[tokio::test]
+async fn groq_browser_actions_bill_search_and_opens_end_to_end() {
+    // Executed compound-tool actions become billable hosted-tool usage: two
+    // `browser.search` actions at the model's per-query rate plus three
+    // `browser.open` actions at Groq's flat $1/1k provider rate. The delta
+    // against an identical response without actions isolates the fees from
+    // token pricing.
+    let mock = MockServer::start();
+    let model = "openai/gpt-oss-120b";
+    let response_body = |actions: Value| {
+        json!({
+            "id":"chatcmpl-groq-browser","model":model,
+            "choices":[{"index":0,"message":{"role":"assistant","content":"searched",
+                "executed_tools":actions},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":1000,"completion_tokens":100,"total_tokens":1100}
+        })
+    };
+    let with_actions = mock.mock(|when, then| {
+        when.method(httpmock::Method::POST)
+            .path("/chat/completions")
+            .json_body_partial(
+                json!({"model":model,"messages":[{"role":"user","content":"search the web"}]})
+                    .to_string(),
+            );
+        then.status(200).json_body(response_body(json!([
+            {"name":"browser.search"},{"name":"browser.search"},
+            {"name":"browser.open"},{"name":"browser.open"},{"name":"browser.open"},
+            {"name":"code_interpreter"}
+        ])));
+    });
+    let without_actions = mock.mock(|when, then| {
+        when.method(httpmock::Method::POST)
+            .path("/chat/completions")
+            .json_body_partial(
+                json!({"model":model,"messages":[{"role":"user","content":"no tools"}]})
+                    .to_string(),
+            );
+        then.status(200).json_body(response_body(json!([])));
+    });
+    let (handle, state) = common::start_oxllm(config(&mock.base_url(), &format!("groq/{model}")))
+        .await
+        .unwrap();
+    let mut ledger = capture_spend(&state);
+    let client = common::http_client();
+    let mut costs = Vec::new();
+    for (prompt, upstream) in [
+        ("search the web", &with_actions),
+        ("no tools", &without_actions),
+    ] {
+        let response = client
+            .post(handle.url("/v1/chat/completions"))
+            .json(&json!({"model":"model","messages":[{"role":"user","content":prompt}]}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let cost = response
+            .headers()
+            .get("x-oxllm-response-cost")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<f64>().ok())
+            .expect("cost header");
+        let body: Value = response.json().await.unwrap();
+        if prompt == "search the web" {
+            assert_eq!(body["usage"]["server_tool_use"]["web_search_requests"], 2);
+            assert_eq!(body["usage"]["server_tool_use"]["browser_open_requests"], 3);
+        }
+        costs.push(cost);
+        upstream.assert_hits(1);
+    }
+    let fee_delta = costs[0] - costs[1];
+    assert!(
+        (fee_delta - (2.0 * 5e-3 + 3.0 * 1e-3)).abs() < 1e-9,
+        "search+open fees missing: delta {fee_delta}"
+    );
+    let entry = spend(&mut ledger).await;
+    assert_eq!(entry.provider, "groq");
+    assert!((entry.cost.unwrap() - costs[0]).abs() < 1e-12);
+    handle.shutdown();
+}
+
+#[tokio::test]
 async fn canonical_duration_rate_is_billed_once_and_persisted_without_tokens() {
     let mock = MockServer::start();
     let upstream = mock.mock(|when, then| {

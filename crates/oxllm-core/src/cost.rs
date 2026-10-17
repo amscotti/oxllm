@@ -424,6 +424,7 @@ impl ModelPricing {
             reasoning: self.output_cost_per_reasoning_token.unwrap_or(output),
             citation: self.citation_cost_per_token.unwrap_or(0.0),
             search_query: self.search_queries_cost_per_query.unwrap_or(0.0),
+            browser_open: groq_browser_open_rate(&self.provider),
         }
     }
 
@@ -502,6 +503,12 @@ pub struct TokenRates {
     pub citation: f64,
     /// Flat cost per web-search query (0.0 when the model declares none).
     pub search_query: f64,
+    /// Flat cost per Groq `browser.open` executed action (0.0 outside Groq).
+    /// Groq bills the built-in browser tool per action at $1 per 1k opens —
+    /// a provider-level rate, not per-model pricing (reference
+    /// `GROQ_BROWSER_VISIT_WEBSITE_COST_PER_CALL`), so it comes from the
+    /// provider identity rather than a price-table column.
+    pub browser_open: f64,
 }
 
 impl TokenRates {
@@ -526,6 +533,9 @@ impl TokenRates {
             reasoning: dp.output_cost_per_reasoning_token.unwrap_or(output),
             citation: 0.0,
             search_query: 0.0,
+            // Overrides are all-in: the operator's custom prices replace the
+            // table's fee buckets (including Groq's flat browser-open rate).
+            browser_open: 0.0,
         }
     }
 
@@ -1149,6 +1159,7 @@ fn cost_from_pricing(pricing: &ModelPricing, usage: &UsageSummary) -> Option<f64
 ///     reasoning_tokens: None,
 ///     citation_tokens: None,
 ///     web_search_requests: None,
+///     browser_open_requests: None,
 /// };
 /// // gpt-4o is in the vendored price table.
 /// let cost = calculate_cost("gpt-4o", &usage).expect("gpt-4o is priced");
@@ -1295,6 +1306,22 @@ fn sanitize_rate(rate: f64) -> f64 {
     }
 }
 
+/// Groq bills the built-in browser tool's `browser.open` actions at $1 per
+/// 1k opens (reference `GROQ_BROWSER_VISIT_WEBSITE_COST_PER_CALL =
+/// 1.0 / 1000`). A provider-level flat rate — not a per-model price column —
+/// so it resolves from the price-table provider identity instead.
+const GROQ_BROWSER_OPEN_COST_PER_REQUEST: f64 = 1.0 / 1000.0;
+
+/// The flat per-`browser.open` rate for a provider's price rows: Groq's
+/// published rate, zero for everyone else.
+fn groq_browser_open_rate(provider: &str) -> f64 {
+    if provider == "groq" {
+        GROQ_BROWSER_OPEN_COST_PER_REQUEST
+    } else {
+        0.0
+    }
+}
+
 /// Shared inner cost formula used by both the price-table path and the
 /// deployment-override path. The caller has already resolved all rates via
 /// [`TokenRates`] (see [`ModelPricing::rates_for_prompt`] and
@@ -1381,6 +1408,14 @@ fn cost_from_rates(usage: &UsageSummary, rates: TokenRates) -> f64 {
     if search_queries > 0.0 {
         cost += search_queries * sanitize_rate(rates.search_query);
     }
+    // Groq `browser.open` executed actions, billed at the provider's flat
+    // per-open rate additively (reference Groq cost calculator). Only the
+    // Groq transform ever populates this counter, and only Groq rows carry
+    // the rate, so other providers cannot pick up the fee.
+    let browser_opens = usage.browser_open_requests.unwrap_or(0) as f64;
+    if browser_opens > 0.0 {
+        cost += browser_opens * sanitize_rate(rates.browser_open);
+    }
 
     // Final guard: every rate is sanitised and token counts are non-negative,
     // but a hostile/huge token count cast to f64 (lossy above 2^53) multiplied
@@ -1406,6 +1441,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         }
     }
 
@@ -1420,6 +1456,57 @@ mod tests {
             (cost - (token_cost + search_cost)).abs() < 1e-9,
             "got {cost}, expected {}",
             token_cost + search_cost
+        );
+    }
+
+    #[test]
+    fn groq_browser_opens_bill_at_the_flat_provider_rate() {
+        // Groq bills executed `browser.open` actions at $1 per 1k opens — a
+        // provider-level flat rate (reference GROQ_BROWSER_VISIT_WEBSITE_
+        // COST_PER_CALL), additive to the model's per-query search rate.
+        let mut u = usage(100, 50);
+        u.web_search_requests = Some(2);
+        u.browser_open_requests = Some(3);
+        let cost = calculate_cost("groq/openai/gpt-oss-120b", &u).expect("priced");
+        let base = calculate_cost("groq/openai/gpt-oss-120b", &usage(100, 50)).expect("priced");
+        assert!(
+            ((cost - base) - (2.0 * 5e-3 + 3.0 * 1e-3)).abs() < 1e-12,
+            "got delta {}",
+            cost - base
+        );
+    }
+
+    #[test]
+    fn browser_open_fee_is_groq_only_and_excluded_from_overrides() {
+        // Only Groq price rows carry the flat per-open rate; a stray counter
+        // on any other provider's response bills nothing.
+        let mut u = usage(100, 50);
+        u.browser_open_requests = Some(3);
+        let with_opens = calculate_cost("gpt-4o", &u).expect("priced");
+        let without_opens = calculate_cost("gpt-4o", &usage(100, 50)).expect("priced");
+        assert!(
+            (with_opens - without_opens).abs() < 1e-15,
+            "non-Groq models must not pick up the browser-open fee"
+        );
+        // Deployment pricing overrides are all-in: the operator's custom
+        // prices replace the table's fee buckets, browser opens included.
+        let pricing = DeploymentPricing {
+            input_cost_per_token: 1e-6,
+            output_cost_per_token: 2e-6,
+            ..Default::default()
+        };
+        let with_opens =
+            calculate_cost_with_override("groq/openai/gpt-oss-120b", &u, Some(&pricing))
+                .expect("override priced");
+        let without_opens = calculate_cost_with_override(
+            "groq/openai/gpt-oss-120b",
+            &usage(100, 50),
+            Some(&pricing),
+        )
+        .expect("override priced");
+        assert!(
+            (with_opens - without_opens).abs() < 1e-15,
+            "overrides must stay all-in"
         );
     }
 
@@ -2755,6 +2842,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = calculate_cost("claude-sonnet-4-20250514", &u).expect("priced");
         let expected = prompt as f64 * pricing.input_cost_per_token
@@ -2793,6 +2881,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = calculate_cost("claude-sonnet-4-20250514", &u).expect("priced");
         let one_h = pricing
@@ -2850,6 +2939,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = cost_from_rates(&u, rates);
         let expected = (prompt - 400 - 50) as f64 * 1e-6;
@@ -2873,6 +2963,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = calculate_cost("gpt-4o", &u).expect("priced");
         let expected = (prompt - 200) as f64 * gpt4o.input_cost_per_token;
@@ -2959,6 +3050,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = calculate_cost("tiered-test-model", &u).expect("cost");
         // The 100k tier applies: fresh input at 2e-6, cached tokens at the
@@ -3075,6 +3167,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         // Below the 200k threshold: no tier fires, cache writes bill free.
         let cost_below =
@@ -3133,6 +3226,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: Some(200),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let via_bare = calculate_cost("tiered-test-model", &u).expect("bare");
         let via_provider =
@@ -3291,6 +3385,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = calculate_cost("claude-sonnet-4-20250514", &u).expect("cost");
         // Context = 180k + 30k = 210k > 200k: the tier fires. Fresh input at
@@ -3331,6 +3426,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         // Context = 150k + 60k = 210k ≥ 200k: the tiered-1h-model's 200k tier
         // fires and the 1h bucket bills at the tier rate (4e-6), not the
@@ -3372,6 +3468,7 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         // Measure = 199_699 + 300 = 199_999 < 200_000: no tier fires; the
         // 1h bucket is clamped to the aggregate (300) and bills at the base
@@ -3564,6 +3661,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost_below = calculate_cost("tiered-1h-model", &below).expect("cost");
         let expected_below =
@@ -3638,6 +3736,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: Some(reasoning),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost("muse-spark-1.1", &u).expect("priced");
@@ -3681,6 +3780,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost("gpt-4o-mini", &u).expect("priced");
@@ -3741,6 +3841,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost("claude-sonnet-4-20250514", &u).expect("priced");
@@ -3793,6 +3894,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost("claude-sonnet-4-20250514", &u).expect("priced");
@@ -3848,6 +3950,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost("gpt-4o", &u).expect("priced");
@@ -3957,6 +4060,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost_with_override("any-model", &u, Some(&dp)).expect("override path");
@@ -3991,6 +4095,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost_with_override("any-model", &u, Some(&dp)).expect("override path");
@@ -4033,6 +4138,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: Some(reasoning),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost_with_override("any-model", &u, Some(&dp)).expect("priced");
@@ -4068,12 +4174,14 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: Some(reasoning),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let u_without = UsageSummary {
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             ..u_with_reasoning.clone()
         };
         let cost_with = calculate_cost_with_override("any-model", &u_with_reasoning, Some(&dp))
@@ -4109,6 +4217,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: Some(reasoning),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost_with_override("any-model", &u, Some(&dp)).expect("priced");
@@ -4140,6 +4249,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: Some(1_000),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost = calculate_cost_with_override("any-model", &u, Some(&dp)).expect("priced");
@@ -4202,6 +4312,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let cost_cache =
@@ -4382,6 +4493,7 @@ input_cost_per_token_above_100k_tokens = "2000000"
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = calculate_cost_with_override("any-model", &u, Some(&dp)).expect("priced");
         // 1h bucket (60) bills at the override's cache-creation rate (0.0005);
@@ -4619,6 +4731,7 @@ input_cost_per_token_above_200ktokens = 2e-6
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = calculate_cost("tiered-all-fields-model", &u).expect("cost");
         let expected = (prompt - cache_read) as f64 * 2e-6
@@ -4788,6 +4901,7 @@ input_cost_per_token_above_100k_tokens = 5e-6
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let rates = pricing.rates_for_prompt(100, 0);
         let cost = cost_from_rates(&u, rates);
@@ -4926,6 +5040,7 @@ input_cost_per_token_above_100k_tokens = 5e-6
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         };
         let cost = calculate_cost("claude-sonnet-4-20250514", &u).expect("priced");
         let expected = prompt as f64 * pricing.input_cost_per_token + created_1h as f64 * one_h;

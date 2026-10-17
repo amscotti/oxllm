@@ -239,7 +239,13 @@ Hosted web-search requests are billed per query when the model's card declares
 `usage.server_tool_use.web_search_requests` (non-streaming and the final
 streaming usage event), Responses-native `tool_usage.web_search.num_requests`
 on raw relays, and Groq's derived `executed_tools` browser actions. Cards
-without a declared rate keep search free rather than guessing one.
+without a declared rate keep search free rather than guessing one. Groq
+`browser.open` actions are billed separately at Groq's flat $1 per 1,000
+opens (`usage.server_tool_use.browser_open_requests`) — a provider-level
+rate that applies to table-priced Groq models but not to all-in deployment
+pricing overrides. Groq's derived counters, search and opens alike, come from
+the aggregated non-streaming response; streamed Groq compound-tool responses
+report no derived bucket, matching the reference's response-level derivation.
 
 `general_settings.http_force_ipv4: true` restricts the shared upstream and
 image-download clients to IPv4 through DNS filtering and IPv4 local binding.

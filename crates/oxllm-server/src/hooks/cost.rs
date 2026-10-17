@@ -308,6 +308,7 @@ mod tests {
                 reasoning_tokens: None,
                 citation_tokens: None,
                 web_search_requests: None,
+                browser_open_requests: None,
                 cache_creation_1h_input_tokens: None,
             }),
             body: None,
@@ -544,6 +545,7 @@ mod tests {
                 reasoning_tokens: None,
                 citation_tokens: None,
                 web_search_requests: None,
+                browser_open_requests: None,
                 cache_creation_1h_input_tokens: None,
             }),
             body: None,
@@ -578,6 +580,7 @@ mod tests {
                 reasoning_tokens: None,
                 citation_tokens: None,
                 web_search_requests: None,
+                browser_open_requests: None,
                 cache_creation_1h_input_tokens: None,
             }),
             body: None,
@@ -612,6 +615,7 @@ mod tests {
                 reasoning_tokens: None,
                 citation_tokens: None,
                 web_search_requests: None,
+                browser_open_requests: None,
                 cache_creation_1h_input_tokens: None,
             }),
             body: None,
@@ -679,6 +683,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         let resp = ResponseSummary {
@@ -726,6 +731,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         assert_eq!(derived_total_tokens(&usage), 30);

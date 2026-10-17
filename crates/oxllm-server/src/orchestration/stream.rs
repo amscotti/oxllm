@@ -2300,6 +2300,7 @@ mod tests {
             reasoning_tokens: Some(60),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             ..Default::default()
         };
         let inj = UsageInjection {
@@ -2330,6 +2331,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             ..Default::default()
         };
         let inj = UsageInjection {
@@ -2858,6 +2860,7 @@ mod tests {
             reasoning_tokens: None,
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
             cache_creation_1h_input_tokens: None,
         };
         record_partial_stream_spend(

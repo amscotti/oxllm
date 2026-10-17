@@ -383,6 +383,7 @@ pub struct UsageBody {
     pub reasoning_tokens: Option<u64>,
     pub citation_tokens: Option<u64>,
     pub web_search_requests: Option<u64>,
+    pub browser_open_requests: Option<u64>,
     /// Complete upstream receipt, used by Perplexity's dynamic-fee preview.
     pub reported_cost: Option<f64>,
 }
@@ -406,7 +407,10 @@ impl<'de> Deserialize<'de> for UsageBody {
             "/reasoning_tokens",
             "/citation_tokens",
             "/web_search_requests",
+            "/browser_open_requests",
             "/num_search_queries",
+            "/server_tool_use/web_search_requests",
+            "/server_tool_use/browser_open_requests",
             "/prompt_tokens_details/cached_tokens",
             "/prompt_tokens_details/cache_write_tokens",
             "/prompt_tokens_details/cache_creation_tokens",
@@ -498,6 +502,10 @@ impl<'de> Deserialize<'de> for UsageBody {
             raw.get("web_search_requests")
                 .and_then(serde_json::Value::as_u64)
         });
+        usage.browser_open_requests = usage.browser_open_requests.or_else(|| {
+            raw.get("browser_open_requests")
+                .and_then(serde_json::Value::as_u64)
+        });
         Ok(Self {
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
@@ -509,6 +517,7 @@ impl<'de> Deserialize<'de> for UsageBody {
             reasoning_tokens: usage.reasoning_tokens,
             citation_tokens: usage.citation_tokens,
             web_search_requests: usage.web_search_requests,
+            browser_open_requests: usage.browser_open_requests,
             reported_cost: crate::pipeline::extract_body_usage_cost(&json!({"usage": raw})),
         })
     }
@@ -530,6 +539,7 @@ impl From<&UsageBody> for UsageSummary {
             reasoning_tokens: u.reasoning_tokens,
             citation_tokens: u.citation_tokens,
             web_search_requests: u.web_search_requests,
+            browser_open_requests: u.browser_open_requests,
         }
     }
 }

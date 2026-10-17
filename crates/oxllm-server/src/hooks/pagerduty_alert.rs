@@ -404,6 +404,7 @@ mod tests {
                 reasoning_tokens: None,
                 citation_tokens: None,
                 web_search_requests: None,
+                browser_open_requests: None,
                 cache_creation_1h_input_tokens: None,
             }),
             body: None,

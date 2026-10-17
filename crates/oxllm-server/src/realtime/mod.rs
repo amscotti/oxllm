@@ -1334,6 +1334,7 @@ mod tests {
                 reasoning_tokens: usage.get("reasoning_tokens").and_then(|t| t.as_u64()),
                 citation_tokens: None,
                 web_search_requests: None,
+                browser_open_requests: None,
             })
         }
         fn ws_url(&self, _: &oxllm_core::Deployment) -> String {

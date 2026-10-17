@@ -545,6 +545,12 @@ pub struct UsageSummary {
     /// `executed_tools` actions). Priced at the model's per-query
     /// search rate when declared.
     pub web_search_requests: Option<u64>,
+    /// Number of Groq `browser.open` executed actions (derived from
+    /// `executed_tools`, mirrored under
+    /// `usage.server_tool_use.browser_open_requests`). Billed at Groq's flat
+    /// provider-level per-open rate on table-priced Groq models; absent on
+    /// every other provider.
+    pub browser_open_requests: Option<u64>,
 }
 
 impl UsageSummary {
@@ -590,6 +596,8 @@ impl UsageSummary {
         self.reasoning_tokens = merge_opt(self.reasoning_tokens, other.reasoning_tokens);
         self.citation_tokens = merge_opt(self.citation_tokens, other.citation_tokens);
         self.web_search_requests = merge_opt(self.web_search_requests, other.web_search_requests);
+        self.browser_open_requests =
+            merge_opt(self.browser_open_requests, other.browser_open_requests);
     }
 }
 

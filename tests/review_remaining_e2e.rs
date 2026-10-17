@@ -1703,6 +1703,42 @@ async fn spend_calculate_rejects_negative_nested_web_search_counts() {
 }
 
 #[tokio::test]
+async fn spend_calculate_rejects_malformed_server_tool_use_counters() {
+    // Both hosted-tool counters under `server_tool_use` must validate as
+    // non-negative integers — a malformed one is a client error, not a
+    // silently-dropped fee.
+    let mock = MockServer::start();
+    let (handle, _) = common::start_oxllm(authenticated_config(&mock.base_url()))
+        .await
+        .unwrap();
+    let client = common::http_client();
+    for (field, model, provider) in [
+        ("web_search_requests", "sonar", "perplexity"),
+        ("browser_open_requests", "openai/gpt-oss-120b", "groq"),
+    ] {
+        for invalid in [json!(-1), json!(1.5), json!("3")] {
+            let response = post(
+                &client,
+                handle.url("/spend/calculate"),
+                &json!({
+                    "model": model, "provider": provider,
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 50,
+                              "server_tool_use": {field: invalid}}
+                }),
+            )
+            .await;
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap();
+            assert_eq!(
+                status, 422,
+                "invalid server_tool_use {field} must not silently become free: {body}"
+            );
+        }
+    }
+    handle.shutdown();
+}
+
+#[tokio::test]
 async fn spend_calculate_ambiguous_alias_requires_provider_or_configured_deployment_selector() {
     let mock = MockServer::start();
     let never = mock.mock(|_, then| {

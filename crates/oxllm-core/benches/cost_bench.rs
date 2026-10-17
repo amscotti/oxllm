@@ -17,6 +17,7 @@ fn usage(prompt: u64, completion: u64) -> UsageSummary {
         reasoning_tokens: None,
         citation_tokens: None,
         web_search_requests: None,
+        browser_open_requests: None,
     }
 }
 
@@ -37,6 +38,7 @@ fn usage_with_cache(
         reasoning_tokens: None,
         citation_tokens: None,
         web_search_requests: None,
+        browser_open_requests: None,
     }
 }
 
@@ -59,6 +61,7 @@ fn usage_full(
         reasoning_tokens: Some(reasoning),
         citation_tokens: None,
         web_search_requests: None,
+        browser_open_requests: None,
     }
 }
 

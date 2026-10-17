@@ -131,6 +131,7 @@ impl RealtimeProvider for OpenAIRealtimeProvider {
                 .and_then(|d| d.get("reasoning_tokens").and_then(|t| t.as_u64())),
             citation_tokens: None,
             web_search_requests: None,
+            browser_open_requests: None,
         })
     }
 

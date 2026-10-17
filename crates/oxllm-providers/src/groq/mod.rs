@@ -125,7 +125,8 @@ fn apply_groq_stream_transforms(value: &mut Value) {
 /// `browser.search`/`browser_search` actions become
 /// `usage.server_tool_use.web_search_requests` — the same bucket the
 /// per-query search rate bills — and `browser.open` actions are mirrored as
-/// `browser_open_requests` for shape parity. Anything else is ignored.
+/// `browser_open_requests`, billed at Groq's flat per-open rate by the cost
+/// calculator. Anything else is ignored.
 fn add_web_search_usage(out: &mut Value) {
     let Some(choices) = out.get("choices").and_then(|c| c.as_array()) else {
         return;
