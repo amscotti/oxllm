@@ -61,6 +61,52 @@ fn make_deployment_with_extra(model: &str, extra: &[(&str, Value)]) -> Deploymen
 const PROVIDER: VertexProvider = VertexProvider;
 
 #[test]
+fn native_messages_api_uses_the_resolved_branch_not_version_fields_or_model_prices() {
+    for (configured, requested, native) in [
+        ("vertex_ai/custom-chat", "alias", false),
+        ("vertex_ai/google/gemini-2.5-flash", "alias", false),
+        ("vertex_ai/claude-unlisted-future", "alias", true),
+        (
+            "vertex_ai/publishers/anthropic/models/claude-unlisted-future",
+            "alias",
+            true,
+        ),
+        ("vertex_ai/*", "vertex_ai/custom-chat", false),
+        ("vertex_ai/*", "vertex_ai/google/gemini-2.5-flash", false),
+        (
+            "vertex_ai/*",
+            "vertex_ai/anthropic/claude-unlisted-future",
+            true,
+        ),
+    ] {
+        let deployment = make_deployment_with_extra(
+            configured,
+            &[
+                ("vertex_project", json!("project")),
+                ("base_model", json!("anthropic/claude-sonnet-4-5")),
+            ],
+        );
+        for version in [Value::Null, json!(VERTEX_ANTHROPIC_VERSION)] {
+            let request = json!({"model":requested,"anthropic_version":version,
+                "messages":[{"role":"user","content":"hello"}],"max_tokens":32});
+            assert_eq!(
+                VertexProvider::uses_anthropic_messages_api(&request, &deployment).unwrap(),
+                native,
+                "{configured}, {requested}"
+            );
+            let body = ChatProvider::transform_request(&PROVIDER, &request, &deployment).unwrap();
+            let url = PROVIDER.endpoint_url_for_request(&deployment, &request);
+            if native {
+                assert_eq!(body["anthropic_version"], VERTEX_ANTHROPIC_VERSION);
+                assert!(url.ends_with(":rawPredict"));
+            } else {
+                assert!(url.ends_with("/openapi/chat/completions"));
+            }
+        }
+    }
+}
+
+#[test]
 fn claude_message_output_configuration_keeps_the_required_body_beta() {
     let deployment = make_deployment_with_extra(
         "vertex_ai/claude-sonnet-5-5",

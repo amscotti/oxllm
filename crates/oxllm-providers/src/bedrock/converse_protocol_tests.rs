@@ -8,6 +8,50 @@ fn transform(model: &str, request: &Value) -> Value {
     converse::transform_request_converse(request, model, &Map::new()).unwrap()
 }
 
+fn assert_system_cache_ttls(first: &str, second: &str) {
+    let request = json!({"messages": [
+        {"role": "system", "content": [
+            {"type": "text", "text": "first", "cache_control": {"type": "ephemeral", "ttl": first}},
+            {"type": "text", "text": "unmarked"},
+            {"type": "text", "text": "second", "cache_control": {"type": "ephemeral", "ttl": second}},
+        ]},
+        {"role": "user", "content": "hello"},
+    ]});
+    let original = request.clone();
+    for (model, explicit_ttl) in [
+        ("anthropic.claude-sonnet-4-5-20250929-v1:0", true),
+        ("anthropic.claude-sonnet-4-20250514-v1:0", false),
+    ] {
+        let body = transform(model, &request);
+        let point = |ttl: &str| {
+            if explicit_ttl {
+                json!({"cachePoint": {"type": "default", "ttl": ttl}})
+            } else {
+                json!({"cachePoint": {"type": "default"}})
+            }
+        };
+        assert_eq!(
+            body["system"],
+            json!([
+                {"text": "first"}, point(first), {"text": "unmarked"},
+                {"text": "second"}, point(second),
+            ]),
+            "{model}: each breakpoint must retain its own TTL in source order",
+        );
+    }
+    assert_eq!(request, original);
+}
+
+#[test]
+fn converse_system_cache_ttls_preserve_5m_then_1h() {
+    assert_system_cache_ttls("5m", "1h");
+}
+
+#[test]
+fn converse_system_cache_ttls_preserve_1h_then_5m() {
+    assert_system_cache_ttls("1h", "5m");
+}
+
 #[test]
 fn stop_suppression_recognizes_versions_regions_and_resource_ids() {
     let cases = [

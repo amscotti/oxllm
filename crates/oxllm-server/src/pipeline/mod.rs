@@ -926,6 +926,7 @@ pub(crate) async fn prepare_deployment_pricing(
     ctx.max_retries = None;
     ctx.upstream_start_time = None;
     ctx.upstream_end_time = None;
+    ctx.upstream_prompt_cache_pin_ttl = None;
     let pricing_model = deployment_pricing_model(
         deployment,
         request

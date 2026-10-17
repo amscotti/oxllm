@@ -19,6 +19,93 @@ fn bedrock_deployment(model: &str) -> Deployment {
 }
 
 #[test]
+fn native_messages_api_uses_resolved_vendor_and_route_not_body_markers_or_base_hints() {
+    for (configured, requested, converse, native) in [
+        ("bedrock/custom.vendor-chat", "alias", false, false),
+        (
+            "bedrock/arn:aws:bedrock:us-east-1:123456789012:imported-model/custom-chat",
+            "alias",
+            false,
+            false,
+        ),
+        (
+            "bedrock/anthropic.claude-unlisted-future",
+            "alias",
+            false,
+            true,
+        ),
+        (
+            "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "alias",
+            false,
+            true,
+        ),
+        (
+            "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "alias",
+            true,
+            false,
+        ),
+        ("bedrock/deepseek.r1-v1:0", "alias", false, false),
+        (
+            "bedrock/arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/profile",
+            "alias",
+            false,
+            false,
+        ),
+        (
+            "bedrock/*",
+            "bedrock/anthropic.claude-unlisted-future",
+            false,
+            true,
+        ),
+        ("bedrock/*", "bedrock/custom.vendor-chat", false, false),
+        (
+            "bedrock/*",
+            "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0",
+            true,
+            false,
+        ),
+    ] {
+        let mut deployment = bedrock_deployment(configured);
+        deployment
+            .oxllm_params
+            .extra
+            .insert("use_converse_api".into(), json!(converse));
+        deployment.oxllm_params.extra.insert(
+            "base_model".into(),
+            json!("bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0"),
+        );
+        for version in [Value::Null, json!(ANTHROPIC_VERSION)] {
+            let request = json!({"model":requested,"anthropic_version":version,
+                "messages":[{"role":"user","content":"hello"}],"max_tokens":32});
+            assert_eq!(
+                BedrockProvider::uses_anthropic_messages_api(&request, &deployment),
+                native,
+                "{configured}, {requested}, converse={converse}"
+            );
+            let body = BedrockProvider
+                .transform_request(&request, &deployment)
+                .unwrap();
+            if native {
+                assert_eq!(body["anthropic_version"], ANTHROPIC_VERSION);
+                assert!(
+                    BedrockProvider
+                        .endpoint_url_for_request(&deployment, &request)
+                        .ends_with("/invoke")
+                );
+            } else if requested.contains("custom.vendor") || configured.contains("custom") {
+                assert_eq!(
+                    body.get("anthropic_version"),
+                    Some(&version),
+                    "custom data is not an API decision"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn current_gpt_families_and_regional_aliases_use_converse() {
     for model in [
         "bedrock/openai.gpt-6.1-sol",

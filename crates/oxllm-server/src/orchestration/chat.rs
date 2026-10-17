@@ -33,7 +33,7 @@ use crate::pipeline::{
     apply_cost_header, check_deployment_limits, check_model_acl, post_success,
     record_deployment_tpm,
 };
-use crate::pre_call_checks::prompt_caching::PromptCachingCheck;
+use crate::pre_call_checks::prompt_caching::{PIN_TTL, PromptCachingCheck};
 use crate::state::AppState;
 
 use tokio_stream::StreamExt;
@@ -934,7 +934,8 @@ async fn try_model_with_retries(
                             // threshold gates the write.
                             if let Some((hash, est_tokens)) = hash_tokens {
                                 if pcache.engages(deployment, est_tokens) {
-                                    let pin_ttl = pcache.pin_ttl_for(deployment, request_body);
+                                    let pin_ttl =
+                                        call_ctx.upstream_prompt_cache_pin_ttl.unwrap_or(PIN_TTL);
                                     pcache
                                         .pin(hash, &call_ctx.api_key_hash, &cooldown_key, pin_ttl)
                                         .await;

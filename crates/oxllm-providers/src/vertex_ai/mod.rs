@@ -251,6 +251,14 @@ impl VertexProvider {
         Ok(resolved)
     }
 
+    /// Whether the resolved request uses native Anthropic `rawPredict`, using
+    /// the same model resolver and branch predicate as request transformation.
+    /// This identifies the API envelope only; body fields and model feature or
+    /// pricing availability do not choose the route.
+    pub fn uses_anthropic_messages_api(request: &Value, deployment: &Deployment) -> Result<bool> {
+        Self::resolved_model(request, deployment).map(|model| is_anthropic_model(&model))
+    }
+
     /// Embeddings URL. Vertex exposes an OpenAI-compatible embeddings
     /// endpoint that lives under the same `/endpoints/openapi` path as the
     /// chat endpoint — the only difference is the trailing `/embeddings`

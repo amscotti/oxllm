@@ -170,6 +170,16 @@ impl BedrockProvider {
         }
     }
 
+    /// Whether the resolved request takes the native Anthropic InvokeModel
+    /// branch, rather than Converse or another vendor's InvokeModel envelope.
+    /// This reuses the adapter's routing decision, not editable body fields or
+    /// model feature/pricing availability.
+    pub fn uses_anthropic_messages_api(request: &Value, deployment: &Deployment) -> bool {
+        let model = Self::resolve_model(request, deployment);
+        !should_use_converse(model, Self::use_converse(deployment))
+            && Self::is_anthropic_model(model)
+    }
+
     /// Resolve inline guardrail configuration from the deployment's `extra`
     /// params. Accepts either snake_case (`guardrail_id`,
     /// `guardrail_version`) or AWS-native camelCase (`guardrailIdentifier`,
@@ -340,7 +350,7 @@ impl ChatProvider for BedrockProvider {
             );
         }
 
-        if Self::is_anthropic_model(model) {
+        if Self::uses_anthropic_messages_api(request, deployment) {
             // Run the standard Anthropic transform, then inline
             // `anthropic_version` and strip `stream` (Bedrock encodes streaming
             // in the URL path, not the body).

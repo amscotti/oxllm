@@ -16,9 +16,11 @@
 //!   exists and the pinned deployment is available, prefer it over the
 //!   router's pick.
 //! - Post-call: write `pcache:{api_key_hash}:{hash}` → deployment id with a
-//!   300s floor TTL, raised to 1h when the request marked an ephemeral
-//!   `ttl: "1h"` breakpoint on a 1h-capable model (see
-//!   [`PromptCachingCheck::pin_ttl_for`]).
+//!   300s floor TTL, raised to 1h only when the serving attempt's final native
+//!   outbound body carries a genuine `ttl: "1h"` breakpoint, recorded in
+//!   [`oxllm_core::CallContext::upstream_prompt_cache_pin_ttl`]. Raw request
+//!   hints and billing rates cannot extend a pin when the adapter or outbound
+//!   shaping omitted that breakpoint.
 //!
 //! The pin value is the deployment's stable cooldown key
 //! (`stable_key(deployment)`, see
@@ -122,15 +124,65 @@ use sha2::{Digest, Sha256};
 pub const DEFAULT_MIN_TOKENS: u32 = 1024;
 
 /// Default/floor TTL for prompt → deployment pin entries (5 minutes, matching
-/// the reference `PROMPT_CACHE_PIN_TTL_SECONDS`). A request that marks an
-/// ephemeral cache breakpoint `ttl: "1h"` on a 1h-capable model raises the pin
-/// to [`ONE_HOUR_PIN_TTL`] instead (see [`PromptCachingCheck::pin_ttl_for`]).
+/// the reference `PROMPT_CACHE_PIN_TTL_SECONDS`). A native outbound 1h
+/// breakpoint raises the pin to [`ONE_HOUR_PIN_TTL`] instead.
 pub(crate) const PIN_TTL: Duration = Duration::from_secs(300);
 
 /// Extended pin TTL for prefixes cached with a 1h ephemeral breakpoint
-/// (reference `PROMPT_CACHE_ONE_HOUR_PIN_TTL_SECONDS`). Only applies when the
-/// serving model publishes a 1h cache-write rate.
+/// (reference `PROMPT_CACHE_ONE_HOUR_PIN_TTL_SECONDS`). Provider adapters own
+/// whether a requested TTL can be forwarded; billing prices are not evidence.
 pub(crate) const ONE_HOUR_PIN_TTL: Duration = Duration::from_secs(3600);
+
+/// Native cache-breakpoint vocabulary chosen by the upstream adapter.
+#[derive(Clone, Copy)]
+pub(crate) enum PromptCacheWire {
+    Anthropic,
+    Converse,
+}
+
+/// Observe only cache-breakpoint carriers in the fully shaped native body.
+///
+/// Anthropic uses direct `cache_control` on system/content blocks and tool
+/// definitions; Converse uses sibling `cachePoint` blocks in system/content
+/// and `toolConfig.tools`. Never recurse into schemas, metadata, tool inputs
+/// or results: user data can contain identically named keys. The caller must
+/// identify the actual wire API from adapter-owned routing, not editable body
+/// version fields or a model's rate card.
+pub(crate) fn pin_ttl_for_native_body(body: &Value, wire: PromptCacheWire) -> Duration {
+    let system = body.get("system").and_then(Value::as_array);
+    let content = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        });
+    let (tools, marks_one_hour): (Option<&Value>, fn(&Value) -> bool) = match wire {
+        PromptCacheWire::Anthropic => (body.get("tools"), marks_one_hour_breakpoint),
+        PromptCacheWire::Converse => (body.pointer("/toolConfig/tools"), |block| {
+            block.get("cachePoint").is_some_and(|point| {
+                point.get("type").and_then(Value::as_str) == Some("default")
+                    && point.get("ttl").and_then(Value::as_str) == Some("1h")
+            })
+        }),
+    };
+    if system
+        .into_iter()
+        .flatten()
+        .chain(content)
+        .chain(tools.and_then(Value::as_array).into_iter().flatten())
+        .any(marks_one_hour)
+    {
+        ONE_HOUR_PIN_TTL
+    } else {
+        PIN_TTL
+    }
+}
 
 /// Pins cacheable prompts to the deployment whose provider-side cache is
 /// already warm for that prompt.
@@ -282,7 +334,9 @@ impl PromptCachingCheck {
     /// cooldown key (`stable_key(deployment)`, see
     /// [`oxllm_core::router::Router::cooldown_key`]); the entry is scoped to
     /// the caller's API-key hash (tenant isolation). `ttl` comes from
-    /// [`Self::pin_ttl_for`].
+    /// the serving attempt's native outbound observation
+    /// ([`oxllm_core::CallContext::upstream_prompt_cache_pin_ttl`]), or the
+    /// 300s default when unavailable.
     ///
     /// Pins share the general-purpose cache tier. The upstream fix moved pins
     /// to a dedicated tier because its shared 200-slot store also held
@@ -298,73 +352,6 @@ impl PromptCachingCheck {
             )
             .await;
     }
-
-    /// Pin TTL for a served request: the 300s default, raised to 1h when the
-    /// request marks any ephemeral cache breakpoint `ttl: "1h"` (message- or
-    /// part-level, tools included) AND the serving model is 1h-cache-capable.
-    /// Mirrors the reference `pin_ttl_seconds`/`_honors_one_hour_cache_ttl`:
-    /// a pin must live as long as the longest breakpoint it protects, or a
-    /// 1h-cached prefix loses its affinity after 5 minutes and pays a cold
-    /// cache write on the next request.
-    ///
-    /// Capability resolves through the deployment-aware pricing model
-    /// (wildcard requests and `base_model` hints included) and honors a
-    /// per-deployment pricing override first. Bedrock decides by the mere
-    /// presence of a 1h cache-write rate — the same condition under which the
-    /// Converse transform forwards `cachePoint.ttl` — while other providers
-    /// require a positive rate.
-    pub fn pin_ttl_for(&self, deployment: &Deployment, request_body: &Value) -> Duration {
-        let requested = request_body
-            .get("model")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let pricing_model = crate::pipeline::deployment_pricing_model(deployment, requested);
-        let rate = deployment
-            .oxllm_params
-            .pricing_override()
-            .and_then(|override_| override_.cache_creation_input_token_cost_above_1hr)
-            .or_else(|| {
-                oxllm_core::cost::lookup_pricing_with_provider(
-                    &pricing_model,
-                    deployment.provider_slug(),
-                )
-                .and_then(|pricing| pricing.cache_creation_input_token_cost_above_1hr)
-            });
-        let hour_capable = if deployment.provider_slug() == "bedrock" {
-            rate.is_some()
-        } else {
-            rate.is_some_and(|rate| rate > 0.0)
-        };
-        if hour_capable && request_marks_one_hour_breakpoint(request_body) {
-            ONE_HOUR_PIN_TTL
-        } else {
-            PIN_TTL
-        }
-    }
-}
-
-/// Whether any message (or message content part / tool definition) carries an
-/// ephemeral `cache_control` with `ttl: "1h"`.
-fn request_marks_one_hour_breakpoint(body: &Value) -> bool {
-    let messages = body.get("messages").and_then(Value::as_array);
-    let tools = body.get("tools").and_then(Value::as_array);
-    messages
-        .into_iter()
-        .flatten()
-        .chain(tools.into_iter().flatten())
-        .any(carrier_marks_one_hour_breakpoint)
-}
-
-/// A carrier marks a 1h breakpoint when the message/tool itself or one of its
-/// content parts carries the mark (the reference scans both levels).
-fn carrier_marks_one_hour_breakpoint(carrier: &Value) -> bool {
-    if marks_one_hour_breakpoint(carrier) {
-        return true;
-    }
-    carrier
-        .get("content")
-        .and_then(Value::as_array)
-        .is_some_and(|parts| parts.iter().any(marks_one_hour_breakpoint))
 }
 
 fn marks_one_hour_breakpoint(value: &Value) -> bool {
@@ -504,6 +491,10 @@ fn hash128(s: &str) -> u128 {
     let first16: [u8; 16] = digest[..16].try_into().expect("sha256 digest is 32 bytes");
     u128::from_be_bytes(first16)
 }
+
+#[cfg(test)]
+#[path = "prompt_caching_http_tests.rs"]
+mod http_tests;
 
 #[cfg(test)]
 mod tests {
@@ -938,138 +929,113 @@ mod tests {
         );
     }
 
-    /// A 1h ephemeral breakpoint extends the pin to 1h so the prefix keeps its
-    /// deployment affinity for as long as the provider-side cache entry can
-    /// live — but only on models that publish a 1h cache-write rate (reference
-    /// `pin_ttl_seconds`).
     #[test]
-    fn one_hour_breakpoints_extend_pin_ttl_on_capable_models() {
-        let c = check();
-        let capable = make_dep("model", "anthropic/claude-sonnet-4-5");
-        for (label, body) in [
-            (
-                "part-level mark",
-                json!({"messages":[{"role":"user","content":[
-                    {"type":"text","text":"cache me","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}),
-            ),
-            (
-                "message-level mark",
-                json!({"messages":[{"role":"user","content":"cache me",
-                    "cache_control":{"type":"ephemeral","ttl":"1h"}}]}),
-            ),
-            (
-                "tool-level mark",
-                json!({"messages":[{"role":"user","content":"cache me"}],
-                    "tools":[{"type":"function","function":{"name":"extract"},
-                        "cache_control":{"type":"ephemeral","ttl":"1h"}}]}),
-            ),
-        ] {
-            assert_eq!(
-                c.pin_ttl_for(&capable, &body),
-                ONE_HOUR_PIN_TTL,
-                "{label}: 1h mark on a 1h-capable model must extend the pin"
-            );
+    fn native_one_hour_breakpoints_cover_system_all_message_content_and_tools() {
+        for wire in [PromptCacheWire::Anthropic, PromptCacheWire::Converse] {
+            let block = match wire {
+                PromptCacheWire::Anthropic => json!({"type":"text","text":"cache me",
+                    "cache_control":{"type":"ephemeral","ttl":"1h"}}),
+                PromptCacheWire::Converse => json!({"cachePoint":{"type":"default","ttl":"1h"}}),
+            };
+            let tools = match wire {
+                PromptCacheWire::Anthropic => json!({"tools":[{"name":"lookup",
+                    "input_schema":{"type":"object"},"cache_control":{"type":"ephemeral","ttl":"1h"}}]}),
+                PromptCacheWire::Converse => json!({"toolConfig":{"tools":[block.clone()]}}),
+            };
+            for body in [
+                json!({"system":[block.clone()]}),
+                json!({"messages":[{"role":"user","content":[block.clone()]}]}),
+                // A later assistant breakpoint also protects the earlier prefix.
+                json!({"system":[{"text":"prefix"}],"messages":[
+                    {"role":"user","content":[{"text":"question"}]},
+                    {"role":"assistant","content":[block]},
+                ]}),
+                tools,
+            ] {
+                assert_eq!(
+                    pin_ttl_for_native_body(&body, wire),
+                    ONE_HOUR_PIN_TTL,
+                    "{body}"
+                );
+            }
         }
     }
 
     #[test]
-    fn pin_ttl_stays_at_the_floor_without_a_one_hour_breakpoint() {
-        let c = check();
-        let capable = make_dep("model", "anthropic/claude-sonnet-4-5");
-        for (label, body) in [
-            (
-                "no marks",
-                json!({"messages":[{"role":"user","content":"plain"}]}),
-            ),
-            (
-                "5m mark",
-                json!({"messages":[{"role":"user","content":[
-                {"type":"text","text":"cache me","cache_control":{"type":"ephemeral","ttl":"5m"}}]}]}),
-            ),
-            (
-                "1h without ephemeral type",
-                json!({"messages":[{"role":"user","content":[
-                {"type":"text","text":"cache me","cache_control":{"ttl":"1h"}}]}]}),
-            ),
-        ] {
-            assert_eq!(
-                c.pin_ttl_for(&capable, &body),
-                PIN_TTL,
-                "{label}: pin must keep the 300s floor"
-            );
+    fn native_pin_ttl_keeps_floor_for_absent_short_or_invalid_breakpoints() {
+        for wire in [PromptCacheWire::Anthropic, PromptCacheWire::Converse] {
+            for block in [
+                json!({"type":"text","text":"plain"}),
+                json!({"cache_control":{"type":"ephemeral"}}),
+                json!({"cache_control":{"type":"ephemeral","ttl":"5m"}}),
+                json!({"cache_control":{"ttl":"1h"}}),
+                json!({"cache_control":{"type":"persistent","ttl":"1h"}}),
+                json!({"cachePoint":{"type":"default"}}),
+                json!({"cachePoint":{"type":"default","ttl":"5m"}}),
+                json!({"cachePoint":{"ttl":"1h"}}),
+                json!({"cachePoint":{"type":"custom","ttl":"1h"}}),
+                Value::Null,
+            ] {
+                let body = json!({"system":[block]});
+                assert_eq!(pin_ttl_for_native_body(&body, wire), PIN_TTL, "{body}");
+            }
+            for body in [
+                Value::Null,
+                json!({}),
+                json!({"messages":[]}),
+                json!({"system":"plain"}),
+            ] {
+                assert_eq!(pin_ttl_for_native_body(&body, wire), PIN_TTL, "{body}");
+            }
         }
     }
 
     #[test]
-    fn one_hour_breakpoint_on_a_later_message_extends_the_pin() {
-        // The cacheable prefix extends through the LAST ephemeral mark, so a
-        // 1h breakpoint later in the conversation protects (and subsumes) the
-        // pinned system prefix. The scan must therefore consider every
-        // message, not just the hash-prefix message.
-        let c = check();
-        let capable = make_dep("model", "anthropic/claude-sonnet-4-5");
-        let body = json!({"messages":[
-            {"role":"system","content":"cache me","cache_control":{"type":"ephemeral","ttl":"5m"}},
-            {"role":"user","content":"question"},
-            {"role":"assistant","content":"answer",
-             "cache_control":{"type":"ephemeral","ttl":"1h"}},
-        ]});
-        assert_eq!(c.pin_ttl_for(&capable, &body), ONE_HOUR_PIN_TTL);
+    fn native_pin_ttl_never_recurses_into_schemas_metadata_arguments_or_results() {
+        let decoy = json!({"cache_control":{"type":"ephemeral","ttl":"1h"},
+            "cachePoint":{"type":"default","ttl":"1h"}});
+        let body = json!({
+            "metadata":decoy,
+            "system":[{"text":"prefix","metadata":decoy}],
+            "messages":[{"role":"assistant","content":[
+                {"type":"tool_use","name":"lookup","input":decoy},
+                {"type":"tool_result","content":[decoy]},
+                {"toolUse":{"name":"lookup","input":decoy}},
+                {"toolResult":{"content":[{"json":decoy}]}},
+            ]}],
+            "tools":[{"name":"lookup","input_schema":{
+                "properties":{"cache_control":decoy,"cachePoint":decoy},"examples":[decoy]
+            }}],
+            "toolConfig":{"tools":[{"toolSpec":{"name":"lookup","inputSchema":{"json":decoy}}}]},
+        });
+        for wire in [PromptCacheWire::Anthropic, PromptCacheWire::Converse] {
+            assert_eq!(pin_ttl_for_native_body(&body, wire), PIN_TTL);
+        }
     }
 
     #[test]
-    fn wildcard_deployments_resolve_one_hour_capability_from_the_request() {
-        let c = check();
-        let wildcard = make_dep("model", "anthropic/*");
-        let body = json!({"model":"anthropic/claude-sonnet-4-5","messages":[
-            {"role":"user","content":[
-                {"type":"text","text":"cache me","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]});
-        assert_eq!(c.pin_ttl_for(&wildcard, &body), ONE_HOUR_PIN_TTL);
-    }
-
-    #[test]
-    fn deployment_pricing_overrides_gate_the_one_hour_pin() {
-        let c = check();
-        let body = json!({"messages":[{"role":"user","content":[
-            {"type":"text","text":"cache me","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]});
-        // A zero 1h rate on an otherwise capable model is not 1h support.
-        let mut zeroed = make_dep("model", "anthropic/claude-sonnet-4-5");
-        zeroed
-            .oxllm_params
-            .cache_creation_input_token_cost_above_1hr = Some(0.0);
-        assert_eq!(c.pin_ttl_for(&zeroed, &body), PIN_TTL);
-        // A positive override extends support to an unmodelled model.
-        let mut extended = make_dep("model", "anthropic/claude-future");
-        extended
-            .oxllm_params
-            .cache_creation_input_token_cost_above_1hr = Some(1e-5);
-        assert_eq!(c.pin_ttl_for(&extended, &body), ONE_HOUR_PIN_TTL);
-    }
-
-    #[test]
-    fn bedrock_one_hour_capability_follows_rate_presence() {
-        // Bedrock decides by the mere presence of a 1h cache-write rate — the
-        // same condition under which the Converse transform forwards
-        // `cachePoint.ttl` — rather than by positivity.
-        let c = check();
-        let body = json!({"messages":[{"role":"user","content":[
-            {"type":"text","text":"cache me","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]});
-        let capable = make_dep("model", "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0");
-        assert_eq!(c.pin_ttl_for(&capable, &body), ONE_HOUR_PIN_TTL);
-        let uncapable = make_dep("model", "bedrock/anthropic.claude-sonnet-4-20250514-v1:0");
-        assert_eq!(c.pin_ttl_for(&uncapable, &body), PIN_TTL);
-    }
-
-    #[test]
-    fn one_hour_breakpoints_do_not_extend_pins_on_uncapable_models() {
-        // A model with no published 1h cache-write rate keeps the 300s pin
-        // even when the caller asks for 1h caching: the provider cannot hold
-        // the entry that long, so neither should the affinity pin.
-        let c = PromptCachingCheck::new(Arc::new(InMemoryCache::new(1_000)), None);
-        let uncapable = make_dep("model", "openai/gpt-4o");
-        let body = json!({"messages":[{"role":"user","content":[
-            {"type":"text","text":"cache me","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]});
-        assert_eq!(c.pin_ttl_for(&uncapable, &body), PIN_TTL);
+    fn native_pin_ttl_does_not_treat_raw_message_or_function_hints_as_native_carriers() {
+        let body = json!({
+            "messages":[{"role":"user","content":"plain",
+                "cache_control":{"type":"ephemeral","ttl":"1h"},
+                "cachePoint":{"type":"default","ttl":"1h"}}],
+            "tools":[{"type":"function","function":{"name":"lookup",
+                "cache_control":{"type":"ephemeral","ttl":"1h"}}}],
+        });
+        for wire in [PromptCacheWire::Anthropic, PromptCacheWire::Converse] {
+            assert_eq!(pin_ttl_for_native_body(&body, wire), PIN_TTL);
+        }
+        let anthropic = json!({"tools":[{"cache_control":{"type":"ephemeral","ttl":"1h"}}]});
+        let converse =
+            json!({"toolConfig":{"tools":[{"cachePoint":{"type":"default","ttl":"1h"}}]}});
+        assert_eq!(
+            pin_ttl_for_native_body(&anthropic, PromptCacheWire::Converse),
+            PIN_TTL
+        );
+        assert_eq!(
+            pin_ttl_for_native_body(&converse, PromptCacheWire::Anthropic),
+            PIN_TTL
+        );
     }
 
     /// C13/LOW: a pin whose cache entry has expired must read as absent from

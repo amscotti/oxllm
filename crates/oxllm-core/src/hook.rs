@@ -225,6 +225,11 @@ pub struct CallContext {
     /// Start of the current upstream attempt. Duration pricing excludes local
     /// admission work, retries and backoff before this attempt.
     pub upstream_start_time: Option<std::time::Instant>,
+    /// Prompt-cache routing pin lifetime observed on the final native outbound
+    /// body. Internal transport observation, never a client request parameter
+    /// or a pricing capability. Reset on each selected deployment/attempt so
+    /// only the serving attempt can determine the successful pin's TTL.
+    pub upstream_prompt_cache_pin_ttl: Option<std::time::Duration>,
     /// End of the serving upstream attempt; streams record first-content arrival.
     /// Response timing excludes post-call hooks and spend settlement.
     pub upstream_end_time: Option<std::time::Instant>,

@@ -21,6 +21,7 @@ use super::outcomes::{
 };
 use crate::bedrock_sigv4::sign_request as sign_bedrock_request;
 use crate::error::ApiError;
+use crate::pre_call_checks::prompt_caching::{PIN_TTL, PromptCacheWire, pin_ttl_for_native_body};
 use crate::security::MAX_ERROR_BODY_BYTES;
 use crate::state::AppState;
 
@@ -97,6 +98,9 @@ pub(crate) async fn attempt_upstream_with_context(
     traceparent: Option<&str>,
     mut call_ctx: Option<&mut oxllm_core::CallContext>,
 ) -> Result<reqwest::Response, UpstreamError> {
+    if let Some(ctx) = call_ctx.as_deref_mut() {
+        ctx.upstream_prompt_cache_pin_ttl = None;
+    }
     super::request_controls::validate(request_body).map_err(|error| UpstreamError::Client {
         status: error.status.as_u16(),
         message: error.message,
@@ -258,14 +262,14 @@ pub(crate) async fn attempt_upstream_with_context(
             }
         }
     }
-    if provider.id() == "bedrock"
+    let bedrock_converse = provider.id() == "bedrock"
         && url::Url::parse(&url).is_ok_and(|url| {
             matches!(
                 url.path().rsplit('/').next(),
                 Some("converse" | "converse-stream")
             )
-        })
-    {
+        });
+    if bedrock_converse {
         oxllm_providers::bedrock::converse::filter_converse_beta_headers(&mut headers);
     }
 
@@ -430,6 +434,37 @@ pub(crate) async fn attempt_upstream_with_context(
     }
 
     if let Some(ctx) = call_ctx.as_deref_mut() {
+        // Observe after provider transformation, configured drops/extra_body
+        // and all final shaping. Prices and raw request hints do not prove
+        // that a cache breakpoint was actually sent on this attempt. Select
+        // the envelope from adapter-owned routing, never editable version
+        // fields in this body (including a forged anthropic_version: null).
+        let prompt_cache_wire = match provider.id() {
+            "anthropic" => Some(PromptCacheWire::Anthropic),
+            "azure_ai" if azure_anthropic => Some(PromptCacheWire::Anthropic),
+            "bedrock" if bedrock_converse => Some(PromptCacheWire::Converse),
+            "bedrock"
+                if oxllm_providers::bedrock::BedrockProvider::uses_anthropic_messages_api(
+                    request_body,
+                    deployment,
+                ) =>
+            {
+                Some(PromptCacheWire::Anthropic)
+            }
+            "vertex_ai"
+                if oxllm_providers::vertex_ai::VertexProvider::uses_anthropic_messages_api(
+                    request_body,
+                    deployment,
+                )
+                .unwrap_or(false) =>
+            {
+                Some(PromptCacheWire::Anthropic)
+            }
+            _ => None,
+        };
+        ctx.upstream_prompt_cache_pin_ttl = Some(
+            prompt_cache_wire.map_or(PIN_TTL, |wire| pin_ttl_for_native_body(&transformed, wire)),
+        );
         ctx.upstream_start_time = Some(std::time::Instant::now());
         if let Some(model) = body_model.as_deref() {
             let prefix = format!("{}/", deployment.provider_slug());

@@ -1296,7 +1296,7 @@ fn accumulate_system_blocks(msg: &Value, out: &mut Vec<Value>, model: &str) {
                         if !t.is_empty() {
                             out.push(json!({"text": t}));
                             if has_cache_control(elem) {
-                                out.push(build_cache_point_block(msg, model));
+                                out.push(build_cache_point_block(elem, model));
                             }
                         }
                     }

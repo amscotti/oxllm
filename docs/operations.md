@@ -689,11 +689,17 @@ the optional-filter list.
 `optional_pre_call_checks: [prompt_caching]` (with
 `oxllm_settings.prompt_caching_enabled: true`) pins cacheable prompt prefixes to
 the deployment whose provider-side cache is warm. Pins live 5 minutes by
-default; a request marking an ephemeral `cache_control` breakpoint with
-`ttl: "1h"` extends its pin to one hour when the serving model publishes a 1h
-cache-write rate, keeping affinity for as long as the cached entry can survive.
-On Bedrock Converse the same capability check forwards `ttl` onto `cachePoint`
-blocks, so a 1h pin never outlives the provider entry it tracks.
+default; a genuine `ttl: "1h"` breakpoint in the **serving attempt's final native
+outbound body** extends its pin to one hour. This includes Anthropic
+`cache_control: {type: "ephemeral", ttl: "1h"}` on system/content blocks or tools,
+and Converse `cachePoint: {type: "default", ttl: "1h"}` in system/content blocks
+or `toolConfig.tools`. Provider transformation and configured
+`additional_drop_params` / `extra_body` shaping run before this observation.
+The adapter's resolved route selects the native API envelope; an editable
+`anthropic_version` body field cannot select or disguise that envelope.
+Billing-rate overrides, discarded request hints, and similarly named fields
+inside schemas or tool inputs do not extend pins. Converse retains its native
+API TTL-forwarding gate; this does not add tool-cache-point injection.
 
 `oxllm_settings.datadog_config` sends successful-request and terminal-failure
 logs, excluding cache-hit/master-key request events. Failure messages redact
