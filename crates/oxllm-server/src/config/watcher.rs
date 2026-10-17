@@ -446,6 +446,14 @@ mod tests {
     use crate::config::types::{ConfigModel, GeneralSettings, OxllmSettings, ProxyConfig};
     use oxllm_core::deployment::OxllmParams;
 
+    /// Deadline for the OS-registration ready barriers. `recv` returns as
+    /// soon as the watcher registers, so a longer budget costs nothing on
+    /// the happy path — but FSEvents stream creation on macOS can exceed
+    /// 30s while a full workspace suite runs beside it, and tripping the
+    /// barrier poisons `CONFIG_PATH_TEST_LOCK`, cascading into every
+    /// config-management test in the same process.
+    const WATCHER_REGISTRATION_BUDGET: Duration = Duration::from_secs(120);
+
     #[tokio::test]
     async fn full_watch_queue_requests_a_rescan_without_blocking_registration() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -540,7 +548,7 @@ mod tests {
             let watcher = tokio::spawn(watch_loop(root.clone(), shared.clone(), rebuild, Some(ready_tx)));
             // OS registration can serialize across concurrent watcher tests.
             // Keep the behavioral deadlines separate from this ready barrier.
-            tokio::time::timeout(Duration::from_secs(30), ready_rx.recv()).await
+            tokio::time::timeout(WATCHER_REGISTRATION_BUDGET, ready_rx.recv()).await
                 .expect("watcher must register before writes").expect("watcher started");
             let wait_for_model = |name: &'static str| {
                 let shared = shared.clone();
@@ -571,7 +579,7 @@ mod tests {
             // State publication precedes OS registration of a newly included
             // directory. Wait for that lifecycle barrier instead of guessing
             // how long FSEvents reconfiguration takes under concurrent load.
-            let registered = tokio::time::timeout(Duration::from_secs(30), ready_rx.recv()).await
+            let registered = tokio::time::timeout(WATCHER_REGISTRATION_BUDGET, ready_rx.recv()).await
                 .expect("new include directory must be registered").expect("watcher alive");
             assert!(registered.contains(&next.parent().unwrap().canonicalize().unwrap()));
             write_model(&next, "edited-new-include");
@@ -628,7 +636,7 @@ mod tests {
             rebuild,
             Some(ready_tx),
         ));
-        tokio::time::timeout(Duration::from_secs(30), ready_rx.recv())
+        tokio::time::timeout(WATCHER_REGISTRATION_BUDGET, ready_rx.recv())
             .await
             .expect("watcher must register before writes")
             .expect("watcher started");
@@ -930,7 +938,7 @@ mod tests {
             rebuild,
             Some(ready_tx),
         ));
-        tokio::time::timeout(Duration::from_secs(30), ready_rx.recv())
+        tokio::time::timeout(WATCHER_REGISTRATION_BUDGET, ready_rx.recv())
             .await
             .expect("watcher must register before writes")
             .expect("watcher started");
