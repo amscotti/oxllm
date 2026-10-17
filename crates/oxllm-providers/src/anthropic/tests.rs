@@ -1426,6 +1426,69 @@ fn response_legacy_named_tool_values_remain_tool_arguments() {
     assert_eq!(out["choices"][0]["message"]["content"], "");
 }
 
+#[test]
+fn request_service_tier_maps_onto_the_anthropic_tier() {
+    let p = AnthropicProvider;
+    for (requested, wire) in [
+        ("auto", "auto"),
+        ("default", "standard_only"),
+        ("standard_only", "standard_only"),
+    ] {
+        let req = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100,
+            "service_tier": requested,
+        });
+        let out = p.transform_request(&req, &deployment()).expect("ok");
+        assert_eq!(out["service_tier"], wire, "service_tier={requested}");
+    }
+
+    // Unmappable values are client errors with a drop_params hint.
+    for tier in ["flex", "priority", "scale"] {
+        let req = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100,
+            "service_tier": tier,
+        });
+        let error = p.transform_request(&req, &deployment()).unwrap_err();
+        assert!(
+            matches!(error, oxllm_core::Error::BadRequest(ref message)
+                if message.contains("service_tier") && message.contains("drop_params")),
+            "{tier}"
+        );
+    }
+
+    // Foundry Claude forwards the same mapping through its production
+    // delegation (the azure_ai provider rewrites the deployment to the
+    // anthropic/ slug — see azure_ai/tests.rs for that path); Vertex Claude
+    // and Bedrock InvokeModel drop the field — only the Anthropic API routes
+    // accept it.
+    for model in [
+        "vertex_ai/claude-sonnet-4-5",
+        "bedrock/anthropic.claude-sonnet-4-5",
+    ] {
+        let mut other = deployment();
+        other.oxllm_params.model = model.into();
+        let out = p
+            .transform_request(
+                &json!({
+                    "model": "claude",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 100,
+                    "service_tier": "auto",
+                }),
+                &other,
+            )
+            .expect("ok");
+        assert!(
+            out.get("service_tier").is_none(),
+            "{model}: only the Anthropic API routes accept service_tier"
+        );
+    }
+}
+
 // --- Empty string content in user message ---
 // Empty content is rewritten to the reference placeholder instead of an
 // empty string (Anthropic rejects `content: ""`).

@@ -723,3 +723,30 @@ fn missing_bases_and_unresolved_wildcards_fail_before_inference() {
         .is_err()
     );
 }
+
+#[test]
+fn foundry_claude_forwards_the_mapped_service_tier() {
+    // The production delegation rewrites the deployment to the `anthropic/`
+    // slug, so the Anthropic transform's tier mapping applies on Foundry
+    // Claude routes too (reference SERVICE_TIER_PROVIDERS).
+    let foundry = deployment(
+        "claude-sonnet-4-5",
+        "https://resource.services.ai.azure.com/models",
+    );
+    let request = json!({
+        "model": "claude",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 100,
+        "service_tier": "default",
+    });
+    let body = ChatProvider::transform_request(&AzureAiProvider, &request, &foundry).unwrap();
+    assert_eq!(body["service_tier"], "standard_only");
+
+    let mut flex = request.clone();
+    flex["service_tier"] = json!("flex");
+    assert!(matches!(
+        ChatProvider::transform_request(&AzureAiProvider, &flex, &foundry),
+        Err(oxllm_core::Error::BadRequest(message))
+            if message.contains("service_tier") && message.contains("drop_params")
+    ));
+}

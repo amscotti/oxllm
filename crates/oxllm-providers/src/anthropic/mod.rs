@@ -590,6 +590,39 @@ impl ChatProvider for AnthropicProvider {
             }
         }
 
+        // `service_tier`: mapped onto Anthropic's tier for the routes that
+        // accept it (direct Anthropic and Foundry Claude — reference
+        // `SERVICE_TIER_PROVIDERS`). OpenAI's `default` becomes
+        // `standard_only`; unmappable values are client errors with a
+        // drop_params hint — and because the field is not advertised in
+        // `supported_params`, enabling drop_params strips it before this
+        // transform, mirroring the reference's drop-with-warning behavior.
+        // Vertex Claude and Bedrock InvokeModel drop it — only the Anthropic
+        // API routes accept it.
+        if let Some(tier) = request
+            .get("service_tier")
+            .filter(|value| !value.is_null())
+            .and_then(Value::as_str)
+        {
+            match deployment.provider_slug() {
+                "anthropic" | "azure_ai" => {
+                    let mapped = match tier {
+                        "auto" => "auto",
+                        "default" | "standard_only" => "standard_only",
+                        other => {
+                            return Err(oxllm_core::Error::BadRequest(format!(
+                                "{model} does not support service_tier='{other}'. Anthropic accepts \
+                                 'auto', 'standard_only', or OpenAI's 'default' (sent as \
+                                 'standard_only'). To drop unsupported params, set drop_params = true."
+                            )));
+                        }
+                    };
+                    out.insert("service_tier".to_string(), json!(mapped));
+                }
+                _ => {}
+            }
+        }
+
         // `user` → `metadata.user_id` (merge into whatever metadata block we
         // already have, so caller-supplied metadata keys survive alongside
         // the OpenAI-standard user id).
@@ -984,6 +1017,10 @@ impl ChatProvider for AnthropicProvider {
             // Feature #2/#3: speed passthrough and web_search_options → hosted
             // tool are honored by `transform_request`, so advertise them so
             // `drop_params` doesn't strip them before the transform runs.
+            // `service_tier` is deliberately NOT listed: the host's
+            // drop_params strip then removes unmappable values before the
+            // transform (the reference's drop-with-warning behavior), while
+            // a kept value is mapped or rejected below.
             "speed",
             "web_search_options",
             "context_management",
