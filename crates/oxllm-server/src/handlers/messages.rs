@@ -26,7 +26,9 @@ const ANTHROPIC_SSE_PING_INTERVAL: Duration = Duration::from_secs(15);
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
-use crate::handlers::anthropic_common::{anthropic_error_response, status_to_anthropic_error_type};
+use crate::handlers::anthropic_common::{
+    anthropic_error_response, sanitise_forwarded_error_message, status_to_anthropic_error_type,
+};
 use crate::handlers::chat::chat_completions_inner;
 use crate::handlers::convert::anthropic::{
     AnthropicStreamConverter, anthropic_to_openai_request, openai_to_anthropic_response,
@@ -154,54 +156,6 @@ async fn messages_inner(
     } else {
         convert_json_to_anthropic(chat_response).await
     }
-}
-
-/// Lightly sanitise an upstream error message before forwarding it to an
-/// Anthropic SDK client. Provider error text is generally safe but can echo
-/// request-identifying detail (URL fragments, model ids) or credential hints
-/// (`sk-…` keys, `Bearer` tokens) from a misbehaving upstream. Redacts those
-/// patterns and caps the length; the raw text is preserved in the `tracing`
-/// log above (the reference applies comparable redirection/sanitisation).
-fn sanitise_forwarded_error_message(msg: &str) -> String {
-    let capped = crate::security::truncate_error_message(msg, 500);
-    let lower: Vec<char> = capped.chars().map(|c| c.to_ascii_lowercase()).collect();
-    let original: Vec<char> = capped.chars().collect();
-    let n = lower.len();
-    let mut out = String::with_capacity(capped.len());
-    let mut i = 0;
-    while i < n {
-        if matches_at(&lower, i, "sk-") {
-            out.push_str("[redacted]");
-            i = skip_token(&lower, i + 3);
-            continue;
-        }
-        if matches_at(&lower, i, "bearer ") || matches_at(&lower, i, "bearer\t") {
-            out.push_str("bearer [redacted]");
-            i = skip_token(&lower, i + 7);
-            continue;
-        }
-        if matches_at(&lower, i, "http://") || matches_at(&lower, i, "https://") {
-            out.push_str("[redacted-url]");
-            i = skip_token(&lower, i);
-            continue;
-        }
-        out.push(original[i]);
-        i += 1;
-    }
-    out
-}
-
-fn matches_at(chars: &[char], i: usize, prefix: &str) -> bool {
-    let prefix: Vec<char> = prefix.chars().collect();
-    i + prefix.len() <= chars.len() && chars[i..i + prefix.len()] == prefix[..]
-}
-
-fn skip_token(chars: &[char], i: usize) -> usize {
-    let mut j = i;
-    while j < chars.len() && !chars[j].is_whitespace() {
-        j += 1;
-    }
-    j
 }
 
 async fn convert_json_to_anthropic(chat_response: Response) -> Result<Response, ApiError> {

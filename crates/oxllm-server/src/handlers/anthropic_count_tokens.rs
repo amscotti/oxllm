@@ -114,6 +114,7 @@ pub(crate) async fn count_at_provider(
     request: &serde_json::Value,
     model: &str,
 ) -> Result<Option<(u64, &'static str)>, ApiError> {
+    use crate::handlers::anthropic_common::sanitise_forwarded_error_message;
     use oxllm_core::provider::ChatProvider;
     use serde_json::{Value, json};
     crate::orchestration::request_controls::validate(request)?;
@@ -190,6 +191,7 @@ pub(crate) async fn count_at_provider(
         // the caller can tell a malformed request from a bad credential —
         // the reference surfaces the upstream message too.
         let status = response.status().as_u16();
+        let headers = response.headers().clone();
         let bytes =
             axum::body::to_bytes(response.into_body(), crate::security::MAX_ERROR_BODY_BYTES)
                 .await
@@ -208,10 +210,11 @@ pub(crate) async fn count_at_provider(
         } else {
             format!(
                 "provider token counting failed: {}",
-                crate::security::truncate_error_message(&upstream_message, 500)
+                sanitise_forwarded_error_message(&upstream_message)
             )
         };
-        return Err(ApiError::upstream(status, message));
+        // ApiError forwards only its vetted headers and clamps retry-after.
+        return Err(ApiError::upstream(status, message).with_headers(Some(headers)));
     }
     let bytes = axum::body::to_bytes(
         response.into_body(),
@@ -352,6 +355,302 @@ router_settings:
                 .unwrap();
             let body: Value = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(body["input_tokens"], 73);
+            mock.assert_hits_async(1).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn native_count_tokens_preserves_provider_error_body_status_and_headers() {
+        let body = r#"{ "type": "error", "error": { "type": "api_error", "message": "invalid sk-synthetic-native-key Bearer synthetic-native-token at https://synthetic.invalid/count" }, "request_id": "synthetic-provider-id" }
+"#;
+        for (model, base_path, path, _, _, _) in HOSTED_COUNTERS {
+            for status in [401, 429, 503] {
+                let upstream = MockServer::start_async().await;
+                let state = state(model, &upstream.url(base_path));
+                let mock = upstream
+                    .mock_async(|when, then| {
+                        when.method(httpmock::Method::POST).path(path);
+                        then.status(status)
+                            .header("content-type", "application/json")
+                            .header("retry-after", "7")
+                            .header("x-ratelimit-remaining-tokens", "19")
+                            .header("x-request-id", "synthetic-provider-id")
+                            .body(body);
+                    })
+                    .await;
+                let input =
+                    json!({"model": "counted", "messages": [{"role": "user", "content": "hello"}]});
+                let response = crate::pipeline::HTTP_REQUEST_ID
+                    .scope(
+                        "synthetic-native-count".to_string(),
+                        count_tokens(
+                            State(state),
+                            Extension(AuthUser::open()),
+                            HeaderMap::new(),
+                            Bytes::from(input.to_string()),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status().as_u16(), status, "{model}");
+                assert_eq!(
+                    response.headers().get("content-type").unwrap(),
+                    "application/json"
+                );
+                assert_eq!(response.headers().get("retry-after").unwrap(), "7");
+                assert_eq!(
+                    response
+                        .headers()
+                        .get("x-ratelimit-remaining-tokens")
+                        .unwrap(),
+                    "19"
+                );
+                for name in [
+                    crate::pipeline::REQUEST_ID_HEADER,
+                    crate::pipeline::STANDARD_REQUEST_ID_HEADER,
+                    crate::pipeline::LITELLM_CALL_ID_HEADER,
+                ] {
+                    assert_eq!(
+                        response.headers().get(name).unwrap(),
+                        "synthetic-native-count"
+                    );
+                }
+                let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                    .await
+                    .unwrap();
+                assert_eq!(bytes.as_ref(), body.as_bytes(), "{model}: {status}");
+                mock.assert_hits_async(1).await;
+            }
+        }
+    }
+
+    #[cfg(feature = "platform-apis")]
+    #[tokio::test]
+    async fn utility_count_tokens_redacts_provider_error_detail() {
+        let detail = "invalid credential sk-synthetic-count-key Bearer \t \tsynthetic-count-token at https://synthetic.invalid/count?key=synthetic";
+        for (model, base_path, path, _, _, _) in HOSTED_COUNTERS {
+            for body in [
+                json!({"error": {"message": detail}}),
+                json!({"message": detail}),
+            ] {
+                let upstream = MockServer::start_async().await;
+                let state = state(model, &upstream.url(base_path));
+                let mock = upstream
+                    .mock_async(|when, then| {
+                        when.method(httpmock::Method::POST).path(path);
+                        then.status(401).json_body(body);
+                    })
+                    .await;
+
+                let error = count_at_provider(
+                    &state.load_full(),
+                    &AuthUser::open(),
+                    &json!({"model": "counted", "messages": [{"role": "user", "content": "hello"}]}),
+                    "counted",
+                )
+                .await
+                .expect_err("provider rejection must reach the utility caller");
+
+                assert_eq!(
+                    error.status,
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "{model}"
+                );
+                assert_eq!(
+                    error.message,
+                    "provider token counting failed: invalid credential [redacted] bearer [redacted] at [redacted-url]",
+                    "{model}"
+                );
+                mock.assert_hits_async(1).await;
+            }
+        }
+    }
+
+    #[cfg(feature = "platform-apis")]
+    #[tokio::test]
+    async fn utility_count_tokens_preserves_provider_error_status_and_vetted_headers() {
+        use axum::response::IntoResponse;
+
+        for (status, error_type, code, retry_after, expected_retry_after) in [
+            (400, "invalid_request_error", None, "7", "7"),
+            (
+                401,
+                "invalid_request_error",
+                Some("upstream_authentication_error"),
+                "7",
+                "7",
+            ),
+            (
+                429,
+                "rate_limit_error",
+                Some("upstream_rate_limited"),
+                "7",
+                "7",
+            ),
+            (
+                429,
+                "rate_limit_error",
+                Some("upstream_rate_limited"),
+                "18446744073709551616",
+                "3600",
+            ),
+            (
+                429,
+                "rate_limit_error",
+                Some("upstream_rate_limited"),
+                "Wed, 21 Oct 2026 07:28:00 GMT",
+                "Wed, 21 Oct 2026 07:28:00 GMT",
+            ),
+            (503, "api_error", Some("upstream_error"), "99999999", "3600"),
+            (529, "api_error", Some("upstream_error"), "7", "7"),
+        ] {
+            let upstream = MockServer::start_async().await;
+            let state = state("anthropic/claude-sonnet-5-5", &upstream.url("/v1"));
+            let mock = upstream
+                .mock_async(|when, then| {
+                    when.method(httpmock::Method::POST)
+                        .path("/v1/messages/count_tokens");
+                    then.status(status)
+                        .header("retry-after", retry_after)
+                        .header("x-ratelimit-remaining-requests", "0")
+                        .header("x-request-id", "synthetic-provider-id")
+                        .header("x-vendor-internal", "synthetic-private-detail")
+                        .header("authorization", "Bearer synthetic-header-token")
+                        .header("x-api-key", "sk-synthetic-header-key")
+                        .header("set-cookie", "synthetic-cookie=value")
+                        .json_body(json!({"error": {"message": "model is overloaded"}}));
+                })
+                .await;
+            let input =
+                json!({"model": "counted", "messages": [{"role": "user", "content": "hello"}]});
+            let error = crate::pipeline::HTTP_REQUEST_ID
+                .scope(
+                    "synthetic-count-request".to_string(),
+                    count_at_provider(&state.load_full(), &AuthUser::open(), &input, "counted"),
+                )
+                .await
+                .expect_err("provider rejection must reach the utility caller");
+
+            assert_eq!(
+                error.message,
+                "provider token counting failed: model is overloaded"
+            );
+            let response = error.into_response();
+            assert_eq!(response.status().as_u16(), status);
+            assert_eq!(
+                response.headers().get("retry-after").unwrap(),
+                expected_retry_after
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("x-ratelimit-remaining-requests")
+                    .unwrap(),
+                "0"
+            );
+            assert_eq!(
+                response.headers().get("x-request-id").unwrap(),
+                "synthetic-count-request"
+            );
+            for name in [
+                "x-vendor-internal",
+                "authorization",
+                "x-api-key",
+                "set-cookie",
+            ] {
+                assert!(response.headers().get(name).is_none(), "{name}");
+            }
+            let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                body,
+                json!({"error": {
+                    "message": "provider token counting failed: model is overloaded",
+                    "type": error_type, "param": null, "code": code,
+                }})
+            );
+            mock.assert_hits_async(1).await;
+        }
+    }
+
+    #[cfg(feature = "platform-apis")]
+    #[tokio::test]
+    async fn utility_count_tokens_falls_back_for_oversized_or_truncated_provider_errors() {
+        use axum::response::IntoResponse;
+
+        for length in [600, crate::security::MAX_ERROR_BODY_BYTES * 2] {
+            let upstream = MockServer::start_async().await;
+            let state = state("anthropic/claude-sonnet-5-5", &upstream.url("/v1"));
+            let body = json!({"error": {"message": format!(
+                "sk-synthetic-long-key Bearer synthetic-long-token https://synthetic.invalid/count {}",
+                "é".repeat(length),
+            )}}).to_string();
+            let mock = upstream
+                .mock_async(|when, then| {
+                    when.method(httpmock::Method::POST)
+                        .path("/v1/messages/count_tokens");
+                    then.status(503)
+                        .header("retry-after", "9")
+                        .header("content-type", "application/json")
+                        .body(body);
+                })
+                .await;
+            let error = count_at_provider(
+                &state.load_full(),
+                &AuthUser::open(),
+                &json!({"model": "counted", "messages": [{"role": "user", "content": "hello"}]}),
+                "counted",
+            )
+            .await
+            .expect_err("truncated provider JSON must not become a local estimate");
+
+            // The existing passthrough limits truncate error JSON before this
+            // handler parses it. Never echo that partial body as a fallback.
+            assert_eq!(error.message, "provider token counting failed", "{length}");
+            let response = error.into_response();
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::SERVICE_UNAVAILABLE
+            );
+            assert_eq!(response.headers().get("retry-after").unwrap(), "9");
+            mock.assert_hits_async(1).await;
+        }
+    }
+
+    #[cfg(feature = "platform-apis")]
+    #[tokio::test]
+    async fn utility_count_tokens_falls_back_for_malformed_or_non_json_provider_errors() {
+        for body in [
+            "not JSON: sk-synthetic-text-key Bearer synthetic-text-token https://synthetic.invalid/count",
+            r#"{"error":{"message":"sk-synthetic-truncated-key"#,
+            r#"{"error":{"detail":"sk-synthetic-unrecognized-key"}}"#,
+            r#"{"error":{"message":42}}"#,
+            r#"{"message":" \t\n"}"#,
+            "",
+        ] {
+            let upstream = MockServer::start_async().await;
+            let state = state("anthropic/claude-sonnet-5-5", &upstream.url("/v1"));
+            let mock = upstream
+                .mock_async(|when, then| {
+                    when.method(httpmock::Method::POST)
+                        .path("/v1/messages/count_tokens");
+                    then.status(403).body(body);
+                })
+                .await;
+            let error = count_at_provider(
+                &state.load_full(),
+                &AuthUser::open(),
+                &json!({"model": "counted", "messages": [{"role": "user", "content": "hello"}]}),
+                "counted",
+            )
+            .await
+            .expect_err("unusable provider detail must use a safe generic error");
+
+            assert_eq!(error.status, axum::http::StatusCode::FORBIDDEN);
+            assert_eq!(error.message, "provider token counting failed");
             mock.assert_hits_async(1).await;
         }
     }

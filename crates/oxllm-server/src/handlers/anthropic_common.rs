@@ -52,6 +52,55 @@ pub(crate) fn status_to_anthropic_error_type(status: StatusCode) -> &'static str
     }
 }
 
+/// Sanitise an upstream error excerpt before including it in a converted error
+/// response. Preserve actionable provider detail while redacting credential
+/// hints (`sk-…` keys, `Bearer` tokens) and URLs, and cap the input length.
+pub(crate) fn sanitise_forwarded_error_message(msg: &str) -> String {
+    let capped = crate::security::truncate_error_message(msg, 500);
+    let lower: Vec<char> = capped.chars().map(|c| c.to_ascii_lowercase()).collect();
+    let original: Vec<char> = capped.chars().collect();
+    let n = lower.len();
+    let mut out = String::with_capacity(capped.len());
+    let mut i = 0;
+    while i < n {
+        if matches_at(&lower, i, "sk-") {
+            out.push_str("[redacted]");
+            i = skip_token(&lower, i + 3);
+            continue;
+        }
+        if matches_at(&lower, i, "bearer ") || matches_at(&lower, i, "bearer\t") {
+            out.push_str("bearer [redacted]");
+            i += 7;
+            while i < n && lower[i].is_whitespace() {
+                i += 1;
+            }
+            i = skip_token(&lower, i);
+            continue;
+        }
+        if matches_at(&lower, i, "http://") || matches_at(&lower, i, "https://") {
+            out.push_str("[redacted-url]");
+            i = skip_token(&lower, i);
+            continue;
+        }
+        out.push(original[i]);
+        i += 1;
+    }
+    out
+}
+
+fn matches_at(chars: &[char], i: usize, prefix: &str) -> bool {
+    let prefix: Vec<char> = prefix.chars().collect();
+    i + prefix.len() <= chars.len() && chars[i..i + prefix.len()] == prefix[..]
+}
+
+fn skip_token(chars: &[char], i: usize) -> usize {
+    let mut j = i;
+    while j < chars.len() && !chars[j].is_whitespace() {
+        j += 1;
+    }
+    j
+}
+
 /// Build an Anthropic-shaped error response (`{"type":"error","error":{…}}`)
 /// from a local [`ApiError`]. Anthropic SDK clients on every Anthropic-native
 /// route must see this envelope, not the OpenAI one, so local validation
@@ -101,6 +150,68 @@ mod tests {
         let err = extract_request_model(&body).expect_err("no model");
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
         assert!(err.message.contains("model"));
+    }
+
+    #[test]
+    fn sanitise_redacts_case_insensitive_credentials_and_preserves_unicode() {
+        let message =
+            "Échec SK-SYNTHETIC-KEY bEaReR\tsynthetic-token HTTP://synthetic.invalid/path fin";
+        assert_eq!(
+            sanitise_forwarded_error_message(message),
+            "Échec [redacted] bearer [redacted] [redacted-url] fin"
+        );
+    }
+
+    #[test]
+    fn sanitise_redacts_bearer_tokens_after_repeated_whitespace() {
+        for whitespace in ["  ", " \t", "\t ", "\t\t", " \t \t", " \u{a0}\u{2003}\t"] {
+            let message = format!("Échec bEaReR{whitespace}synthetic-token après");
+            assert_eq!(
+                sanitise_forwarded_error_message(&message),
+                "Échec bearer [redacted] après",
+                "separator: {whitespace:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitise_redacts_bearer_tokens_after_repeated_whitespace_at_truncation_boundary() {
+        let prefix = format!("{} ", "é".repeat(480));
+        for whitespace in ["  ", " \t", "\t \t", " \u{2003}\t"] {
+            let message = format!(
+                "{prefix}Bearer{whitespace}{}",
+                "synthetic-token".repeat(100)
+            );
+            assert_eq!(
+                sanitise_forwarded_error_message(&message),
+                format!("{prefix}bearer [redacted]"),
+                "separator: {whitespace:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitise_truncates_on_unicode_character_boundaries() {
+        assert_eq!(
+            sanitise_forwarded_error_message(&"é".repeat(2000)),
+            format!("{}…", "é".repeat(500))
+        );
+    }
+
+    #[test]
+    fn sanitise_redacts_tokens_crossing_the_truncation_boundary() {
+        let prefix = format!("{} ", "é".repeat(480));
+        for (token_prefix, redacted) in [
+            ("sk-", "[redacted]"),
+            ("Bearer ", "bearer [redacted]"),
+            ("https://", "[redacted-url]"),
+        ] {
+            let message = format!("{prefix}{token_prefix}{}", "synthetic".repeat(100));
+            assert_eq!(
+                sanitise_forwarded_error_message(&message),
+                format!("{prefix}{redacted}")
+            );
+        }
     }
 
     #[test]

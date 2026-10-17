@@ -386,6 +386,14 @@ impl IntoResponse for ApiError {
                                 Ok(secs) if secs > MAX_FORWARDED_RETRY_AFTER_SECS => {
                                     MAX_FORWARDED_RETRY_AFTER_SECS.to_string()
                                 }
+                                Err(_)
+                                    if !trimmed.is_empty()
+                                        && trimmed.bytes().all(|byte| byte.is_ascii_digit()) =>
+                                {
+                                    // Decimal delays that overflow u64 are
+                                    // still numeric, not HTTP-date values.
+                                    MAX_FORWARDED_RETRY_AFTER_SECS.to_string()
+                                }
                                 _ => trimmed.to_string(),
                             };
                             if let Ok(value) = HeaderValue::from_str(&forwarded) {
@@ -1014,6 +1022,52 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("3600")
         );
+    }
+
+    #[test]
+    fn forwarded_overflowing_decimal_retry_after_is_clamped() {
+        for retry_after in [
+            "18446744073709551616".to_string(),
+            u64::MAX.to_string(),
+            "9".repeat(256),
+            "000018446744073709551616".to_string(),
+            format!("  {} \t", "9".repeat(64)),
+        ] {
+            let mut upstream = axum::http::HeaderMap::new();
+            upstream.insert("retry-after", retry_after.parse().unwrap());
+            let response = ApiError::upstream(429, "throttled")
+                .with_headers(Some(upstream))
+                .into_response();
+
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(
+                response.headers().get("retry-after").unwrap(),
+                "3600",
+                "numeric delay: {retry_after:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn forwarded_decimal_retry_after_boundaries_preserve_small_values() {
+        for (retry_after, expected) in [
+            ("0", "0"),
+            ("3600", "3600"),
+            ("3601", "3600"),
+            (
+                "00000000000000000000000000000000000000007",
+                "00000000000000000000000000000000000000007",
+            ),
+            (" 7 \t", "7"),
+        ] {
+            let mut upstream = axum::http::HeaderMap::new();
+            upstream.insert("retry-after", retry_after.parse().unwrap());
+            let response = ApiError::upstream(429, "throttled")
+                .with_headers(Some(upstream))
+                .into_response();
+
+            assert_eq!(response.headers().get("retry-after").unwrap(), expected);
+        }
     }
 
     #[tokio::test]
