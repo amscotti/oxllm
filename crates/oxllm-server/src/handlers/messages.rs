@@ -13,7 +13,6 @@ use axum::Extension;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
@@ -393,6 +392,7 @@ fn build_anthropic_sse_event(value: &Value) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
 
     /// Idle upstream (extended thinking) must emit Anthropic `event: ping`
     /// keepalives so proxies and SDKs do not drop the connection.

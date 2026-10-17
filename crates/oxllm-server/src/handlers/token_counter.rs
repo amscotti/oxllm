@@ -162,7 +162,6 @@ pub async fn token_counter(
         }
     }
     let model_used: String = deployment
-        .clone()
         .map(|d| {
             d.oxllm_params
                 .model
