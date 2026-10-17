@@ -32,7 +32,7 @@ use crate::handlers::anthropic_common::{
 use crate::handlers::chat::chat_completions_inner;
 use crate::handlers::convert::anthropic::{
     AnthropicStreamConverter, anthropic_to_openai_request, openai_to_anthropic_response,
-    process_openai_sse_event,
+    process_openai_sse_event, validate_anthropic_to_openai_request,
 };
 use crate::orchestration::stream::send_converted_event;
 use crate::pipeline::preserved_response_headers;
@@ -89,6 +89,7 @@ async fn messages_inner(
         .ok_or_else(|| ApiError::bad_request("missing required field: 'model'"))?;
     crate::pipeline::check_request_model_acl(&state, &auth, model, &request_body, &headers).await?;
 
+    validate_anthropic_to_openai_request(&request_body)?;
     let chat_body = anthropic_to_openai_request(&request_body);
     let chat_bytes = serde_json::to_vec(&chat_body)
         .map_err(|e| ApiError::internal(format!("failed to serialize request: {e}")))?;

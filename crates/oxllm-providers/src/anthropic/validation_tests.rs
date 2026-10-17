@@ -419,6 +419,468 @@ fn validation_sse_lone_cr_and_multiline_data_keep_anthropic_dispatch() {
     assert_eq!(next["choices"][0]["delta"]["content"], "hello");
 }
 
+mod empty_user_runs {
+    use super::*;
+
+    fn messages(input: Vec<Value>) -> Value {
+        AnthropicProvider
+            .transform_request(&json!({"messages": input}), &deployment())
+            .unwrap()["messages"]
+            .clone()
+    }
+
+    fn empty_users() -> [Value; 3] {
+        [
+            json!({"role": "user"}),
+            json!({"role": "user", "content": null}),
+            json!({"role": "user", "content": []}),
+        ]
+    }
+
+    fn control(ttl: &str) -> Value {
+        json!({"type": "ephemeral", "ttl": ttl})
+    }
+
+    fn placeholder(control: Option<Value>) -> Value {
+        let mut block = json!({"type": "text", "text": EMPTY_TEXT_PLACEHOLDER});
+        if let Some(control) = control {
+            block["cache_control"] = control;
+        }
+        json!({"role": "user", "content": [block]})
+    }
+
+    fn call() -> Value {
+        json!({"role": "assistant", "tool_calls": [{
+            "id": "call_1", "type": "function",
+            "function": {"name": "lookup", "arguments": "{}"},
+        }]})
+    }
+
+    fn native_call() -> Value {
+        json!({"role": "assistant", "content": [{
+            "type": "tool_use", "id": "call_1", "name": "lookup", "input": {},
+        }]})
+    }
+
+    fn result() -> Value {
+        json!({"role": "tool", "tool_call_id": "call_1", "content": "found"})
+    }
+
+    fn native_result() -> Value {
+        json!({"role": "user", "content": [{
+            "type": "tool_result", "tool_use_id": "call_1", "content": "found",
+        }]})
+    }
+
+    fn output_config() -> Value {
+        json!({"format": {"type": "json_schema", "schema": {
+            "type": "object", "properties": {"value": {"type": "string", "minLength": 3}},
+            "required": ["value"], "additionalProperties": false,
+        }}, "effort": "low", "native_option": {"keep": true}})
+    }
+
+    #[test]
+    fn marked_missing_null_and_empty_arrays_survive_before_and_after_user_text() {
+        for mut empty in empty_users() {
+            empty["cache_control"] = control("1h");
+            let text = json!({"role": "user", "content": "real content"});
+            for before in [true, false] {
+                let (input, expected) = if before {
+                    (
+                        vec![empty.clone(), text.clone()],
+                        json!([placeholder(Some(control("1h"))), text]),
+                    )
+                } else {
+                    (
+                        vec![text.clone(), empty.clone()],
+                        json!([text, placeholder(Some(control("1h")))]),
+                    )
+                };
+                assert_eq!(messages(input), expected, "before={before}, empty={empty}");
+            }
+        }
+    }
+
+    #[test]
+    fn all_empty_runs_keep_every_mark_without_an_extra_unmarked_placeholder() {
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, mut empty) in empty_users().into_iter().enumerate() {
+            let cc = json!({"type": "ephemeral", "ttl": "1h", "native_option": index});
+            empty["cache_control"] = cc.clone();
+            input.push(json!({"role": "user", "content": null}));
+            input.push(empty);
+            expected.push(placeholder(Some(cc)));
+        }
+        // A trailing unmarked turn must not replace all preceding breakpoints.
+        input.push(json!({"role": "user", "content": []}));
+        assert_eq!(messages(input), json!(expected));
+    }
+
+    #[test]
+    fn unmarked_and_null_marked_empty_siblings_add_no_text() {
+        let text = json!({"role": "user", "content": "real content"});
+        let mut input = empty_users().to_vec();
+        input.push(json!({"role": "user", "content": [], "cache_control": null}));
+        assert_eq!(messages(input.clone()), json!([placeholder(None)]));
+        input.insert(2, text.clone());
+        assert_eq!(messages(input), json!([text]));
+    }
+
+    #[test]
+    fn later_correlated_result_suppresses_marks_but_an_earlier_result_does_not() {
+        for mut empty in empty_users() {
+            empty["cache_control"] = control("1h");
+            assert_eq!(
+                messages(vec![call(), empty.clone(), result()]),
+                json!([native_call(), native_result()]),
+            );
+            assert_eq!(
+                messages(vec![call(), result(), empty.clone()]),
+                json!([
+                    native_call(),
+                    native_result(),
+                    placeholder(Some(control("1h")))
+                ]),
+            );
+            // A native tool_result is the same correlated result, not text.
+            assert_eq!(
+                messages(vec![native_call(), empty.clone(), native_result()]),
+                json!([native_call(), native_result()]),
+            );
+            let mut orphan = result();
+            orphan["tool_call_id"] = json!("unknown_call");
+            let mut native_orphan = native_result();
+            native_orphan["content"][0]["tool_use_id"] = json!("unknown_call");
+            assert_eq!(
+                messages(vec![call(), empty, orphan]),
+                json!([
+                    native_call(),
+                    native_orphan,
+                    placeholder(Some(control("1h")))
+                ]),
+                "an unrelated/orphaned result must not erase a caller's breakpoint",
+            );
+        }
+    }
+
+    #[test]
+    fn multiple_results_are_stable_and_only_later_unconsumed_ids_suppress_marks() {
+        let mut assistant = native_call();
+        assistant["content"].as_array_mut().unwrap().push(json!({
+            "type": "tool_use", "id": "call_2", "name": "lookup", "input": {},
+        }));
+        let mut result2 = result();
+        result2["tool_call_id"] = json!("call_2");
+        let mut native_result2 = native_result();
+        native_result2["content"][0]["tool_use_id"] = json!("call_2");
+        let marked = json!({"role": "user", "content": [], "cache_control": control("1h")});
+        let first = json!({"role": "user", "content": "first"});
+        let last = json!({"role": "user", "content": "last"});
+        assert_eq!(
+            messages(vec![
+                assistant.clone(),
+                first.clone(),
+                result2,
+                marked.clone(),
+                last.clone(),
+                result(),
+                marked.clone(),
+                result()
+            ]),
+            json!([
+                assistant,
+                native_result2,
+                native_result(),
+                native_result(),
+                first,
+                last,
+                placeholder(Some(control("1h")))
+            ]),
+            "the duplicate result after the last mark is not a new correlation",
+        );
+    }
+
+    #[test]
+    fn a_later_assistant_even_if_empty_ends_the_suppression_span() {
+        for boundary in [json!({"role": "assistant", "content": null}), call()] {
+            let marked = json!({"role": "user", "cache_control": control("1h")});
+            let mut expected = vec![native_call(), placeholder(Some(control("1h")))];
+            if boundary.get("tool_calls").is_some() {
+                expected.push(native_call());
+                expected.push(native_result());
+            } else {
+                // The dropped assistant still ends correlation with call_1.
+                expected.push(native_result());
+                expected.push(placeholder(Some(control("1h"))));
+            }
+            assert_eq!(
+                messages(vec![call(), marked.clone(), boundary, marked, result()]),
+                json!(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn kept_mid_conversation_system_messages_end_user_runs() {
+        let marked = json!({"role": "user", "content": [], "cache_control": control("1h")});
+        let system = json!({"role": "system", "content": "new instruction"});
+        let mut dep = deployment();
+        dep.oxllm_params.model = "anthropic/claude-sonnet-5-5".into();
+        let body = AnthropicProvider
+            .transform_request(
+                &json!({"messages": [call(), marked, system, result()]}),
+                &dep,
+            )
+            .unwrap();
+        assert_eq!(
+            body["messages"],
+            json!([
+                native_call(),
+                placeholder(Some(control("1h"))),
+                system,
+                native_result()
+            ]),
+        );
+    }
+
+    #[test]
+    fn tool_results_precede_ordinary_text_without_reordering_text_or_signed_thinking() {
+        let signed =
+            json!({"type": "thinking", "thinking": " \t\r\n", "signature": "opaque\u{0000}sig"});
+        let redacted = json!({"type": "redacted_thinking", "data": "AA=="});
+        let assistant = json!({"role": "assistant", "content": [signed, redacted,
+            {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}}
+        ]});
+        let text1 = json!({"role": "user", "content": "before result"});
+        let text2 = json!({"role": "user", "content": "after result"});
+        let marked = json!({"role": "user", "content": [], "cache_control": control("1h")});
+        let body = messages(vec![
+            assistant.clone(),
+            text1.clone(),
+            result(),
+            marked,
+            text2.clone(),
+        ]);
+        assert_eq!(
+            body,
+            json!([
+                assistant,
+                native_result(),
+                text1,
+                placeholder(Some(control("1h"))),
+                text2
+            ]),
+        );
+        assert_eq!(
+            serde_json::to_vec(&body[0]["content"]).unwrap(),
+            serde_json::to_vec(&assistant["content"]).unwrap(),
+            "signed thinking and redacted blocks remain byte-for-byte identical",
+        );
+    }
+
+    #[test]
+    fn native_mixed_user_blocks_put_all_results_before_ordinary_blocks() {
+        let first = json!({"type": "text", "text": "before", "native_option": 1});
+        let last = json!({"type": "text", "text": "after", "native_option": 2});
+        let mixed =
+            json!({"role": "user", "content": [first, native_result()["content"][0], last]});
+        assert_eq!(
+            messages(vec![call(), mixed]),
+            json!([native_call(), native_result(), {"role": "user", "content": [first, last]}]),
+        );
+    }
+
+    #[test]
+    fn empty_turn_output_configuration_survives_every_placeholder_path() {
+        for mut empty in empty_users() {
+            for marked in [false, true] {
+                empty["output_config"] = output_config();
+                if marked {
+                    empty["cache_control"] = control("1h");
+                }
+                let mut expected = placeholder(marked.then(|| control("1h")));
+                expected["output_config"] = output_config();
+                assert_eq!(messages(vec![empty.clone()]), json!([expected]));
+                let text = json!({"role": "user", "content": "real content"});
+                assert_eq!(
+                    messages(vec![empty.clone(), text.clone()]),
+                    json!([expected, text]),
+                );
+                assert_eq!(
+                    messages(vec![call(), result(), empty.clone()]),
+                    json!([native_call(), native_result(), expected]),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn output_configuration_that_cannot_survive_suppression_is_a_clear_request_error() {
+        for mut empty in empty_users() {
+            empty["output_config"] = output_config();
+            for marked in [false, true] {
+                if marked {
+                    empty["cache_control"] = control("1h");
+                }
+                let error = AnthropicProvider
+                    .transform_request(
+                        &json!({"messages": [call(), empty, result()]}),
+                        &deployment(),
+                    )
+                    .expect_err("must not silently erase message-level native output constraints");
+                assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+                assert!(error.to_string().contains("output_config"), "{error}");
+                assert!(error.to_string().contains("tool_result"), "{error}");
+            }
+        }
+        for role in ["assistant", "system", "developer"] {
+            let error = AnthropicProvider
+                .transform_request(
+                    &json!({"messages": [{"role": role, "content": null, "output_config": output_config()}]}),
+                    &deployment(),
+                )
+                .expect_err("dropping a non-user empty turn must not erase its output_config");
+            assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+            assert!(
+                error.to_string().contains("output_config"),
+                "{role}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn splitting_mixed_results_and_text_must_not_duplicate_native_output_constraints() {
+        let mixed = json!({"role": "user", "output_config": output_config(), "content": [
+            {"type": "text", "text": "before"}, native_result()["content"][0],
+        ]});
+        let error = AnthropicProvider
+            .transform_request(&json!({"messages": [call(), mixed]}), &deployment())
+            .expect_err(
+                "splitting one configured source message cannot silently invent two constraints",
+            );
+        assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+        assert!(error.to_string().contains("output_config"), "{error}");
+    }
+
+    #[test]
+    fn review_output_config_events_cannot_cross_a_tool_result_partition() {
+        let mut low = output_config();
+        low["native_option"] = json!({"source": "text"});
+        let mut high = low.clone();
+        high["native_option"] = json!({"source": "result"});
+        for (text_config, result_config) in [
+            (
+                Some(json!({"effort": "low"})),
+                Some(json!({"effort": "high"})),
+            ),
+            (
+                Some(json!({"effort": "low"})),
+                Some(json!({"effort": "low"})),
+            ),
+            (Some(low), Some(high)),
+            (Some(json!({"native_option": {"source": "text"}})), None),
+            (None, Some(json!({"native_option": {"source": "result"}}))),
+        ] {
+            for native in [false, true] {
+                let mut text = json!({"role": "user", "content": "before result"});
+                let mut tool = if native { native_result() } else { result() };
+                if let Some(config) = &text_config {
+                    text["output_config"] = config.clone();
+                }
+                if let Some(config) = &result_config {
+                    tool["output_config"] = config.clone();
+                }
+                let request = json!({"messages": [call(), text, tool]});
+                let original = request.clone();
+                let error = AnthropicProvider
+                    .transform_request(&request, &deployment())
+                    .expect_err(
+                        "partitioning must not move even a format-less output_config event",
+                    );
+                assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+                assert!(error.to_string().contains("output_config"), "{error}");
+                assert!(error.to_string().contains("reorder"), "{error}");
+                assert_eq!(request, original);
+            }
+        }
+    }
+
+    #[test]
+    fn review_output_config_events_that_do_not_cross_the_partition_still_survive() {
+        let mut text = json!({"role": "user", "content": "after result"});
+        text["output_config"] = output_config();
+        let mut tool = result();
+        tool["output_config"] = json!({"effort": "high", "native_option": true});
+        let mut expected_tool = native_result();
+        expected_tool["output_config"] = tool["output_config"].clone();
+        assert_eq!(
+            messages(vec![call(), tool, text.clone()]),
+            json!([native_call(), expected_tool, text]),
+        );
+        let unconfigured = json!({"role": "user", "content": "before result"});
+        assert_eq!(
+            messages(vec![call(), unconfigured.clone(), result(), text.clone()]),
+            json!([native_call(), native_result(), unconfigured, text]),
+            "an untouched later configuration does not forbid unconfigured reordering",
+        );
+    }
+
+    #[test]
+    fn rewriting_blank_text_preserves_every_caller_block_key() {
+        for text in [Value::Null, json!(""), json!(" \t\r\n"), json!(7)] {
+            for block_mark in [false, true] {
+                let mut block = json!({"type": "text", "text": text,
+                    "citations": [{"type": "char_location", "start_char_index": 0}],
+                    "native_option": {"nested": [null, 1, "keep"]},
+                });
+                let mut message = json!({"role": "user"});
+                if block_mark {
+                    block["cache_control"] = control("1h");
+                } else {
+                    message["cache_control"] = control("1h");
+                }
+                message["content"] = json!([block]);
+                block["text"] = json!(EMPTY_TEXT_PLACEHOLDER);
+                block["cache_control"] = control("1h");
+                assert_eq!(
+                    messages(vec![message]),
+                    json!([{"role": "user", "content": [block]}])
+                );
+            }
+        }
+        // Even without a cache mark, block-owned keys must not be lost by
+        // collapsing a rewritten text block to a bare string.
+        let input = json!({"role": "user", "content": [{"type": "text", "text": "", "native_option": true}]});
+        assert_eq!(
+            messages(vec![input]),
+            json!([{"role": "user", "content": [{"type": "text", "text": EMPTY_TEXT_PLACEHOLDER, "native_option": true}]}]),
+        );
+    }
+
+    #[test]
+    fn long_runs_keep_directional_suppression_and_all_later_breakpoints() {
+        // Exercise both worst-case suffix shapes: many marked empties before
+        // a result, and many marked empties with no later result. Normalizing
+        // this run must not scan the remaining suffix again for each message.
+        const LEN: usize = 16_384;
+        let marked = json!({"role": "user", "content": [], "cache_control": control("1h")});
+        let mut input = Vec::with_capacity(2 * LEN + 2);
+        input.push(call());
+        input.extend(std::iter::repeat_n(marked.clone(), LEN));
+        input.push(result());
+        input.extend(std::iter::repeat_n(marked, LEN));
+        let output = messages(input);
+        let output = output.as_array().unwrap();
+        assert_eq!(output.len(), LEN + 2);
+        assert_eq!(output[0], native_call());
+        assert_eq!(output[1], native_result());
+        for message in &output[2..] {
+            assert_eq!(*message, placeholder(Some(control("1h"))));
+        }
+    }
+}
+
 #[test]
 fn validation_schema_wrappers_are_rejected_but_model_support_is_upstream_owned() {
     for wrapper in [

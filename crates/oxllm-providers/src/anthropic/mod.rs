@@ -16,6 +16,9 @@ use oxllm_core::deployment::Deployment;
 use oxllm_core::provider::{ChatProvider, Provider, ProviderId, ResolvedCredentials};
 use serde_json::{Map, Value, json};
 
+mod user_run;
+use user_run::flush_user_run;
+
 /// Default `max_tokens` value Anthropic requires when the client did not set one.
 pub const DEFAULT_MAX_TOKENS: u64 = 8192;
 
@@ -1688,22 +1691,32 @@ fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>
     let mut out: Vec<Value> = Vec::new();
     let keep_midturn = supports_mid_conversation_system(model);
     let mut past_leading = false;
-    // Consecutive user/tool messages form one conversational turn. An empty
-    // user message beside siblings that render sends nothing extra; only a
-    // run that renders nothing is kept alive with one placeholder turn,
-    // carrying the LAST empty user message's cache_control (reference
-    // `_empty_user_turn_placeholder`). Runs end at assistant or kept
-    // mid-conversation system messages.
+    // Consecutive user/tool messages form one conversational turn. The span
+    // flush preserves empty cache breakpoints except before later correlated
+    // results, and keeps a wholly empty unmarked run alive with one placeholder.
+    // Source boundaries count even when normalization drops the boundary turn.
     let mut run: Vec<(&Value, Option<Value>)> = Vec::new();
+    let mut pending_tool_ids = HashSet::new();
     for msg in arr {
         let in_user_run = matches!(
             msg.get("role").and_then(Value::as_str),
             Some("user" | "tool")
         );
-        if !in_user_run && !run.is_empty() {
-            flush_user_run(&mut run, &mut out);
+        if !in_user_run {
+            flush_user_run(&mut run, &mut out, &mut pending_tool_ids)?;
+            // Retire the table as well as its ids: re-clearing a once-large
+            // table at every subsequent small assistant turn is not linear.
+            pending_tool_ids = HashSet::new();
         }
         if is_system_role(msg) && !(keep_midturn && past_leading) {
+            if msg
+                .get("output_config")
+                .is_some_and(|value| !value.is_null())
+            {
+                return Err(oxllm_core::Error::BadRequest(
+                    "cannot preserve message-level output_config on a system/developer turn lifted out of messages".into(),
+                ));
+            }
             if let Some(content) = coerce_message_content(msg) {
                 system_blocks.push(content);
             }
@@ -1714,11 +1727,25 @@ fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>
             run.push((msg, normalize_message(msg)?));
         } else {
             if let Some(message) = normalize_message(msg)? {
+                if message.get("role").and_then(Value::as_str) == Some("assistant")
+                    && let Some(blocks) = message.get("content").and_then(Value::as_array)
+                {
+                    pending_tool_ids.extend(
+                        blocks
+                            .iter()
+                            .filter(|block| {
+                                block.get("type").and_then(Value::as_str) == Some("tool_use")
+                            })
+                            .filter_map(|block| block.get("id").and_then(Value::as_str))
+                            .filter(|id| !id.is_empty())
+                            .map(str::to_string),
+                    );
+                }
                 out.push(message);
             }
         }
     }
-    flush_user_run(&mut run, &mut out);
+    flush_user_run(&mut run, &mut out, &mut pending_tool_ids)?;
     if system_blocks.is_empty() {
         return Ok((None, out));
     }
@@ -1747,34 +1774,6 @@ fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>
             .collect();
         Ok((Some(Value::Array(blocks)), out))
     }
-}
-
-/// Flush one conversational run of user/tool messages. Messages that render
-/// nothing are dropped when a sibling renders; a run that renders nothing at
-/// all keeps exactly one placeholder user turn.
-fn flush_user_run(run: &mut Vec<(&Value, Option<Value>)>, out: &mut Vec<Value>) {
-    if run.is_empty() {
-        return;
-    }
-    if run.iter().any(|(_, normalized)| normalized.is_some()) {
-        for (_, normalized) in run.drain(..) {
-            if let Some(message) = normalized {
-                out.push(message);
-            }
-        }
-        return;
-    }
-    let cache_control = run
-        .iter()
-        .rev()
-        .find(|(message, _)| message.get("role").and_then(Value::as_str) == Some("user"))
-        .and_then(|(message, _)| message.get("cache_control"))
-        .cloned();
-    for _ in run.drain(..) {}
-    out.push(json!({
-        "role": "user",
-        "content": [placeholder_text_block(cache_control)],
-    }));
 }
 
 fn coerce_message_content(msg: &Value) -> Option<Value> {
@@ -1945,9 +1944,9 @@ fn normalize_message(msg: &Value) -> Result<Option<Value>> {
     // Anthropic rejects messages whose content renders nothing. Empty or
     // whitespace-only text is rewritten to a placeholder (reference
     // `_sanitize_empty_text_content`); other keys on a rewritten block are
-    // preserved. A turn that still renders nothing is dropped by the caller
-    // — except an all-empty user/tool run, which keeps one placeholder turn
-    // (reference `_empty_user_turn_placeholder`).
+    // preserved. The caller handles non-rendering users with their whole
+    // user/tool span, preserving empty cache breakpoints/output configuration
+    // and an all-empty run's fallback placeholder.
     if let Some(content) = msg.get("content") {
         match content {
             Value::String(s) if !s.trim().is_empty() => {
@@ -1998,9 +1997,14 @@ fn normalize_message(msg: &Value) -> Result<Option<Value>> {
         }
     }
 
-    // A turn that renders nothing (missing/null/[] content, no tool calls,
-    // no thinking) is dropped rather than sent as `content: ""`.
+    // Handle non-rendering users at the span level. Non-user turns normally
+    // disappear, but never silently discard their native output constraints.
     if content_blocks.is_empty() {
+        if role != "user" && out.contains_key("output_config") {
+            return Err(oxllm_core::Error::BadRequest(
+                "cannot preserve message-level output_config on an empty non-user turn".into(),
+            ));
+        }
         return Ok(None);
     }
 
@@ -2015,9 +2019,12 @@ fn normalize_message(msg: &Value) -> Result<Option<Value>> {
     if content_blocks.len() == 1
         && content_blocks[0].get("type").and_then(|t| t.as_str()) == Some("text")
         && content_blocks[0].get("cache_control").is_none()
+        && content_blocks[0]
+            .as_object()
+            .is_some_and(|block| block.len() == 2)
         && msg.get("tool_calls").is_none()
     {
-        // Keep plain-string content for simple text-only messages.
+        // Only a plain type/text block can collapse without losing caller keys.
         let text = content_blocks[0]
             .get("text")
             .cloned()

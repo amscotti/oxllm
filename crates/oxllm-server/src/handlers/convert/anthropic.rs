@@ -4,6 +4,8 @@
 //! module knows nothing about axum, tokio, or SSE transport — it maps JSON
 //! shapes only, so it can be unit-tested in isolation and reused.
 
+use std::borrow::Cow;
+
 use serde_json::{Map, Value, json};
 
 use crate::sse::extract_sse_data;
@@ -22,6 +24,35 @@ const MAX_STREAM_TOOL_CALLS: usize = 1024;
 // Request conversion: Anthropic → OpenAI
 // ---------------------------------------------------------------------------
 
+/// Reject source configuration events that the Messages → chat bridge cannot
+/// represent without splitting/duplicating them. The HTTP boundary calls this
+/// before the infallible shape conversion; keep provider-specific validation in
+/// the provider rather than guessing at format, effort, or future native keys.
+pub(crate) fn validate_anthropic_to_openai_request(req: &Value) -> oxllm_core::Result<()> {
+    if let Some(messages) = req.get("messages").and_then(Value::as_array) {
+        let mut emitted = Vec::new();
+        for (index, message) in messages.iter().enumerate() {
+            if message.get("output_config").is_none_or(Value::is_null) {
+                continue;
+            }
+            // Use the actual converter so text/media/tool shape rules cannot
+            // drift from a second hand-maintained split predicate. This is one
+            // additional linear pass over configured source messages only.
+            convert_single_anthropic_message(message, &mut emitted);
+            if emitted.len() != 1 {
+                return Err(oxllm_core::Error::BadRequest(format!(
+                    "messages[{index}].output_config cannot be preserved when the Messages bridge must split one source message (tool_result and other content); send separate messages"
+                )));
+            }
+            emitted.clear();
+        }
+    }
+    Ok(())
+}
+
+/// The caller must first use [`validate_anthropic_to_openai_request`] so a
+/// configured source message cannot be expanded into multiple configuration
+/// events. Only the Messages HTTP handler calls this outside tests.
 pub(crate) fn anthropic_to_openai_request(req: &Value) -> Value {
     let mut out = Map::new();
 
@@ -191,13 +222,76 @@ fn extract_system_text(system: &Value) -> Value {
 fn convert_anthropic_messages_to_openai(messages: &[Value], out: &mut Vec<Value>) {
     for msg in messages {
         let first = out.len();
-        convert_single_anthropic_message(msg, out);
+        let marked = message_with_endpoint_cache_control(msg);
+        convert_single_anthropic_message(&marked, out);
+        // Strings and non-rendering turns have no content block to carry the
+        // root mark yet. For mapped block lists the mark already rides on the
+        // original endpoint, not each emitted part or the last reordered part.
+        if endpoint_cache_block(msg).is_none()
+            && let Some(control) = msg.get("cache_control").filter(|value| !value.is_null())
+            && let Some(message) = out[first..].last_mut()
+        {
+            let block_control = msg
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|blocks| blocks.last())
+                .and_then(|block| block.get("cache_control"));
+            message["cache_control"] = block_control.unwrap_or(control).clone();
+        }
         if let Some(config) = msg.get("output_config").filter(|value| !value.is_null()) {
+            debug_assert_eq!(
+                out.len() - first,
+                1,
+                "validate configured spans before conversion"
+            );
             for message in &mut out[first..] {
                 message["output_config"] = config.clone();
             }
         }
     }
+}
+
+/// These endpoint blocks retain annotations through this converter and the
+/// provider. Other shapes (strings, empty lists, tool calls/media translated
+/// out of content) need the message-level carrier above.
+fn endpoint_cache_block(message: &Value) -> Option<&Value> {
+    message
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|blocks| blocks.last())
+        .filter(|block| {
+            matches!(
+                block.get("type").and_then(Value::as_str),
+                Some("text" | "document" | "tool_result")
+            )
+        })
+}
+
+/// Apply a root mark exactly once, before a mixed message is reordered/split.
+/// A block-owned mark (including explicit null) takes precedence. Borrow when
+/// possible and only mutate an owned clone, never the caller's JSON.
+fn message_with_endpoint_cache_control(message: &Value) -> Cow<'_, Value> {
+    let Some(control) = message
+        .get("cache_control")
+        .filter(|value| !value.is_null())
+    else {
+        return Cow::Borrowed(message);
+    };
+    let Some(endpoint) = endpoint_cache_block(message) else {
+        return Cow::Borrowed(message);
+    };
+    if endpoint.get("cache_control").is_some() {
+        return Cow::Borrowed(message);
+    }
+    let mut marked = message.clone();
+    if let Some(block) = marked
+        .get_mut("content")
+        .and_then(Value::as_array_mut)
+        .and_then(|blocks| blocks.last_mut())
+    {
+        block["cache_control"] = control.clone();
+    }
+    Cow::Owned(marked)
 }
 
 /// Map an Anthropic image block's `source` to an OpenAI
@@ -254,14 +348,8 @@ fn convert_single_anthropic_message(msg: &Value, out: &mut Vec<Value>) {
                 let btype = block.get("type").and_then(|v| v.as_str());
                 match btype {
                     Some("text") => {
+                        content_blocks_raw.push(block.clone());
                         if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
-                            let mut cb = Map::new();
-                            cb.insert("type".to_string(), json!("text"));
-                            cb.insert("text".to_string(), json!(t));
-                            if let Some(cc) = block.get("cache_control") {
-                                cb.insert("cache_control".to_string(), cc.clone());
-                            }
-                            content_blocks_raw.push(Value::Object(cb));
                             text_parts.push(t.to_string());
                         }
                     }
@@ -283,11 +371,15 @@ fn convert_single_anthropic_message(msg: &Value, out: &mut Vec<Value>) {
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
                         let content = convert_tool_result_content(block.get("content"));
-                        tool_results.push(json!({
+                        let mut result = json!({
                         "role": "tool",
                         "tool_call_id": tool_use_id,
                         "content": content
-                        }));
+                        });
+                        if let Some(control) = block.get("cache_control") {
+                            result["cache_control"] = control.clone();
+                        }
+                        tool_results.push(result);
                     }
                     Some("document") => {
                         // A PDF is not an image. Keep the native block intact
@@ -333,7 +425,8 @@ fn convert_single_anthropic_message(msg: &Value, out: &mut Vec<Value>) {
 
             if content_blocks_raw.iter().any(|block| {
                 block.get("type").and_then(Value::as_str) != Some("text")
-                    || block.get("cache_control").is_some()
+                    || block.get("text").and_then(Value::as_str).is_none()
+                    || block.as_object().is_none_or(|object| object.len() != 2)
             }) {
                 text_parts.clear();
             } else {
@@ -2125,6 +2218,208 @@ mod tests {
             content, "Hello world",
             "plain text blocks without cache_control should join"
         );
+    }
+
+    fn assert_review_bridge_messages(messages: Value, expected: Value) {
+        let request = json!({"model": "claude", "messages": messages,
+            "metadata": {"unrelated": [null, 1, {"keep": "all caller keys"}]},
+            "output_config": {"effort": "low"},
+        });
+        let original = request.clone();
+        let original_bytes = serde_json::to_vec(&request).unwrap();
+        validate_anthropic_to_openai_request(&request).unwrap();
+        let converted = anthropic_to_openai_request(&request);
+        assert_eq!(
+            request, original,
+            "the entire caller request must remain immutable"
+        );
+        assert_eq!(serde_json::to_vec(&request).unwrap(), original_bytes);
+        assert_eq!(converted["messages"], expected);
+    }
+
+    #[test]
+    fn review_root_cache_marks_survive_empty_messages_and_multiple_source_events() {
+        let cc = json!({"type": "ephemeral", "ttl": "1h", "native_option": {"keep": true}});
+        assert_review_bridge_messages(
+            json!([
+                {"role": "user", "cache_control": cc},
+                {"role": "user", "content": null, "cache_control": cc},
+                {"role": "user", "content": [], "cache_control": cc},
+                {"role": "user", "content": "text", "cache_control": cc},
+            ]),
+            json!([
+                {"role": "user", "cache_control": cc},
+                {"role": "user", "content": null, "cache_control": cc},
+                {"role": "user", "content": null, "cache_control": cc},
+                {"role": "user", "content": "text", "cache_control": cc},
+            ]),
+        );
+    }
+
+    #[test]
+    fn review_root_cache_marks_belong_to_the_original_end_of_a_split_message() {
+        let cc = json!({"type": "ephemeral", "ttl": "1h"});
+        let block_cc = json!({"type": "ephemeral", "ttl": "5m"});
+        let text = json!({"type": "text", "text": "ordinary"});
+        let result = json!({"type": "tool_result", "tool_use_id": "call_1", "content": "found"});
+        for result_last in [false, true] {
+            let blocks = if result_last {
+                json!([text, result])
+            } else {
+                json!([result, text])
+            };
+            let mut tool = json!({"role": "tool", "tool_call_id": "call_1", "content": "found"});
+            let ordinary = if result_last {
+                tool["cache_control"] = cc.clone();
+                json!({"role": "user", "content": "ordinary"})
+            } else {
+                json!({"role": "user", "content": [{"type": "text", "text": "ordinary", "cache_control": cc}]})
+            };
+            assert_review_bridge_messages(
+                json!([{"role": "user", "content": blocks, "cache_control": cc}]),
+                json!([tool, ordinary]),
+            );
+        }
+        assert_review_bridge_messages(
+            json!([{"role": "user", "cache_control": cc, "content": [
+                {"type": "tool_result", "tool_use_id": "call_1", "content": "one", "cache_control": block_cc},
+                {"type": "tool_result", "tool_use_id": "call_2", "content": "two"},
+            ]}]),
+            json!([
+                {"role": "tool", "tool_call_id": "call_1", "content": "one", "cache_control": block_cc},
+                {"role": "tool", "tool_call_id": "call_2", "content": "two", "cache_control": cc},
+            ]),
+        );
+    }
+
+    #[test]
+    fn review_root_cache_marks_keep_block_precedence_without_losing_caller_text_keys() {
+        let cc = json!({"type": "ephemeral", "ttl": "1h"});
+        for block_cc in [json!({"type": "ephemeral", "ttl": "5m"}), Value::Null] {
+            let block = json!({"type": "text", "text": " \t\r\n", "cache_control": block_cc,
+                "citations": [], "native_option": {"nested": [null, 1, true]},
+            });
+            assert_review_bridge_messages(
+                json!([{"role": "user", "content": [block], "cache_control": cc}]),
+                json!([{"role": "user", "content": [block]}]),
+            );
+            assert_review_bridge_messages(
+                json!([{"role": "user", "cache_control": cc, "content": [
+                    {"type": "text", "text": "ordinary"},
+                    {"type": "tool_result", "tool_use_id": "call_1", "content": "found", "cache_control": block_cc},
+                ]}]),
+                json!([
+                    {"role": "tool", "tool_call_id": "call_1", "content": "found", "cache_control": block_cc},
+                    {"role": "user", "content": "ordinary"},
+                ]),
+            );
+        }
+    }
+
+    #[test]
+    fn review_split_output_config_preflight_rejects_all_non_null_native_options() {
+        let tool1 = json!({"type": "tool_result", "tool_use_id": "call_1", "content": "one"});
+        let tool2 = json!({"type": "tool_result", "tool_use_id": "call_2", "content": "two"});
+        let text = json!({"type": "text", "text": "ordinary"});
+        for config in [
+            json!({"format": {"type": "json_schema", "schema": {"type": "object"}}}),
+            json!({"effort": "low"}),
+            json!({"native_option": {"nested": [null, 1, true]}}),
+            json!({}),
+        ] {
+            for blocks in [
+                json!([tool1, text]),
+                json!([text, tool1]),
+                json!([tool1, tool2]),
+                json!([tool1, {"type": "tool_use", "id": "call_2", "name": "lookup", "input": {}}]),
+            ] {
+                let request = json!({"messages": [{"role": "user", "content": blocks, "output_config": config}],
+                    "metadata": {"untouched": [null, true]},
+                });
+                let original = request.clone();
+                let error = validate_anthropic_to_openai_request(&request)
+                    .expect_err("one source configuration cannot become two or more events");
+                assert!(matches!(error, oxllm_core::Error::BadRequest(_)));
+                assert!(
+                    error.to_string().contains("messages[0].output_config"),
+                    "{error}"
+                );
+                assert!(error.to_string().contains("split"), "{error}");
+                assert_eq!(request, original);
+                assert_eq!(
+                    serde_json::to_vec(&request).unwrap(),
+                    serde_json::to_vec(&original).unwrap()
+                );
+            }
+        }
+        let request = json!({"messages": [{"role": "user", "content": [tool1, text], "output_config": null}]});
+        validate_anthropic_to_openai_request(&request).unwrap();
+        let converted = anthropic_to_openai_request(&request);
+        assert_eq!(converted["messages"].as_array().unwrap().len(), 2);
+        assert!(
+            converted["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|message| message.get("output_config").is_none())
+        );
+    }
+
+    #[test]
+    fn review_split_output_config_preflight_keeps_representable_events_exactly_once() {
+        let config = json!({"format": {"type": "json_schema", "schema": {"type": "object"}},
+            "effort": "low", "native_option": {"nested": [null, 1, true]},
+        });
+        let signed =
+            json!({"type": "thinking", "thinking": " \t\r\n", "signature": "opaque\u{0000}sig"});
+        for message in [
+            json!({"role": "user", "content": null}),
+            json!({"role": "user", "content": []}),
+            json!({"role": "user", "content": "ordinary"}),
+            json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "one"}]}),
+            json!({"role": "assistant", "content": [signed, {"type": "text", "text": "answer"},
+                {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}},
+            ]}),
+        ] {
+            let mut message = message;
+            message["output_config"] = config.clone();
+            let request = json!({"messages": [message]});
+            let original = request.clone();
+            validate_anthropic_to_openai_request(&request).unwrap();
+            let converted = anthropic_to_openai_request(&request);
+            assert_eq!(converted["messages"].as_array().unwrap().len(), 1);
+            assert_eq!(converted["messages"][0]["output_config"], config);
+            assert_eq!(request, original);
+            if message["role"] == "assistant" {
+                assert_eq!(converted["messages"][0]["thinking_blocks"][0], signed);
+                assert_eq!(
+                    serde_json::to_vec(&converted["messages"][0]["thinking_blocks"][0]).unwrap(),
+                    serde_json::to_vec(&signed).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn review_cached_text_conversion_keeps_missing_and_non_string_text_for_normalization() {
+        for text in [
+            None,
+            Some(Value::Null),
+            Some(json!("")),
+            Some(json!(17)),
+            Some(json!(false)),
+        ] {
+            let mut block = json!({"type": "text", "cache_control": {"type": "ephemeral"},
+                "citations": [], "native_option": {"keep": true},
+            });
+            if let Some(text) = text {
+                block["text"] = text;
+            }
+            assert_review_bridge_messages(
+                json!([{"role": "user", "content": [block], "cache_control": {"type": "ephemeral", "ttl": "1h"}}]),
+                json!([{"role": "user", "content": [block]}]),
+            );
+        }
     }
 
     // ================================================================

@@ -626,8 +626,8 @@ fn empty_user_turns_keep_their_turn_with_a_placeholder() {
 }
 
 #[test]
-fn empty_user_beside_rendering_siblings_sends_nothing_extra() {
-    // Reference #41397: within one user/tool run, an empty user message
+fn unmarked_empty_user_beside_rendering_siblings_sends_nothing_extra() {
+    // Reference #41397: within one user/tool run, an unmarked empty user message
     // beside siblings that render contributes nothing — no spurious
     // placeholder turn is injected.
     let p = AnthropicProvider;
@@ -643,8 +643,8 @@ fn empty_user_beside_rendering_siblings_sends_nothing_extra() {
     assert_eq!(out["messages"].as_array().unwrap().len(), 1);
     assert_eq!(out["messages"][0]["content"], "hi");
 
-    // Beside a tool result, the empty user turn (and its cache_control
-    // breakpoint) is dropped rather than kept as an extra breakpoint.
+    // Before a later correlated tool result, the empty user turn (and its
+    // cache_control breakpoint) is dropped rather than kept as an extra mark.
     let req = json!({
         "model": "claude-sonnet-4-5",
         "messages": [
