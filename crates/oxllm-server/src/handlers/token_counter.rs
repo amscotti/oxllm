@@ -110,7 +110,10 @@ pub async fn token_counter(
     // contract; `estimate_request_tokens` counts `parts[*].text` best-effort,
     // and the reference additionally routes through Google's `/countTokens` API when
     // `call_endpoint=True` (not wired here — local counting only).
-    let has_prompt = request.get("prompt").and_then(|v| v.as_str()).is_some();
+    let has_prompt = request
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty());
     let has_messages = request.get("messages").and_then(|v| v.as_array()).is_some();
     let has_contents = request.get("contents").and_then(|v| v.as_array()).is_some();
     if !has_prompt && !has_messages && !has_contents {
@@ -123,11 +126,43 @@ pub async fn token_counter(
     // the reference): an alias mapping to `openai/gpt-4o` is counted with `gpt-4o`'
     // tokenizer. Falls back to the request model when no deployment exists.
     let state = shared.load_full();
-    let model_used: String = state
+    let deployment = state
         .router
         .deployments_for_model(&state.deployments, &model)
         .into_iter()
-        .next()
+        .next();
+    let mut request = request;
+    // A `prompt` sent next to a usable conversation is ambiguous — the local
+    // estimator would silently ignore it. Reject by default (reference
+    // 2dc6aafa6b) and drop the prompt under drop_params instead; the
+    // per-deployment override wins over the global flag, matching every
+    // other drop_params resolution.
+    if has_prompt
+        && (request["messages"]
+            .as_array()
+            .is_some_and(|m| !m.is_empty())
+            || request["contents"]
+                .as_array()
+                .is_some_and(|c| !c.is_empty()))
+    {
+        let drops_params = deployment
+            .as_ref()
+            .and_then(|d| d.oxllm_params.drop_params)
+            .or(state.config.oxllm_settings.drop_params)
+            == Some(true);
+        if drops_params {
+            request
+                .as_object_mut()
+                .map(|object| object.remove("prompt"));
+        } else {
+            return Err(ApiError::bad_request(
+                "prompt cannot be sent with messages or contents; \
+                 set drop_params to count them without the prompt",
+            ));
+        }
+    }
+    let model_used: String = deployment
+        .clone()
         .map(|d| {
             d.oxllm_params
                 .model
@@ -152,8 +187,13 @@ pub async fn token_counter(
                 }))
                 .into_response());
             }
-            Err(error) if disable_token_counter => return Err(error),
-            Err(_) => tracing::debug!("provider token count unavailable; using local estimation"),
+            Err(error) => {
+                // Surface the provider error instead of silently falling back
+                // to a local estimate — a caller who asked for endpoint
+                // counting needs to know the endpoint failed (reference
+                // 719c44db3f: the provider error replaces the fallback).
+                return Err(error);
+            }
             Ok(None) => {}
         }
     }
@@ -174,16 +214,21 @@ pub async fn token_counter(
     if model_used != model {
         count_body["model"] = json!(model_used);
     }
-    // The reference local fallback calls `token_counter(model, text, messages,
-    // custom_tokenizer)` — `tools`/`tool_choice` are only counted when
-    // `call_endpoint=True` routes to a provider counting API
-    // (proxy_server.py:11698-11704). Strip them so this free informational
-    // endpoint reports the same total an existing client expects. The billing
-    // pre-call estimate (TPM/budget hooks) keeps counting tools — there the
-    // over-estimate is the safe direction.
-    if let Some(obj) = count_body.as_object_mut() {
-        obj.remove("tools");
-        obj.remove("tool_choice");
+    // The reference local fallback counts `tools` alongside a conversation
+    // (2dc6aafa6b: `counted_tools = tools if counted_messages is not None`)
+    // and skips them for prompt-only counting. Mirror that: strip
+    // `tools`/`tool_choice` only when there is no usable conversation.
+    let counts_conversation = count_body["messages"]
+        .as_array()
+        .is_some_and(|m| !m.is_empty())
+        || count_body["contents"]
+            .as_array()
+            .is_some_and(|c| !c.is_empty());
+    if !counts_conversation {
+        if let Some(obj) = count_body.as_object_mut() {
+            obj.remove("tools");
+            obj.remove("tool_choice");
+        }
     }
     let prompt_tokens =
         crate::tokens::estimate_token_counter_tokens_async(count_body, permit).await;
@@ -431,35 +476,66 @@ mod tests {
         );
     }
 
-    // The reference local token-count fallback ignores `tools`/`tool_choice`
-    // (they are only counted on the `call_endpoint=True` provider path), so
-    // this endpoint must report the same total with and without a `tools`
-    // array. The billing pre-call estimate deliberately still counts tools.
+    // The reference local fallback counts `tools` alongside a conversation
+    // (2dc6aafa6b) but ignores them for prompt-only counting; the billing
+    // pre-call estimate deliberately always counts tools.
     #[tokio::test]
     #[serial_test::serial(token_counter)]
-    async fn token_counter_ignores_tools_like_litellm_local_fallback() {
+    async fn token_counter_counts_tools_with_conversations_not_prompts() {
         let shared = shared_state();
-        let without = Bytes::from(
+        let plain = Bytes::from(
             r#"{"model":"gpt-4o","messages":[{"role":"user","content":"weather in paris?"}]}"#,
         );
-        let with = Bytes::from(
+        let with_tools = Bytes::from(
             r#"{"model":"gpt-4o","messages":[{"role":"user","content":"weather in paris?"}],"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city.","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}],"tool_choice":"none"}"#,
         );
-        let a = read_json(
-            token_counter(State(shared.clone()), Extension(AuthUser::open()), without)
+        let plain_count = read_json(
+            token_counter(State(shared.clone()), Extension(AuthUser::open()), plain)
                 .await
                 .expect("plain body must succeed"),
         )
         .await;
-        let b = read_json(
-            token_counter(State(shared), Extension(AuthUser::open()), with)
+        let tool_count = read_json(
+            token_counter(
+                State(shared.clone()),
+                Extension(AuthUser::open()),
+                with_tools,
+            )
+            .await
+            .expect("tool-bearing body must succeed"),
+        )
+        .await;
+        assert!(
+            tool_count["total_tokens"].as_u64().unwrap()
+                > plain_count["total_tokens"].as_u64().unwrap(),
+            "a conversation with tools must count them (reference 2dc6aafa6b)"
+        );
+
+        // Prompt-only counting ignores tools: the reference sends
+        // `counted_tools = None` when there is no conversation.
+        let prompt_only = Bytes::from(
+            r#"{"model":"gpt-4o","prompt":"weather in paris?","tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}]}"#,
+        );
+        let prompt_no_tools = Bytes::from(r#"{"model":"gpt-4o","prompt":"weather in paris?"}"#);
+        let with = read_json(
+            token_counter(
+                State(shared.clone()),
+                Extension(AuthUser::open()),
+                prompt_only,
+            )
+            .await
+            .expect("prompt body with tools must succeed"),
+        )
+        .await;
+        let without = read_json(
+            token_counter(State(shared), Extension(AuthUser::open()), prompt_no_tools)
                 .await
-                .expect("tool-bearing body must succeed"),
+                .expect("prompt body must succeed"),
         )
         .await;
         assert_eq!(
-            a["total_tokens"], b["total_tokens"],
-            "tools/tool_choice must not change the local count (LiteLLM parity)"
+            with["total_tokens"], without["total_tokens"],
+            "prompt-only counting ignores tools (reference parity)"
         );
     }
 

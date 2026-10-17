@@ -680,12 +680,12 @@ async fn missing_inference_models_are_invalid_parameters_while_resources_remain_
         );
         request_id(&response);
         let value: Value = response.json().await.unwrap();
-        if path == "/v1/messages" {
+        if path == "/v1/messages" || path == "/v1/messages/count_tokens" {
             assert_eq!(value["type"], "error");
             assert_eq!(value["error"]["type"], "invalid_request_error");
             assert!(
                 value["error"].get("code").is_none(),
-                "Messages retains the Anthropic envelope"
+                "Anthropic-native routes keep the Anthropic envelope"
             );
         } else {
             assert_eq!(value["error"]["code"], "model_not_found");
@@ -863,7 +863,7 @@ async fn configured_unavailable_groups_are_retryable_across_raw_and_realtime_rou
             format!("all deployments for '{model}' are rate-limited or unavailable"),
             "{path}"
         );
-        if path == "/v1/messages" {
+        if path == "/v1/messages" || path == "/v1/messages/count_tokens" {
             assert_eq!(value["type"], "error");
             assert_eq!(value["error"]["type"], "rate_limit_error");
         } else {

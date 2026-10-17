@@ -582,12 +582,17 @@ The stable Anthropic counting API does not need a token-counting beta header;
 explicit caller/OAuth feature betas are preserved.
 
 `POST /utils/token_counter` remains local by default. `call_endpoint: true`
-uses a supported Claude counting deployment and falls back to local estimation
-if the provider is unavailable. `disable_token_counter: true` prohibits local
+uses a supported Claude counting deployment; provider failures surface with the
+provider's status and message instead of silently answering with a local
+estimate, and an unsupported provider still falls back to local estimation.
+`disable_token_counter: true` prohibits local
 estimation on every path, including default/local-only calls and unsupported or
 missing native counters. A missing native result returns 503 with code
 `token_counting_disabled`; native errors retain their status. Both flags must be
-boolean or null. Model ACLs and the utility work limit apply to both paths.
+boolean or null. Model ACLs and the utility work limit apply to both paths. A
+`prompt` sent beside a non-empty `messages`/`contents` array is rejected unless
+drop_params drops the prompt; the local estimate counts `tools` alongside a
+conversation but not for prompt-only counting.
 
 ### Anthropic workload identity federation
 

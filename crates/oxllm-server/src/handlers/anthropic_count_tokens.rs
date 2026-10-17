@@ -21,7 +21,9 @@ use axum::response::Response;
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
-use crate::handlers::anthropic_common::extract_request_model;
+use crate::handlers::anthropic_common::{
+    anthropic_error_response, extract_request_model, status_to_anthropic_error_type,
+};
 use crate::pipeline::{
     PassthroughMode, PassthroughRequest, forward_with_mode, vetted_client_headers,
 };
@@ -50,6 +52,30 @@ use crate::state::SharedState;
 pub async fn count_tokens(
     State(state): State<SharedState>,
     Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    use axum::response::IntoResponse;
+    match count_tokens_inner(state, auth, headers, body).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            let status = error.status;
+            let message = error.message.clone();
+            let preserved =
+                crate::pipeline::preserved_response_headers(error.into_response().headers());
+            Ok(anthropic_error_response(
+                status,
+                status_to_anthropic_error_type(status),
+                &message,
+                &preserved,
+            ))
+        }
+    }
+}
+
+async fn count_tokens_inner(
+    state: SharedState,
+    auth: AuthUser,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
@@ -160,10 +186,32 @@ pub(crate) async fn count_at_provider(
     )
     .await?;
     if !response.status().is_success() {
-        return Err(ApiError::upstream(
-            response.status().as_u16(),
-            "provider token counting failed",
-        ));
+        // Preserve the provider's own error detail (bounded, sanitized) so
+        // the caller can tell a malformed request from a bad credential —
+        // the reference surfaces the upstream message too.
+        let status = response.status().as_u16();
+        let bytes =
+            axum::body::to_bytes(response.into_body(), crate::security::MAX_ERROR_BODY_BYTES)
+                .await
+                .unwrap_or_default();
+        let upstream_message = serde_json::from_slice::<Value>(&bytes)
+            .ok()
+            .and_then(|body| {
+                body.pointer("/error/message")
+                    .or_else(|| body.pointer("/message"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let message = if upstream_message.trim().is_empty() {
+            "provider token counting failed".to_string()
+        } else {
+            format!(
+                "provider token counting failed: {}",
+                crate::security::truncate_error_message(&upstream_message, 500)
+            )
+        };
+        return Err(ApiError::upstream(status, message));
     }
     let bytes = axum::body::to_bytes(
         response.into_body(),

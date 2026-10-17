@@ -66,6 +66,7 @@ async fn start_oxllm(config: ProxyConfig) -> anyhow::Result<OxllmHandle> {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial_test::serial]
 async fn token_counter_returns_estimate_for_known_text() {
     let mock = MockServer::start();
     let config = proxy_config(&mock.base_url());
@@ -97,6 +98,7 @@ async fn token_counter_returns_estimate_for_known_text() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn token_counter_rejects_missing_model() {
     let mock = MockServer::start();
     let config = proxy_config(&mock.base_url());
@@ -1616,5 +1618,156 @@ async fn anthropic_files_routes_to_anthropic_in_multi_provider_config() {
         0,
         "OpenAI upstream must not be hit by an Anthropic files call"
     );
+    let _ = handle.shutdown_tx.send(());
+}
+
+// ---------------------------------------------------------------------------
+// Count-token error contracts (R7 sync)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[serial_test::serial]
+async fn token_counter_rejects_prompt_beside_messages() {
+    // Reference 2dc6aafa6b: `prompt` next to a usable conversation is
+    // ambiguous (the local estimator would silently ignore it) — reject by
+    // default, drop the prompt under drop_params.
+    let mock = MockServer::start();
+    let config = proxy_config(&mock.base_url());
+    let handle = start_oxllm(config).await.expect("server starts");
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(handle.url("/utils/token_counter"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({
+            "model": "gpt-4o",
+            "prompt": "count me",
+            "messages": [{"role": "user", "content": "Hello world"}]
+        }))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("prompt")),
+        "{body}"
+    );
+
+    // An empty messages array is not a usable conversation: prompt alone counts.
+    let resp = client
+        .post(handle.url("/utils/token_counter"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({
+            "model": "gpt-4o",
+            "prompt": "count me",
+            "messages": []
+        }))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+
+    let _ = handle.shutdown_tx.send(());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn token_counter_drop_params_counts_conversation_when_prompt_conflicts() {
+    let mock = MockServer::start();
+    let mut config = proxy_config(&mock.base_url());
+    config.oxllm_settings.drop_params = Some(true);
+    let handle = start_oxllm(config).await.expect("server starts");
+
+    let resp = reqwest::Client::new()
+        .post(handle.url("/utils/token_counter"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({
+            "model": "gpt-4o",
+            "prompt": "count me",
+            "messages": [{"role": "user", "content": "Hello world"}]
+        }))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+    let body: Value = resp.json().await.expect("json body");
+    assert!(
+        body["prompt_tokens"]
+            .as_u64()
+            .is_some_and(|tokens| tokens > 0),
+        "{body}"
+    );
+
+    let _ = handle.shutdown_tx.send(());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn token_counter_call_endpoint_surfaces_provider_errors() {
+    // Reference 719c44db3f: when endpoint counting was requested, a provider
+    // failure is surfaced instead of silently answering with a local estimate.
+    let mock = MockServer::start();
+    let counter = mock
+        .mock_async(|when, then| {
+            // Match any path: the passthrough derives the count-tokens
+            // URL from the deployment's api_base.
+            when.method(httpmock::Method::POST);
+            then.status(500).json_body(
+                json!({"type":"error","error":{"type":"api_error","message":"upstream boom"}}),
+            );
+        })
+        .await;
+    let mut config = proxy_config(&mock.base_url());
+    config.model_list[0].oxllm_params.model = "anthropic/claude-sonnet-5-5".into();
+    let handle = start_oxllm(config).await.expect("server starts");
+
+    let resp = reqwest::Client::new()
+        .post(handle.url("/utils/token_counter"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({
+            "model": "gpt-4o",
+            "call_endpoint": true,
+            "messages": [{"role": "user", "content": "Hello world"}]
+        }))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(resp.status(), 500, "{}", resp.text().await.unwrap());
+    counter.assert_hits_async(1).await;
+
+    let _ = handle.shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn count_tokens_local_errors_use_the_anthropic_envelope() {
+    // Reference b21e659c24: Anthropic SDK clients on Anthropic-native routes
+    // must see `{"type":"error",...}`, including for local validation
+    // failures — not the OpenAI envelope.
+    let mock = MockServer::start();
+    let config = proxy_config(&mock.base_url());
+    let handle = start_oxllm(config).await.expect("server starts");
+
+    let resp = reqwest::Client::new()
+        .post(handle.url("/v1/messages/count_tokens"))
+        .bearer_auth(MASTER_KEY)
+        .header("anthropic-version", "2023-06-01")
+        .json(&json!({"messages": []}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().await.expect("json body");
+    assert_eq!(body["type"], "error");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("model")),
+        "{body}"
+    );
+
     let _ = handle.shutdown_tx.send(());
 }

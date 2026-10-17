@@ -27,6 +27,13 @@ pub fn normalize_request(request: &Value, model: &str) -> Result<Value> {
         .get("messages")
         .and_then(Value::as_array)
         .ok_or_else(|| Error::BadRequest("count_tokens requires a messages array".into()))?;
+    if messages.is_empty() {
+        // Anthropic requires at least one message; reject locally rather
+        // than paying for a round trip the provider will reject too.
+        return Err(Error::BadRequest(
+            "count_tokens requires a non-empty messages array".into(),
+        ));
+    }
     let mut messages = messages.clone();
     for message in &mut messages {
         if !message.is_object() {

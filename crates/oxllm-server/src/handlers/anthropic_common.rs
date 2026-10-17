@@ -6,6 +6,7 @@
 
 use axum::body::Bytes;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 
 use crate::error::ApiError;
 
@@ -49,6 +50,30 @@ pub(crate) fn status_to_anthropic_error_type(status: StatusCode) -> &'static str
         s if s.as_u16() == 529 => "overloaded_error",
         _ => "api_error",
     }
+}
+
+/// Build an Anthropic-shaped error response (`{"type":"error","error":{…}}`)
+/// from a local [`ApiError`]. Anthropic SDK clients on every Anthropic-native
+/// route must see this envelope, not the OpenAI one, so local validation
+/// failures match what the upstream API would have returned.
+pub(crate) fn anthropic_error_response(
+    status: StatusCode,
+    error_type: &str,
+    message: &str,
+    preserved: &[(axum::http::HeaderName, axum::http::HeaderValue)],
+) -> axum::response::Response {
+    let body = serde_json::json!({
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": message,
+        }
+    });
+    let mut response = (status, axum::Json(body)).into_response();
+    for (name, value) in preserved {
+        response.headers_mut().insert(name.clone(), value.clone());
+    }
+    response
 }
 
 #[cfg(test)]

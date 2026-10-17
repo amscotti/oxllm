@@ -667,7 +667,9 @@ router_settings:
 
 #[tokio::test]
 #[serial_test::serial(token_counter)]
-async fn remote_token_count_failures_fall_back_locally_unless_disabled() {
+async fn remote_token_count_errors_surface_instead_of_falling_back() {
+    // Reference 719c44db3f: with call_endpoint the provider's failure is the
+    // answer — no silent local estimate. The provider's message rides along.
     let upstream = MockServer::start_async().await;
     let config = parse_config_str(&format!(
         r#"
@@ -692,26 +694,27 @@ general_settings:
         then.status(503).json_body(json!({"error":{"message":"count unavailable"}}));
     }).await;
     let (proxy, _) = common::start_oxllm(config).await.unwrap();
-    let mut body = json!({"model":"counted", "call_endpoint":true, "system":null, "tools":null,
-        "messages":[{"role":"user","content":"hello there"}]});
-    let response = common::http_client()
-        .post(proxy.url("/utils/token_counter"))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    let count: Value = response.json().await.unwrap();
-    assert_eq!(count["tokenizer_type"], "openai_tokenizer");
-    assert!(count["total_tokens"].as_u64().unwrap() > 0);
-    body["disable_token_counter"] = json!(true);
-    let response = common::http_client()
-        .post(proxy.url("/utils/token_counter"))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 503);
+    for disabled in [false, true] {
+        let mut body = json!({"model":"counted", "call_endpoint":true, "system":null, "tools":null,
+            "messages":[{"role":"user","content":"hello there"}]});
+        if disabled {
+            body["disable_token_counter"] = json!(true);
+        }
+        let response = common::http_client()
+            .post(proxy.url("/utils/token_counter"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 503);
+        let value: Value = response.json().await.unwrap();
+        assert!(
+            value["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("count unavailable")),
+            "{value}"
+        );
+    }
     wire.assert_hits_async(2).await;
     proxy.shutdown();
 }

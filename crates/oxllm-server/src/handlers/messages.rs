@@ -27,7 +27,7 @@ const ANTHROPIC_SSE_PING_INTERVAL: Duration = Duration::from_secs(15);
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
-use crate::handlers::anthropic_common::status_to_anthropic_error_type;
+use crate::handlers::anthropic_common::{anthropic_error_response, status_to_anthropic_error_type};
 use crate::handlers::chat::chat_completions_inner;
 use crate::handlers::convert::anthropic::{
     AnthropicStreamConverter, anthropic_to_openai_request, openai_to_anthropic_response,
@@ -155,26 +155,6 @@ async fn messages_inner(
     } else {
         convert_json_to_anthropic(chat_response).await
     }
-}
-
-fn anthropic_error_response(
-    status: StatusCode,
-    error_type: &str,
-    message: &str,
-    preserved: &[(axum::http::HeaderName, axum::http::HeaderValue)],
-) -> Response {
-    let body = json!({
-    "type": "error",
-    "error": {
-    "type": error_type,
-    "message": message,
-    }
-    });
-    let mut response = (status, Json(body)).into_response();
-    for (name, value) in preserved {
-        response.headers_mut().insert(name.clone(), value.clone());
-    }
-    response
 }
 
 /// Lightly sanitise an upstream error message before forwarding it to an
