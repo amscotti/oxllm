@@ -744,3 +744,61 @@ fn request_preserves_non_null_assistant_fields() {
     assert_eq!(out["messages"][0]["tool_calls"][0]["id"], "call_1");
     assert_eq!(out["messages"][0]["content"], "Hi");
 }
+
+#[test]
+fn response_derives_web_search_usage_from_executed_tools() {
+    // Groq's usage object carries no search counter; `browser.search`
+    // / `browser_search` actions in `executed_tools` become the
+    // `server_tool_use.web_search_requests` bucket the per-query rate bills.
+    // Entry identity is `name` or `type` (reference `_executed_tool_actions`).
+    for (name_key, expected) in [("name", 2), ("type", 2)] {
+        let body = json!({
+            "id": "chatcmpl-groq",
+            "model": "openai/gpt-oss-120b",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Searched.",
+                    "executed_tools": [
+                        {name_key: "browser.search"},
+                        {name_key: "browser_search"},
+                        {name_key: "browser.open"},
+                        {name_key: "code_interpreter"},
+                    ]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let out = PROVIDER
+            .transform_response(&body, "openai/gpt-oss-120b")
+            .expect("ok");
+        assert_eq!(
+            out["usage"]["server_tool_use"]["web_search_requests"], expected,
+            "{name_key}"
+        );
+        assert_eq!(out["usage"]["server_tool_use"]["browser_open_requests"], 1);
+    }
+}
+
+#[test]
+fn response_without_executed_search_tools_keeps_usage_unchanged() {
+    let body = json!({
+        "id": "chatcmpl-groq",
+        "model": "openai/gpt-oss-120b",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": "No tools.", "executed_tools": [{"name": "code_interpreter"}]},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    });
+    let out = PROVIDER
+        .transform_response(&body, "openai/gpt-oss-120b")
+        .expect("ok");
+    assert!(
+        out["usage"].get("server_tool_use").is_none(),
+        "no server_tool_use synthesis without search/open actions"
+    );
+}

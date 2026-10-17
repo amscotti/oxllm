@@ -82,7 +82,7 @@ max_input_tokens = 32768
 input_cost_per_token = 1.000000e-6
 output_cost_per_token = 1.000000e-6
 max_input_tokens = 128000
-search_queries_cost_per_query = 5.000000e-3
+search_queries_cost_per_query = 8.000000e-3
 
 ["perplexity/sonar-deep-research"]
 input_cost_per_token = 2.000000e-6
@@ -109,16 +109,19 @@ input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
 max_input_tokens = 200000
 max_output_tokens = 8000
+search_queries_cost_per_query = 1.000000e-2
 
 ["perplexity/sonar-reasoning"]
 input_cost_per_token = 1.000000e-6
 output_cost_per_token = 5.000000e-6
 max_input_tokens = 128000
+search_queries_cost_per_query = 8.000000e-3
 
 ["perplexity/sonar-reasoning-pro"]
 input_cost_per_token = 2.000000e-6
 output_cost_per_token = 8.000000e-6
 max_input_tokens = 128000
+search_queries_cost_per_query = 1.000000e-2
 
 ["perplexity/sonar-small-chat"]
 input_cost_per_token = 7.000000e-8

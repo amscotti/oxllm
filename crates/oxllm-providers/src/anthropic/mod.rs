@@ -3805,6 +3805,14 @@ fn build_finish_chunk(value: &Value, meta: &Option<StreamMeta>) -> Value {
                 );
             }
         }
+        // Mirror hosted server-tool usage (web search) so streaming requests
+        // bill the same per-query fees as non-streaming ones; the final counts
+        // ride on the `message_delta` usage object.
+        if let Some(server_tool_use) = u.get("server_tool_use").filter(|v| !v.is_null()) {
+            if let Value::Object(map) = &mut usage_obj {
+                map.insert("server_tool_use".to_string(), server_tool_use.clone());
+            }
+        }
         // Merge stashed cache tokens when the finish event lacks them
         // (GovCloud path). When present on the finish event itself, the
         // event's value wins.

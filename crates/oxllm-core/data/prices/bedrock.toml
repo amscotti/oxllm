@@ -203,6 +203,7 @@ cache_read_input_token_cost = 1.000000e-6
 cache_creation_input_token_cost = 1.250000e-5
 cache_creation_input_token_cost_above_1hr = 2.000000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-haiku-4-5-20251001-v1:0"]
 input_cost_per_token = 1.000000e-6
@@ -238,6 +239,7 @@ output_cost_per_token_above_100k_tokens = 2.500000e-6
 cache_read_input_token_cost_above_100k_tokens = 5.000000e-8
 cache_creation_input_token_cost_above_100k_tokens = 6.250000e-7
 cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.000000e-6
+search_queries_cost_per_query = 1.000000e-02
 ["anthropic.claude-instant-v1"]
 input_cost_per_token = 8.000000e-7
 output_cost_per_token = 2.400000e-6
@@ -261,6 +263,7 @@ max_output_tokens = 32000
 cache_read_input_token_cost = 1.500000e-6
 cache_creation_input_token_cost = 1.875000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-opus-4-20250514-v1:0"]
 input_cost_per_token = 1.500000e-5
@@ -270,6 +273,7 @@ max_output_tokens = 32000
 cache_read_input_token_cost = 1.500000e-6
 cache_creation_input_token_cost = 1.875000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-opus-4-5-20251101-v1:0"]
 input_cost_per_token = 5.000000e-6
@@ -280,6 +284,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-opus-4-6-v1"]
 input_cost_per_token = 5.000000e-6
@@ -290,6 +295,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-opus-4-7"]
 input_cost_per_token = 5.000000e-6
@@ -300,6 +306,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 2048
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-opus-4-8"]
 input_cost_per_token = 5.000000e-6
@@ -310,6 +317,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-opus-5"]
 input_cost_per_token = 5.000000e-6
@@ -320,6 +328,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
@@ -333,6 +342,7 @@ cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
 input_cost_per_token_above_200k_tokens = 6.000000e-6
 cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 output_cost_per_token_above_200k_tokens = 2.250000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-sonnet-4-5-20250929-v1:0"]
 input_cost_per_token = 3.000000e-6
@@ -348,6 +358,7 @@ cache_creation_input_token_cost_above_1hr_above_200k_tokens = 1.200000e-5
 input_cost_per_token_above_200k_tokens = 6.000000e-6
 cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 output_cost_per_token_above_200k_tokens = 2.250000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-sonnet-4-6"]
 input_cost_per_token = 3.000000e-6
@@ -358,6 +369,7 @@ cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
 cache_creation_input_token_cost_above_1hr = 6.000000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-sonnet-5"]
 input_cost_per_token = 2.000000e-6
@@ -368,6 +380,7 @@ cache_read_input_token_cost = 2.000000e-7
 cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-v1"]
 input_cost_per_token = 8.000000e-6
@@ -488,6 +501,7 @@ cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
 input_cost_per_token_above_200k_tokens = 6.000000e-6
 cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 output_cost_per_token_above_200k_tokens = 2.250000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["au.anthropic.claude-haiku-4-5-20251001-v1:0"]
 input_cost_per_token = 1.100000e-6
@@ -513,6 +527,7 @@ output_cost_per_token_above_100k_tokens = 2.750000e-6
 cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
 cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
 cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
+search_queries_cost_per_query = 1.000000e-02
 ["au.anthropic.claude-opus-4-6-v1"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 2.750000e-5
@@ -522,6 +537,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["au.anthropic.claude-opus-4-7"]
 input_cost_per_token = 5.500000e-6
@@ -532,6 +548,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 2048
+search_queries_cost_per_query = 1.000000e-02
 
 ["au.anthropic.claude-opus-4-8"]
 input_cost_per_token = 5.500000e-6
@@ -542,6 +559,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["au.anthropic.claude-opus-5"]
 input_cost_per_token = 5.500000e-6
@@ -552,6 +570,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["au.anthropic.claude-sonnet-4-5-20250929-v1:0"]
 input_cost_per_token = 3.300000e-6
@@ -567,6 +586,7 @@ cache_creation_input_token_cost_above_1hr_above_200k_tokens = 1.320000e-5
 input_cost_per_token_above_200k_tokens = 6.600000e-6
 cache_creation_input_token_cost_above_200k_tokens = 8.250000e-6
 output_cost_per_token_above_200k_tokens = 2.475000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["au.anthropic.claude-sonnet-4-6"]
 input_cost_per_token = 3.300000e-6
@@ -577,6 +597,7 @@ cache_read_input_token_cost = 3.300000e-7
 cache_creation_input_token_cost = 4.125000e-6
 cache_creation_input_token_cost_above_1hr = 6.600000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["au.anthropic.claude-sonnet-5"]
 input_cost_per_token = 2.200000e-6
@@ -587,6 +608,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["bedrock/ap-northeast-1/anthropic.claude-instant-v1"]
 input_cost_per_token = 2.230000e-6
@@ -1709,6 +1731,7 @@ cache_read_input_token_cost = 1.100000e-6
 cache_creation_input_token_cost = 1.375000e-5
 cache_creation_input_token_cost_above_1hr = 2.200000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-haiku-4-5-20251001-v1:0"]
 input_cost_per_token = 1.100000e-6
@@ -1734,6 +1757,7 @@ output_cost_per_token_above_100k_tokens = 2.750000e-6
 cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
 cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
 cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
+search_queries_cost_per_query = 1.000000e-02
 ["eu.anthropic.claude-opus-4-1-20250805-v1:0"]
 input_cost_per_token = 1.500000e-5
 output_cost_per_token = 7.500000e-5
@@ -1742,6 +1766,7 @@ max_output_tokens = 32000
 cache_read_input_token_cost = 1.500000e-6
 cache_creation_input_token_cost = 1.875000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-opus-4-20250514-v1:0"]
 input_cost_per_token = 1.500000e-5
@@ -1751,6 +1776,7 @@ max_output_tokens = 32000
 cache_read_input_token_cost = 1.500000e-6
 cache_creation_input_token_cost = 1.875000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-opus-4-5-20251101-v1:0"]
 input_cost_per_token = 5.500000e-6
@@ -1761,6 +1787,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-opus-4-6-v1"]
 input_cost_per_token = 5.500000e-6
@@ -1771,6 +1798,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-opus-4-7"]
 input_cost_per_token = 5.500000e-6
@@ -1781,6 +1809,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 2048
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-opus-4-8"]
 input_cost_per_token = 5.500000e-6
@@ -1791,6 +1820,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-opus-5"]
 input_cost_per_token = 5.500000e-6
@@ -1801,6 +1831,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
@@ -1814,6 +1845,7 @@ cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
 input_cost_per_token_above_200k_tokens = 6.000000e-6
 cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 output_cost_per_token_above_200k_tokens = 2.250000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-sonnet-4-5-20250929-v1:0"]
 input_cost_per_token = 3.300000e-6
@@ -1829,6 +1861,7 @@ cache_creation_input_token_cost_above_1hr_above_200k_tokens = 1.320000e-5
 input_cost_per_token_above_200k_tokens = 6.600000e-6
 cache_creation_input_token_cost_above_200k_tokens = 8.250000e-6
 output_cost_per_token_above_200k_tokens = 2.475000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-sonnet-4-6"]
 input_cost_per_token = 3.300000e-6
@@ -1839,6 +1872,7 @@ cache_read_input_token_cost = 3.300000e-7
 cache_creation_input_token_cost = 4.125000e-6
 cache_creation_input_token_cost_above_1hr = 6.600000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-sonnet-5"]
 input_cost_per_token = 2.200000e-6
@@ -1849,6 +1883,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.deepseek.v3.2"]
 input_cost_per_token = 7.400000e-7
@@ -1897,6 +1932,7 @@ cache_read_input_token_cost = 1.000000e-6
 cache_creation_input_token_cost = 1.250000e-5
 cache_creation_input_token_cost_above_1hr = 2.000000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-haiku-4-5-20251001-v1:0"]
 input_cost_per_token = 1.000000e-6
@@ -1922,6 +1958,7 @@ output_cost_per_token_above_100k_tokens = 2.500000e-6
 cache_read_input_token_cost_above_100k_tokens = 5.000000e-8
 cache_creation_input_token_cost_above_100k_tokens = 6.250000e-7
 cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.000000e-6
+search_queries_cost_per_query = 1.000000e-02
 ["global.anthropic.claude-opus-4-5-20251101-v1:0"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 2.500000e-5
@@ -1931,6 +1968,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-opus-4-6-v1"]
 input_cost_per_token = 5.000000e-6
@@ -1941,6 +1979,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-opus-4-7"]
 input_cost_per_token = 5.000000e-6
@@ -1951,6 +1990,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 2048
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-opus-4-8"]
 input_cost_per_token = 5.000000e-6
@@ -1961,6 +2001,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-opus-5"]
 input_cost_per_token = 5.000000e-6
@@ -1971,6 +2012,7 @@ cache_read_input_token_cost = 5.000000e-7
 cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
@@ -1984,6 +2026,7 @@ cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
 input_cost_per_token_above_200k_tokens = 6.000000e-6
 cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 output_cost_per_token_above_200k_tokens = 2.250000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-sonnet-4-5-20250929-v1:0"]
 input_cost_per_token = 3.000000e-6
@@ -1999,6 +2042,7 @@ cache_creation_input_token_cost_above_1hr_above_200k_tokens = 1.200000e-5
 input_cost_per_token_above_200k_tokens = 6.000000e-6
 cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 output_cost_per_token_above_200k_tokens = 2.250000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-sonnet-4-6"]
 input_cost_per_token = 3.000000e-6
@@ -2009,6 +2053,7 @@ cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
 cache_creation_input_token_cost_above_1hr = 6.000000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-sonnet-5"]
 input_cost_per_token = 2.000000e-6
@@ -2019,6 +2064,7 @@ cache_read_input_token_cost = 2.000000e-7
 cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["google.gemma-3-12b-it"]
 input_cost_per_token = 9.000000e-8
@@ -2068,6 +2114,7 @@ output_cost_per_token_above_100k_tokens = 2.750000e-6
 cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
 cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
 cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
+search_queries_cost_per_query = 1.000000e-02
 ["jp.anthropic.claude-opus-4-7"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 2.750000e-5
@@ -2077,6 +2124,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 2048
+search_queries_cost_per_query = 1.000000e-02
 
 ["jp.anthropic.claude-opus-4-8"]
 input_cost_per_token = 5.500000e-6
@@ -2087,6 +2135,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["jp.anthropic.claude-opus-5"]
 input_cost_per_token = 5.500000e-6
@@ -2097,6 +2146,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["jp.anthropic.claude-sonnet-4-5-20250929-v1:0"]
 input_cost_per_token = 3.300000e-6
@@ -2112,6 +2162,7 @@ cache_creation_input_token_cost_above_1hr_above_200k_tokens = 1.320000e-5
 input_cost_per_token_above_200k_tokens = 6.600000e-6
 cache_creation_input_token_cost_above_200k_tokens = 8.250000e-6
 output_cost_per_token_above_200k_tokens = 2.475000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["jp.anthropic.claude-sonnet-4-6"]
 input_cost_per_token = 3.300000e-6
@@ -2122,6 +2173,7 @@ cache_read_input_token_cost = 3.300000e-7
 cache_creation_input_token_cost = 4.125000e-6
 cache_creation_input_token_cost_above_1hr = 6.600000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["jp.anthropic.claude-sonnet-5"]
 input_cost_per_token = 2.200000e-6
@@ -2132,6 +2184,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["meta.llama2-13b-chat-v1"]
 input_cost_per_token = 7.500000e-7
@@ -2592,6 +2645,7 @@ cache_read_input_token_cost = 1.100000e-6
 cache_creation_input_token_cost = 1.375000e-5
 cache_creation_input_token_cost_above_1hr = 2.200000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-haiku-4-5-20251001-v1:0"]
 input_cost_per_token = 1.100000e-6
@@ -2617,6 +2671,7 @@ output_cost_per_token_above_100k_tokens = 2.750000e-6
 cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
 cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
 cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
+search_queries_cost_per_query = 1.000000e-02
 ["us.anthropic.claude-opus-4-1-20250805-v1:0"]
 input_cost_per_token = 1.500000e-5
 output_cost_per_token = 7.500000e-5
@@ -2625,6 +2680,7 @@ max_output_tokens = 32000
 cache_read_input_token_cost = 1.500000e-6
 cache_creation_input_token_cost = 1.875000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-opus-4-20250514-v1:0"]
 input_cost_per_token = 1.500000e-5
@@ -2634,6 +2690,7 @@ max_output_tokens = 32000
 cache_read_input_token_cost = 1.500000e-6
 cache_creation_input_token_cost = 1.875000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-opus-4-5-20251101-v1:0"]
 input_cost_per_token = 5.500000e-6
@@ -2644,6 +2701,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-opus-4-6-v1"]
 input_cost_per_token = 5.500000e-6
@@ -2654,6 +2712,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-opus-4-7"]
 input_cost_per_token = 5.500000e-6
@@ -2664,6 +2723,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 2048
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-opus-4-8"]
 input_cost_per_token = 5.500000e-6
@@ -2674,6 +2734,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-opus-5"]
 input_cost_per_token = 5.500000e-6
@@ -2684,6 +2745,7 @@ cache_read_input_token_cost = 5.500000e-7
 cache_creation_input_token_cost = 6.875000e-6
 cache_creation_input_token_cost_above_1hr = 1.100000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
@@ -2697,6 +2759,7 @@ cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
 input_cost_per_token_above_200k_tokens = 6.000000e-6
 cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 output_cost_per_token_above_200k_tokens = 2.250000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-sonnet-4-5-20250929-v1:0"]
 input_cost_per_token = 3.300000e-6
@@ -2712,6 +2775,7 @@ cache_creation_input_token_cost_above_1hr_above_200k_tokens = 1.320000e-5
 input_cost_per_token_above_200k_tokens = 6.600000e-6
 cache_creation_input_token_cost_above_200k_tokens = 8.250000e-6
 output_cost_per_token_above_200k_tokens = 2.475000e-5
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-sonnet-4-6"]
 input_cost_per_token = 3.300000e-6
@@ -2722,6 +2786,7 @@ cache_read_input_token_cost = 3.300000e-7
 cache_creation_input_token_cost = 4.125000e-6
 cache_creation_input_token_cost_above_1hr = 6.600000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-sonnet-5"]
 input_cost_per_token = 2.200000e-6
@@ -2732,6 +2797,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.deepseek.r1-v1:0"]
 input_cost_per_token = 1.350000e-6
@@ -2872,6 +2938,7 @@ cache_read_input_token_cost = 2.500000e-7
 cache_creation_input_token_cost = 1.250000e-5
 cache_creation_input_token_cost_above_1hr = 2.000000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["anthropic.claude-mythos-5-1"]
 input_cost_per_token = 1.000000e-5
@@ -2892,6 +2959,7 @@ cache_read_input_token_cost = 2.000000e-7
 cache_creation_input_token_cost = 5.000000e-6
 cache_creation_input_token_cost_above_1hr = 8.000000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["apac.anthropic.claude-fable-5"]
 input_cost_per_token = 1.100000e-5
@@ -3000,6 +3068,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 5.500000e-6
 cache_creation_input_token_cost_above_1hr = 8.800000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["bedrock/ap-northeast-1/1-month-commitment/anthropic.claude-instant-v1"]
 cost_per_second = 1.475000e-2
@@ -3467,6 +3536,7 @@ cache_read_input_token_cost = 2.750000e-7
 cache_creation_input_token_cost = 1.375000e-5
 cache_creation_input_token_cost_above_1hr = 2.200000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["eu.anthropic.claude-opus-5-5"]
 input_cost_per_token = 4.400000e-6
@@ -3477,6 +3547,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 5.500000e-6
 cache_creation_input_token_cost_above_1hr = 8.800000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-fable-5-1"]
 input_cost_per_token = 1.000000e-5
@@ -3487,6 +3558,7 @@ cache_read_input_token_cost = 2.500000e-7
 cache_creation_input_token_cost = 1.250000e-5
 cache_creation_input_token_cost_above_1hr = 2.000000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-mythos-5-1"]
 input_cost_per_token = 1.000000e-5
@@ -3507,6 +3579,7 @@ cache_read_input_token_cost = 2.000000e-7
 cache_creation_input_token_cost = 5.000000e-6
 cache_creation_input_token_cost_above_1hr = 8.000000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.cohere.embed-v4:0"]
 input_cost_per_token = 1.200000e-7
@@ -3652,6 +3725,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 5.500000e-6
 cache_creation_input_token_cost_above_1hr = 8.800000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["mistral.pixtral-large-2502-v1:0"]
 input_cost_per_token = 2.000000e-6
@@ -3816,6 +3890,7 @@ cache_read_input_token_cost = 2.750000e-7
 cache_creation_input_token_cost = 1.375000e-5
 cache_creation_input_token_cost_above_1hr = 2.200000e-5
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.anthropic.claude-mythos-5"]
 input_cost_per_token = 1.100000e-5
@@ -3855,6 +3930,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 5.500000e-6
 cache_creation_input_token_cost_above_1hr = 8.800000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.cohere.embed-v4:0"]
 input_cost_per_token = 1.200000e-7
@@ -4013,6 +4089,7 @@ cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["apac.anthropic.claude-sonnet-5-5"]
 input_cost_per_token = 2.200000e-6
@@ -4033,6 +4110,7 @@ cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["bedrock/us-gov-east-1/anthropic.claude-sonnet-5-5"]
 input_cost_per_token = 2.400000e-6
@@ -4063,6 +4141,7 @@ cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.anthropic.claude-sonnet-5-5"]
 input_cost_per_token = 2.000000e-6
@@ -4073,6 +4152,7 @@ cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["global.xai.grok-4.7"]
 input_cost_per_token = 2.000000e-6
@@ -4096,6 +4176,7 @@ cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["us-gov.anthropic.claude-sonnet-5-5"]
 input_cost_per_token = 2.400000e-6
@@ -4116,6 +4197,7 @@ cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["us.xai.grok-4.7"]
 input_cost_per_token = 2.200000e-6

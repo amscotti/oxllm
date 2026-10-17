@@ -526,8 +526,11 @@ pub struct UsageSummary {
     /// non-citing models.
     pub citation_tokens: Option<u64>,
     /// Number of web-search requests charged for the call (Perplexity
-    /// `usage.num_search_queries`, or `prompt_tokens_details.web_search_requests`
-    /// for OpenAI/xAI web-search models). Priced at the model's per-query
+    /// `usage.num_search_queries`; `prompt_tokens_details.web_search_requests`
+    /// for OpenAI/xAI web-search models; Anthropic-family
+    /// `usage.server_tool_use.web_search_requests`; Responses-native
+    /// `tool_usage.web_search.num_requests`; Groq derives its count from
+    /// `executed_tools` actions). Priced at the model's per-query
     /// search rate when declared.
     pub web_search_requests: Option<u64>,
 }

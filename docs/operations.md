@@ -232,6 +232,15 @@ Only measured receipts enter the receipt channel. Receiptless JSON/SSE requests
 use the serving-model card before the concrete-deployment fallback, so a locally
 computed fallback cannot override another reported model's price.
 
+Hosted web-search requests are billed per query when the model's card declares
+`search_queries_cost_per_query`. Counts come from the OpenAI-standard
+`prompt_tokens_details.web_search_requests`, Perplexity
+`usage.num_search_queries`, Anthropic-family
+`usage.server_tool_use.web_search_requests` (non-streaming and the final
+streaming usage event), Responses-native `tool_usage.web_search.num_requests`
+on raw relays, and Groq's derived `executed_tools` browser actions. Cards
+without a declared rate keep search free rather than guessing one.
+
 `general_settings.http_force_ipv4: true` restricts the shared upstream and
 image-download clients to IPv4 through DNS filtering and IPv4 local binding.
 The general-settings `force_ipv4` alias and legacy

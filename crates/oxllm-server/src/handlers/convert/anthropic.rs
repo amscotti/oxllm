@@ -635,6 +635,13 @@ pub(crate) fn openai_to_anthropic_response(resp: &Value) -> Value {
             anthropic_usage["cache_creation"] = json!({"ephemeral_1h_input_tokens": ephemeral_1h});
         }
     }
+    // Mirror hosted server-tool usage (web search) so protocol-native clients
+    // can reconcile the per-query charge they are billed for.
+    if let Some(server_tool_use) = usage.and_then(|u| u.get("server_tool_use")) {
+        if server_tool_use.is_object() {
+            anthropic_usage["server_tool_use"] = server_tool_use.clone();
+        }
+    }
 
     json!({
     "id": id,
@@ -677,6 +684,7 @@ fn build_anthropic_streaming_usage(
     cache_read_input_tokens: Option<u64>,
     cache_creation_input_tokens: Option<u64>,
     cache_creation_1h_input_tokens: Option<u64>,
+    server_tool_use: Option<&Value>,
 ) -> Value {
     let mut usage = json!({
     "input_tokens": input_tokens,
@@ -690,6 +698,11 @@ fn build_anthropic_streaming_usage(
     }
     if let Some(eph1h) = cache_creation_1h_input_tokens {
         usage["cache_creation"] = json!({"ephemeral_1h_input_tokens": eph1h});
+    }
+    // Mirror hosted server-tool usage (web search) so protocol-native
+    // streaming clients can reconcile the per-query charge.
+    if let Some(server_tool_use) = server_tool_use.filter(|v| v.is_object()) {
+        usage["server_tool_use"] = server_tool_use.clone();
     }
     usage
 }
@@ -726,6 +739,7 @@ pub(crate) struct AnthropicStreamConverter {
     cache_read_input_tokens: Option<u64>,
     cache_creation_input_tokens: Option<u64>,
     cache_creation_1h_input_tokens: Option<u64>,
+    server_tool_use: Option<Value>,
 }
 
 impl AnthropicStreamConverter {
@@ -744,6 +758,7 @@ impl AnthropicStreamConverter {
             cache_read_input_tokens: None,
             cache_creation_input_tokens: None,
             cache_creation_1h_input_tokens: None,
+            server_tool_use: None,
         }
     }
 
@@ -807,6 +822,12 @@ impl AnthropicStreamConverter {
                         Some(self.cache_creation_1h_input_tokens.unwrap_or(0).max(eph1h));
                 }
             }
+            // Hosted server-tool usage rides on the final usage chunk; keep
+            // the latest object so the emitted `message_delta` usage carries
+            // the definitive per-tool counts.
+            if let Some(server_tool_use) = usage.get("server_tool_use").filter(|v| v.is_object()) {
+                self.server_tool_use = Some(server_tool_use.clone());
+            }
         }
 
         let mut events = Vec::new();
@@ -843,6 +864,7 @@ impl AnthropicStreamConverter {
                 self.cache_read_input_tokens,
                 self.cache_creation_input_tokens,
                 self.cache_creation_1h_input_tokens,
+                self.server_tool_use.as_ref(),
             )
             }
             }));
@@ -1076,6 +1098,7 @@ impl AnthropicStreamConverter {
                 "usage": build_anthropic_streaming_usage(
                     self.input_tokens, self.output_tokens, self.cache_read_input_tokens,
                     self.cache_creation_input_tokens, self.cache_creation_1h_input_tokens,
+                    self.server_tool_use.as_ref(),
                 )
             }));
         }

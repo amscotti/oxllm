@@ -25,7 +25,7 @@ use oxllm_core::Result;
 use oxllm_core::deployment::Deployment;
 use oxllm_core::endpoint::Endpoint;
 use oxllm_core::provider::{ChatProvider, Provider, ProviderId, ResolvedCredentials};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// The default Groq OpenAI-compatible base URL.
 pub const DEFAULT_GROQ_BASE: &str = "https://api.groq.com/openai/v1";
@@ -112,6 +112,54 @@ fn apply_groq_stream_transforms(value: &mut Value) {
     }
 }
 
+/// Derive hosted server-tool usage from Groq's `executed_tools` actions.
+///
+/// Groq's OpenAI-compatible usage object carries no web-search counter;
+/// instead the assistant message lists the executed compound-tool actions
+/// (parity with the reference `GroqChatConfig._add_web_search_usage`).
+/// `browser.search`/`browser_search` actions become
+/// `usage.server_tool_use.web_search_requests` — the same bucket the
+/// per-query search rate bills — and `browser.open` actions are mirrored as
+/// `browser_open_requests` for shape parity. Anything else is ignored.
+fn add_web_search_usage(out: &mut Value) {
+    let Some(choices) = out.get("choices").and_then(|c| c.as_array()) else {
+        return;
+    };
+    let mut searches = 0u64;
+    let mut opens = 0u64;
+    for choice in choices {
+        let Some(executed) = choice
+            .pointer("/message/executed_tools")
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for tool in executed {
+            let action = tool
+                .get("name")
+                .and_then(Value::as_str)
+                .or_else(|| tool.get("type").and_then(Value::as_str));
+            match action {
+                Some("browser.search") | Some("browser_search") => searches += 1,
+                Some("browser.open") => opens += 1,
+                _ => {}
+            }
+        }
+    }
+    if searches == 0 && opens == 0 {
+        return;
+    }
+    if let Some(usage) = out.get_mut("usage").and_then(Value::as_object_mut) {
+        usage.insert(
+            "server_tool_use".to_string(),
+            json!({
+                "web_search_requests": searches,
+                "browser_open_requests": opens,
+            }),
+        );
+    }
+}
+
 impl ChatProvider for GroqProvider {
     fn endpoint_url(&self, deployment: &Deployment) -> String {
         ChatProvider::endpoint_url(&COMPAT, deployment)
@@ -133,7 +181,9 @@ impl ChatProvider for GroqProvider {
     }
 
     fn transform_response(&self, body: &Value, model: &str) -> Result<Value> {
-        ChatProvider::transform_response(&COMPAT, body, model)
+        let mut out = ChatProvider::transform_response(&COMPAT, body, model)?;
+        add_web_search_usage(&mut out);
+        Ok(out)
     }
 
     fn transform_stream_chunk(&self, chunk: &str) -> Result<Option<Value>> {

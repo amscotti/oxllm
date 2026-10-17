@@ -40,6 +40,7 @@ cache_read_input_token_cost = 2.750000e-7
 input_cost_per_token_above_272k_tokens = 5.500000e-6
 output_cost_per_token_above_272k_tokens = 2.475000e-5
 cache_read_input_token_cost_above_272k_tokens = 5.500000e-7
+search_queries_cost_per_query = 1.200000e-02
 
 ["openai.gpt-5.5"]
 input_cost_per_token = 5.500000e-6
@@ -50,6 +51,7 @@ cache_read_input_token_cost = 5.500000e-7
 input_cost_per_token_above_272k_tokens = 1.100000e-5
 output_cost_per_token_above_272k_tokens = 4.950000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.100000e-6
+search_queries_cost_per_query = 1.200000e-02
 
 ["openai.gpt-5.6-luna"]
 input_cost_per_token = 2.200000e-7
@@ -63,6 +65,7 @@ output_cost_per_token_above_272k_tokens = 1.980000e-6
 cache_read_input_token_cost_above_272k_tokens = 4.400000e-8
 cache_creation_input_token_cost_above_272k_tokens = 5.500000e-7
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 
 ["openai.gpt-5.6-sol"]
 input_cost_per_token = 4.400000e-6
@@ -76,6 +79,7 @@ output_cost_per_token_above_272k_tokens = 3.300000e-5
 cache_read_input_token_cost_above_272k_tokens = 8.800000e-7
 cache_creation_input_token_cost_above_272k_tokens = 1.100000e-5
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 
 ["openai.gpt-5.6-terra"]
 input_cost_per_token = 2.200000e-6
@@ -89,6 +93,7 @@ output_cost_per_token_above_272k_tokens = 1.980000e-5
 cache_read_input_token_cost_above_272k_tokens = 4.400000e-7
 cache_creation_input_token_cost_above_272k_tokens = 5.500000e-6
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 
 ["openai.gpt-oss-120b"]
 input_cost_per_token = 1.500000e-7
@@ -142,6 +147,7 @@ output_cost_per_token_above_100k_tokens = 2.750000e-6
 cache_read_input_token_cost_above_100k_tokens = 5.500000e-8
 cache_creation_input_token_cost_above_100k_tokens = 6.875000e-7
 cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
+search_queries_cost_per_query = 1.000000e-02
 ["bedrock_mantle/deepseek.v3.1"]
 input_cost_per_token = 5.800000e-7
 output_cost_per_token = 1.680000e-6
@@ -186,6 +192,7 @@ cache_read_input_token_cost = 2.750000e-7
 input_cost_per_token_above_272k_tokens = 5.500000e-6
 output_cost_per_token_above_272k_tokens = 2.475000e-5
 cache_read_input_token_cost_above_272k_tokens = 5.500000e-7
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.5"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 3.300000e-5
@@ -195,6 +202,7 @@ cache_read_input_token_cost = 5.500000e-7
 input_cost_per_token_above_272k_tokens = 1.100000e-5
 output_cost_per_token_above_272k_tokens = 4.950000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.100000e-6
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.6-cyber"]
 input_cost_per_token = 1.375000e-5
 output_cost_per_token = 8.250000e-5
@@ -215,6 +223,7 @@ output_cost_per_token_above_272k_tokens = 1.980000e-6
 cache_read_input_token_cost_above_272k_tokens = 4.400000e-8
 cache_creation_input_token_cost_above_272k_tokens = 5.500000e-7
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.6-sol"]
 input_cost_per_token = 4.400000e-6
 output_cost_per_token = 2.200000e-5
@@ -227,6 +236,7 @@ output_cost_per_token_above_272k_tokens = 3.300000e-5
 cache_read_input_token_cost_above_272k_tokens = 8.800000e-7
 cache_creation_input_token_cost_above_272k_tokens = 1.100000e-5
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.6-terra"]
 input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.320000e-5
@@ -239,6 +249,7 @@ output_cost_per_token_above_272k_tokens = 1.980000e-5
 cache_read_input_token_cost_above_272k_tokens = 4.400000e-7
 cache_creation_input_token_cost_above_272k_tokens = 5.500000e-6
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-6-astra"]
 input_cost_per_token = 1.100000e-5
 output_cost_per_token = 5.500000e-5
@@ -484,6 +495,7 @@ cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 5.500000e-6
 cache_creation_input_token_cost_above_1hr = 8.800000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["bedrock_mantle/anthropic.claude-sonnet-5-5"]
 input_cost_per_token = 2.200000e-6
@@ -494,6 +506,7 @@ cache_read_input_token_cost = 1.100000e-7
 cache_creation_input_token_cost = 2.750000e-6
 cache_creation_input_token_cost_above_1hr = 4.400000e-6
 prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
 
 ["bedrock_mantle/us-gov-west-1/anthropic.claude-opus-5-5"]
 input_cost_per_token = 4.800000e-6

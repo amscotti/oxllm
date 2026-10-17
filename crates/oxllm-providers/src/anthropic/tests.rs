@@ -7182,6 +7182,22 @@ fn stream_finish_chunk_promotes_cache_creation_buckets_from_message_start() {
 }
 
 #[test]
+fn stream_finish_chunk_carries_server_tool_use_for_search_billing() {
+    // Hosted web-search counts ride on the `message_delta` usage; the finish
+    // chunk must mirror them so streaming requests bill the same per-query
+    // fees as non-streaming ones.
+    let p = AnthropicProvider;
+    let start = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_stu_s\",\"model\":\"claude\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}";
+    p.transform_stream_chunk(start).expect("ok");
+    let delta = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3,\"server_tool_use\":{\"web_search_requests\":2}}}";
+    let out = p
+        .transform_stream_chunk(delta)
+        .expect("ok")
+        .expect("finish chunk");
+    assert_eq!(out["usage"]["server_tool_use"]["web_search_requests"], 2);
+}
+
+#[test]
 fn stream_finish_chunk_keeps_message_delta_cache_when_present() {
     // Normal path: when the finish event itself reports cache tokens, those
     // values win over the stashed ones from message_start (no overwrite).

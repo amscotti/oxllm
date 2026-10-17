@@ -185,10 +185,29 @@ pub(crate) fn extract_usage(value: &Value) -> Option<oxllm_core::UsageSummary> {
     // Web-search requests charged for the call. Read from the OpenAI-standard
     // `prompt_tokens_details.web_search_requests` (OpenAI/xAI web-search) or
     // Perplexity's `usage.num_search_queries` / top-level `search_queries`.
+    // Anthropic-family hosted web search reports per-tool counts under
+    // `usage.server_tool_use` (mirrored into the chat shape by the Anthropic
+    // transform), and native Responses bodies report tool usage under
+    // `tool_usage` (top-level or inside `usage`) — all map onto the same
+    // per-query billing bucket.
     let web_search_requests = input_bucket("web_search_requests")
         .or_else(|| usage.get("num_search_queries").and_then(|v| v.as_u64()))
         .or_else(|| value.get("num_search_queries").and_then(|v| v.as_u64()))
-        .or_else(|| usage.get("search_queries").and_then(|v| v.as_u64()));
+        .or_else(|| usage.get("search_queries").and_then(|v| v.as_u64()))
+        .or_else(|| {
+            usage
+                .get("server_tool_use")
+                .and_then(|tool| tool.get("web_search_requests"))
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            value
+                .get("tool_usage")
+                .or_else(|| usage.get("tool_usage"))
+                .and_then(|tool| tool.get("web_search"))
+                .and_then(|web| web.get("num_requests"))
+                .and_then(Value::as_u64)
+        });
 
     Some(oxllm_core::UsageSummary {
         prompt_tokens: prompt_normalized,
@@ -323,6 +342,29 @@ mod tests {
         assert_eq!(usage.cache_creation_1h_input_tokens, Some(40));
         assert_eq!(usage.reasoning_tokens, Some(12));
         assert_eq!(usage.total_tokens, 30);
+    }
+
+    #[test]
+    fn anthropic_server_tool_use_web_search_is_billed_per_query() {
+        let usage = extract_usage(&json!({"usage":{
+            "input_tokens":100,"output_tokens":10,
+            "server_tool_use":{"web_search_requests":3,"tool_search_requests":2}
+        }}))
+        .expect("native usage");
+        assert_eq!(usage.web_search_requests, Some(3));
+    }
+
+    #[test]
+    fn responses_tool_usage_web_search_is_billed_per_query() {
+        for body in [
+            json!({"usage":{"input_tokens":100,"output_tokens":10,
+                "tool_usage":{"web_search":{"num_requests":4}}}}),
+            json!({"tool_usage":{"web_search":{"num_requests":4}},
+                "usage":{"input_tokens":100,"output_tokens":10}}),
+        ] {
+            let usage = extract_usage(&body).expect("native usage");
+            assert_eq!(usage.web_search_requests, Some(4));
+        }
     }
 
     #[test]

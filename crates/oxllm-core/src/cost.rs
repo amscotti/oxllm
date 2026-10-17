@@ -1410,11 +1410,50 @@ mod tests {
         u.web_search_requests = Some(3);
         let cost = calculate_cost("perplexity/sonar", &u).expect("sonar priced");
         let token_cost = 100.0 * 1e-6 + 50.0 * 1e-6;
-        let search_cost = 3.0 * 0.005;
+        let search_cost = 3.0 * 0.008;
         assert!(
             (cost - (token_cost + search_cost)).abs() < 1e-9,
             "got {cost}, expected {}",
             token_cost + search_cost
+        );
+    }
+
+    #[test]
+    fn claude_hosted_web_search_bills_per_query_across_surfaces() {
+        // Anthropic-family hosted web search reports per-tool counts under
+        // `usage.server_tool_use`; every shipping surface carries the same
+        // $0.01/query rate on its card. Compare against the same usage
+        // without search requests so per-surface token rates stay irrelevant.
+        for model in [
+            "claude-haiku-5-5",
+            "anthropic/claude-haiku-5-5",
+            "us.anthropic.claude-haiku-5-5",
+            "bedrock/us.anthropic.claude-haiku-5-5",
+            "bedrock_mantle/anthropic.claude-haiku-5-5",
+            "azure_ai/claude-haiku-5-5",
+            "vertex_ai/claude-haiku-5-5",
+        ] {
+            let mut u = usage(100, 50);
+            u.web_search_requests = Some(3);
+            let with_search = calculate_cost(model, &u).unwrap_or_else(|| panic!("{model} priced"));
+            u.web_search_requests = None;
+            let without_search =
+                calculate_cost(model, &u).unwrap_or_else(|| panic!("{model} priced"));
+            assert!(
+                ((with_search - without_search) - 3.0 * 0.01).abs() < 1e-9,
+                "{model}: search delta {}",
+                with_search - without_search
+            );
+        }
+        // A card without a rate keeps billing zero rather than guessing.
+        let mut u = usage(100, 50);
+        u.web_search_requests = Some(3);
+        let with_search = calculate_cost("claude-3-7-sonnet-20250219", &u).expect("priced");
+        u.web_search_requests = None;
+        let without_search = calculate_cost("claude-3-7-sonnet-20250219", &u).expect("priced");
+        assert!(
+            (with_search - without_search).abs() < 1e-12,
+            "unrated card must not bill search"
         );
     }
 
