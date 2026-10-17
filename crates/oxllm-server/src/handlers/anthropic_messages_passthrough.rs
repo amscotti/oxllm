@@ -27,13 +27,16 @@ use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
-use crate::handlers::anthropic_common::extract_request_model;
+use crate::handlers::anthropic_common::{
+    anthropic_error_response, extract_request_model, status_to_anthropic_error_type,
+};
 use crate::pipeline::{
-    PassthroughMode, PassthroughRequest, forward_with_mode, vetted_client_headers,
+    PassthroughMode, PassthroughRequest, forward_with_mode, preserved_response_headers,
+    vetted_client_headers,
 };
 use crate::state::SharedState;
 
@@ -71,9 +74,39 @@ pub async fn messages_passthrough(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    // Local failures (validation, ACL, hooks, routing) render the Anthropic
+    // error envelope so an Anthropic SDK client on this native route never
+    // has to parse the gateway's default OpenAI shape — matching the
+    // reference anthropic endpoints, which wrap every handler-raised
+    // exception via `transform_to_anthropic_error`. Upstream failures are
+    // unaffected: the hooked-raw tier relays provider responses verbatim as
+    // `Ok` values and never reaches this wrapper.
+    match messages_passthrough_inner(state, auth, headers, body).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            let status = error.status;
+            let message = error.message.clone();
+            let preserved = preserved_response_headers(error.into_response().headers());
+            Ok(anthropic_error_response(
+                status,
+                status_to_anthropic_error_type(status),
+                &message,
+                &preserved,
+            ))
+        }
+    }
+}
+
+async fn messages_passthrough_inner(
+    state: SharedState,
+    auth: AuthUser,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let state = state.load_full();
     let model = extract_request_model(&body)?;
     forward_with_mode(
-        &state.load_full(),
+        &state,
         &auth,
         PassthroughMode::HookedRaw {
             upstream_path: "messages".to_string(),

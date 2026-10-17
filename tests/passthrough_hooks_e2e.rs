@@ -1397,3 +1397,87 @@ async fn hooked_raw_does_not_meter_anthropic_count_tokens() {
         "count_tokens must remain free (got {spend:?})"
     );
 }
+
+#[tokio::test]
+async fn anthropic_messages_passthrough_local_errors_use_the_anthropic_envelope() {
+    let mock = MockServer::start();
+    // The upstream mock only serves the relay leg: local failures below must
+    // never reach it. The body carries fields outside the wrapper's
+    // construction set so verbatim relay is distinguishable from a re-wrap.
+    let upstream_error = mock.mock(|when, then| {
+        when.method(httpmock::Method::POST);
+        then.status(429).json_body(json!({
+            "type":"error",
+            "error":{"type":"rate_limit_error","message":"upstream throttled","marker":"verbatim"},
+            "request_id":"upstream-123"
+        }));
+    });
+    let mut config = proxy_config_with_rpm(&mock.base_url(), None);
+    add_anthropic_deployment(&mut config, &mock.base_url());
+    let (handle, _) = start_oxllm(config).await.unwrap();
+    let client = reqwest::Client::new();
+
+    // Local failure (invalid JSON body): the Anthropic error envelope, not
+    // the gateway's default OpenAI shape (reference anthropic endpoints wrap
+    // every handler-raised ProxyException via transform_to_anthropic_error).
+    let response = client
+        .post(handle.url("/anthropic/v1/messages"))
+        .bearer_auth(MASTER_KEY)
+        .header("content-type", "application/json")
+        .body("{not json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "error", "{body}");
+    assert_eq!(body["error"]["type"], "invalid_request_error", "{body}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| !m.is_empty()),
+        "{body}"
+    );
+
+    // Local failure (unknown model): envelope shape regardless of status.
+    let response = client
+        .post(handle.url("/anthropic/v1/messages"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({
+            "model":"no-such-model",
+            "messages":[{"role":"user","content":"hi"}],
+            "max_tokens":10
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "error", "{status} {body}");
+    assert!(body["error"]["type"].is_string(), "{status} {body}");
+
+    // Upstream error responses relay verbatim: the wrapper must never touch
+    // a provider-rendered failure.
+    let response = client
+        .post(handle.url("/anthropic/v1/messages"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({
+            "model":"claude",
+            "messages":[{"role":"user","content":"hi"}],
+            "max_tokens":10
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 429);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["message"], "upstream throttled", "{body}");
+    assert_eq!(body["error"]["type"], "rate_limit_error", "{body}");
+    // The provider-only fields survive: a wrapper re-write would rebuild the
+    // error object from status+message and drop both markers.
+    assert_eq!(body["error"]["marker"], "verbatim", "{body}");
+    assert_eq!(body["request_id"], "upstream-123", "{body}");
+    upstream_error.assert_hits(1);
+
+    shutdown(handle).await;
+}

@@ -493,7 +493,9 @@ errors retain their status; output constraints are not removed to evade them.
 Locally unresolved inference models return 400 after fallback handling, including
 native embeddings, token counting and realtime setup. OpenAI-shaped errors retain
 `code: model_not_found`; translated Messages errors use Anthropic's
-`invalid_request_error` envelope. Configured groups whose deployments are
+`invalid_request_error` envelope, and the native `/anthropic/v1/messages`
+passthrough wraps its own local failures the same way — upstream-rendered
+failures still relay their provider bodies unchanged. Configured groups whose deployments are
 temporarily unavailable return 429 `proxy_rate_limited`, preserving the
 distinction between an invalid selector and retryable unavailability.
 Missing resources and genuine upstream 404s retain 404; local upstream deadlines
