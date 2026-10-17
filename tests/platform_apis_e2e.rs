@@ -1657,6 +1657,19 @@ async fn token_counter_rejects_prompt_beside_messages() {
     );
 
     // An empty messages array is not a usable conversation: prompt alone counts.
+    let prompt_only = client
+        .post(handle.url("/utils/token_counter"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({
+            "model": "gpt-4o",
+            "prompt": "count me"
+        }))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(prompt_only.status(), 200);
+    let prompt_only: Value = prompt_only.json().await.expect("json body");
+
     let resp = client
         .post(handle.url("/utils/token_counter"))
         .bearer_auth(MASTER_KEY)
@@ -1669,6 +1682,23 @@ async fn token_counter_rejects_prompt_beside_messages() {
         .await
         .expect("request succeeds");
     assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+    let with_empty: Value = resp.json().await.expect("json body");
+    assert_eq!(
+        with_empty["total_tokens"], prompt_only["total_tokens"],
+        "empty containers must not shadow the prompt"
+    );
+
+    // An empty prompt is present input, not a validation failure: 200 with 0.
+    let resp = client
+        .post(handle.url("/utils/token_counter"))
+        .bearer_auth(MASTER_KEY)
+        .json(&json!({"model": "gpt-4o", "prompt": ""}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+    let empty: Value = resp.json().await.expect("json body");
+    assert_eq!(empty["total_tokens"].as_u64(), Some(0));
 
     let _ = handle.shutdown_tx.send(());
 }

@@ -105,15 +105,16 @@ pub async fn token_counter(
         auth.user_models.as_deref(),
     )?;
 
-    // The reference rejects with 400 when none of prompt/messages/contents is present
-    // (proxy_server.py:10955-10956). `contents` (Gemini shape) satisfies the
-    // contract; `estimate_request_tokens` counts `parts[*].text` best-effort,
-    // and the reference additionally routes through Google's `/countTokens` API when
-    // `call_endpoint=True` (not wired here — local counting only).
-    let has_prompt = request
-        .get("prompt")
-        .and_then(|v| v.as_str())
-        .is_some_and(|v| !v.is_empty());
+    // The reference rejects with 400 only when prompt, messages AND contents
+    // are ALL absent (proxy_server.py `count_request_tokens`: `prompt is None
+    // and messages is None and contents is None`). A present-but-empty value
+    // (`prompt: ""`, `messages: []`, `contents: []`) is valid input that
+    // counts as zero tokens, not a validation failure. `contents` (Gemini
+    // shape) satisfies the contract; `estimate_request_tokens` counts
+    // `parts[*].text` best-effort, and the reference additionally routes
+    // through Google's `/countTokens` API when `call_endpoint=True`
+    // (not wired here — local counting only).
+    let has_prompt = request.get("prompt").and_then(|v| v.as_str()).is_some();
     let has_messages = request.get("messages").and_then(|v| v.as_array()).is_some();
     let has_contents = request.get("contents").and_then(|v| v.as_array()).is_some();
     if !has_prompt && !has_messages && !has_contents {
@@ -134,10 +135,15 @@ pub async fn token_counter(
     let mut request = request;
     // A `prompt` sent next to a usable conversation is ambiguous — the local
     // estimator would silently ignore it. Reject by default (reference
-    // 2dc6aafa6b) and drop the prompt under drop_params instead; the
-    // per-deployment override wins over the global flag, matching every
-    // other drop_params resolution.
-    if has_prompt
+    // `count_request_tokens`: `if prompt and not conversation_empty`, so an
+    // EMPTY prompt never conflicts) and drop the prompt under drop_params
+    // instead; the per-deployment override wins over the global flag,
+    // matching every other drop_params resolution.
+    let truthy_prompt = request
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty());
+    if truthy_prompt
         && (request["messages"]
             .as_array()
             .is_some_and(|m| !m.is_empty())
@@ -213,20 +219,60 @@ pub async fn token_counter(
     if model_used != model {
         count_body["model"] = json!(model_used);
     }
-    // The reference local fallback counts `tools` alongside a conversation
-    // (2dc6aafa6b: `counted_tools = tools if counted_messages is not None`)
-    // and skips them for prompt-only counting. Mirror that: strip
-    // `tools`/`tool_choice` only when there is no usable conversation.
-    let counts_conversation = count_body["messages"]
+    // Mirror the reference's counting-input ladder (`count_request_tokens`):
+    // a usable conversation counts as-is (tools included). Without one, a
+    // truthy prompt counts as the prompt — wrapped into a user turn when
+    // tools accompany it, exactly like the reference's `prompt_turn`, so the
+    // tool schemas count too (`counted_tools = tools if counted_messages is
+    // not None`); as raw text otherwise, with empty conversation containers
+    // removed so they cannot shadow the prompt. With no truthy prompt, tools
+    // survive only when `messages` is a usable array (the reference's
+    // `counted_messages` is `[]`, not `None`, for an empty list) — a
+    // contents-only body counts its (empty) contents as zero. `tool_choice`
+    // is never part of the reference count, so it stays stripped on every
+    // prompt-shaped path.
+    let conversation = count_body["messages"]
         .as_array()
         .is_some_and(|m| !m.is_empty())
         || count_body["contents"]
             .as_array()
             .is_some_and(|c| !c.is_empty());
-    if !counts_conversation {
-        if let Some(obj) = count_body.as_object_mut() {
-            obj.remove("tools");
-            obj.remove("tool_choice");
+    let prompt_text = count_body
+        .get("prompt")
+        .and_then(Value::as_str)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string);
+    let has_tools = count_body
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|t| !t.is_empty());
+    if !conversation {
+        if let Some(prompt) = prompt_text {
+            if has_tools {
+                count_body["messages"] = json!([{"role": "user", "content": prompt}]);
+                if let Some(obj) = count_body.as_object_mut() {
+                    obj.remove("prompt");
+                    obj.remove("contents");
+                    obj.remove("tool_choice");
+                }
+            } else if let Some(obj) = count_body.as_object_mut() {
+                for key in ["messages", "contents", "tools", "tool_choice"] {
+                    obj.remove(key);
+                }
+            }
+        } else {
+            // No truthy prompt: tools survive only when `messages` is a usable
+            // ARRAY (see the ladder comment above).
+            let messages_is_array = count_body
+                .get("messages")
+                .and_then(Value::as_array)
+                .is_some();
+            if let Some(obj) = count_body.as_object_mut() {
+                if !messages_is_array {
+                    obj.remove("tools");
+                }
+                obj.remove("tool_choice");
+            }
         }
     }
     let prompt_tokens =
@@ -336,6 +382,107 @@ mod tests {
             .await
             .expect("allowed model must succeed");
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    async fn count(shared: &SharedState, body: String) -> serde_json::Value {
+        let resp = token_counter(
+            State(shared.clone()),
+            Extension(AuthUser::open()),
+            Bytes::from(body),
+        )
+        .await
+        .expect("count must succeed");
+        assert_eq!(resp.status(), StatusCode::OK);
+        read_json(resp).await
+    }
+
+    const TOOL: &str = r#"{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}"#;
+
+    #[tokio::test]
+    #[serial_test::serial(token_counter)]
+    async fn token_counter_empty_conversations_do_not_shadow_the_prompt() {
+        // The reference treats empty `messages`/`contents` arrays as "no
+        // conversation", so a truthy prompt still counts as text.
+        let shared = shared_state();
+        let base: u64 = count(
+            &shared,
+            r#"{"model":"gpt-4o","prompt":"hello world"}"#.into(),
+        )
+        .await["total_tokens"]
+            .as_u64()
+            .unwrap();
+        assert!(base > 0);
+        for body in [
+            r#"{"model":"gpt-4o","prompt":"hello world","messages":[]}"#,
+            r#"{"model":"gpt-4o","prompt":"hello world","contents":[]}"#,
+        ] {
+            let with_empty = count(&shared, body.into()).await;
+            assert_eq!(with_empty["total_tokens"].as_u64(), Some(base), "{body}");
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(token_counter)]
+    async fn token_counter_prompt_with_tools_counts_the_tool_schemas() {
+        // A prompt-only request WITH tools wraps the prompt into a user turn
+        // so the tool schemas are counted alongside it (reference
+        // `counted_tools = tools if counted_messages is not None`).
+        let shared = shared_state();
+        let prompt_only = count(&shared, r#"{"model":"gpt-4o","prompt":"hi"}"#.into()).await;
+        let tools_only = count(
+            &shared,
+            format!(r#"{{"model":"gpt-4o","messages":[],"tools":[{TOOL}]}}"#),
+        )
+        .await;
+        let both = count(
+            &shared,
+            format!(r#"{{"model":"gpt-4o","prompt":"hi","tools":[{TOOL}]}}"#),
+        )
+        .await;
+        let prompt = prompt_only["total_tokens"].as_u64().unwrap();
+        let tools = tools_only["total_tokens"].as_u64().unwrap();
+        let combined = both["total_tokens"].as_u64().unwrap();
+        assert!(
+            combined > prompt && combined > tools,
+            "prompt+tools must count both: prompt={prompt} tools={tools} combined={combined}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(token_counter)]
+    async fn token_counter_empty_prompt_counts_zero() {
+        // `prompt: ""` is present input, not a validation failure: the
+        // reference counts it as zero tokens with 200.
+        let shared = shared_state();
+        let body = count(&shared, r#"{"model":"gpt-4o","prompt":""}"#.into()).await;
+        assert_eq!(body["total_tokens"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(token_counter)]
+    async fn token_counter_messages_array_keeps_tools_but_contents_array_drops_them() {
+        // `messages: []` with tools keeps counting the schemas (the
+        // reference's `counted_messages is not None` covers the empty list);
+        // a contents-only body has no counted messages, so its tools are
+        // skipped and the empty contents count as zero.
+        let shared = shared_state();
+        let with_messages = count(
+            &shared,
+            format!(r#"{{"model":"gpt-4o","messages":[],"tools":[{TOOL}]}}"#),
+        )
+        .await;
+        assert!(
+            with_messages["total_tokens"]
+                .as_u64()
+                .is_some_and(|n| n > 3),
+            "tools must survive an empty messages array: {with_messages}"
+        );
+        let contents_only = count(
+            &shared,
+            format!(r#"{{"model":"gpt-4o","contents":[],"tools":[{TOOL}]}}"#),
+        )
+        .await;
+        assert_eq!(contents_only["total_tokens"].as_u64(), Some(0));
     }
 
     async fn read_json(resp: axum::response::Response) -> serde_json::Value {
@@ -476,11 +623,12 @@ mod tests {
     }
 
     // The reference local fallback counts `tools` alongside a conversation
-    // (2dc6aafa6b) but ignores them for prompt-only counting; the billing
-    // pre-call estimate deliberately always counts tools.
+    // (2dc6aafa6b) and alongside a prompt wrapped into a user turn; a bare
+    // prompt without tools stays a raw-text count. The billing pre-call
+    // estimate deliberately always counts tools.
     #[tokio::test]
     #[serial_test::serial(token_counter)]
-    async fn token_counter_counts_tools_with_conversations_not_prompts() {
+    async fn token_counter_counts_tools_with_conversations_and_prompt_turns() {
         let shared = shared_state();
         let plain = Bytes::from(
             r#"{"model":"gpt-4o","messages":[{"role":"user","content":"weather in paris?"}]}"#,
@@ -510,8 +658,9 @@ mod tests {
             "a conversation with tools must count them (reference 2dc6aafa6b)"
         );
 
-        // Prompt-only counting ignores tools: the reference sends
-        // `counted_tools = None` when there is no conversation.
+        // A prompt WITHOUT tools stays a raw-text count; a prompt WITH tools
+        // wraps into a counted user turn (reference `prompt_turn`), so the
+        // tool schemas join the count.
         let prompt_only = Bytes::from(
             r#"{"model":"gpt-4o","prompt":"weather in paris?","tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}]}"#,
         );
@@ -532,9 +681,12 @@ mod tests {
                 .expect("prompt body must succeed"),
         )
         .await;
-        assert_eq!(
-            with["total_tokens"], without["total_tokens"],
-            "prompt-only counting ignores tools (reference parity)"
+        assert!(
+            with["total_tokens"].as_u64().unwrap() > without["total_tokens"].as_u64().unwrap(),
+            "prompt+tools must wrap the prompt into a counted turn (reference parity): \
+             with={} without={}",
+            with["total_tokens"],
+            without["total_tokens"]
         );
     }
 

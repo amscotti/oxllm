@@ -606,7 +606,9 @@ missing native counters. A missing native result returns 503 with code
 boolean or null. Model ACLs and the utility work limit apply to both paths. A
 `prompt` sent beside a non-empty `messages`/`contents` array is rejected unless
 drop_params drops the prompt; the local estimate counts `tools` alongside a
-conversation but not for prompt-only counting.
+conversation and alongside a prompt (which wraps into a user turn), but skips
+them for a bare prompt. Present-but-empty inputs are valid: `prompt: ""`
+counts as zero and empty `messages`/`contents` arrays never shadow a prompt.
 
 ### Anthropic workload identity federation
 

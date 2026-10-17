@@ -504,9 +504,9 @@ pub fn estimate_request_tokens(request: &Value) -> u64 {
     // compact TypeScript-ish rendering (`_format_function_definitions`) plus a
     // flat `+9` (`−4` with a system message): the JSON serialization includes
     // quotes/braces and typically counts ~1.2–2× higher. For the TPM/budget
-    // reservation this over-estimate is the safe direction; the `/utils/
-    // token_counter` handler strips `tools` when reference response parity is
-    // required instead.
+    // reservation this over-estimate is the safe direction; the
+    // `/utils/token_counter` handler feeds tools into the estimate exactly
+    // where the reference counts them and strips them where it does not.
     if let Some(tools) = request.get("tools").and_then(|v| v.as_array()) {
         for tool in tools {
             let serialized = serde_json::to_string(tool).unwrap_or_default();

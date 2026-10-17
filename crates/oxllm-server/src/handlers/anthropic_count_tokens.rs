@@ -145,8 +145,21 @@ pub(crate) async fn count_at_provider(
         .map_or(deployment.oxllm_params.model.as_str(), |(_, model)| model)
         .to_string();
     let mut input = request.clone();
-    if input.get("messages").and_then(Value::as_array).is_none() {
-        let Some(prompt) = input.get("prompt").and_then(Value::as_str) else {
+    // The reference's hosted counters treat an EMPTY messages array like no
+    // messages (`if not messages: return None`) — counting falls back to the
+    // local estimate instead of offering the provider a zero-message body it
+    // must reject. A prompt is wrapped into a user turn only when TRUTHY,
+    // matching `bool(prompt)`.
+    let has_empty_messages = input
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| messages.is_empty());
+    if input.get("messages").and_then(Value::as_array).is_none() || has_empty_messages {
+        let Some(prompt) = input
+            .get("prompt")
+            .and_then(Value::as_str)
+            .filter(|prompt| !prompt.is_empty())
+        else {
             return Ok(None);
         };
         input["messages"] = json!([{"role":"user","content":prompt}]);
@@ -421,6 +434,56 @@ router_settings:
                     .unwrap();
                 assert_eq!(bytes.as_ref(), body.as_bytes(), "{model}: {status}");
                 mock.assert_hits_async(1).await;
+            }
+        }
+    }
+
+    #[cfg(feature = "platform-apis")]
+    #[tokio::test]
+    async fn utility_count_tokens_prompt_handling_matches_reference_truthiness() {
+        // The provider is offered a counted body only when there is something
+        // to count: an empty prompt or an empty messages array falls back to
+        // the local estimate (the reference's hosted counters return None for
+        // falsy messages and wrap only `bool(prompt)` truths), while a truthy
+        // prompt is wrapped into a user turn and actually sent.
+        for (model, base_path, path, _, _, _) in HOSTED_COUNTERS {
+            for (input, expected_calls) in [
+                (json!({"model": "counted", "prompt": ""}), 0),
+                (json!({"model": "counted"}), 0),
+                (json!({"model": "counted", "messages": []}), 0),
+                (json!({"model": "counted", "messages": [], "prompt": ""}), 0),
+                (json!({"model": "counted", "prompt": "hello"}), 1),
+                (
+                    json!({"model": "counted", "messages": [], "prompt": "hello"}),
+                    1,
+                ),
+            ] {
+                let upstream = MockServer::start_async().await;
+                let state = state(model, &upstream.url(base_path));
+                let mock = upstream
+                    .mock_async(|when, then| {
+                        when.method(httpmock::Method::POST).path(path);
+                        then.status(200).json_body(json!({"input_tokens": 7}));
+                    })
+                    .await;
+
+                let result =
+                    count_at_provider(&state.load_full(), &AuthUser::open(), &input, "counted")
+                        .await
+                        .unwrap_or_else(|error| panic!("{model} {input}: {error:?}"));
+
+                if expected_calls == 0 {
+                    assert_eq!(
+                        result, None,
+                        "{model} {input}: nothing countable must not call the provider"
+                    );
+                } else {
+                    let (tokens, _) = result.unwrap_or_else(|| {
+                        panic!("{model} {input}: a truthy prompt must be counted upstream")
+                    });
+                    assert_eq!(tokens, 7, "{model} {input}");
+                }
+                mock.assert_hits_async(expected_calls).await;
             }
         }
     }
