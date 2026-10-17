@@ -1268,7 +1268,14 @@ pub(crate) fn apply_drop_params(
     );
     crate::native_output_policy::ensure_preserved(&requested_output, &request)?;
 
-    let mut transformed = chat.transform_request(&request, deployment)?;
+    // Providers may apply value-aware dropping after the top-level key filter.
+    // Resolve the global policy onto the deployment without exposing a gateway
+    // control in the request body. Explicit deployment false still wins.
+    let mut transform_deployment = std::borrow::Cow::Borrowed(deployment);
+    if drop_params && deployment.oxllm_params.drop_params.is_none() {
+        transform_deployment.to_mut().oxllm_params.drop_params = Some(true);
+    }
+    let mut transformed = chat.transform_request(&request, &transform_deployment)?;
     if crate::native_output_policy::has_message_formats(&request)
         && !uses_anthropic_messages_wire(deployment, &transformed)
     {
@@ -1276,7 +1283,12 @@ pub(crate) fn apply_drop_params(
     }
     let native_output =
         crate::native_output_policy::native_contract(&requested_output, &transformed)?;
-    let mapped = chat.supported_params();
+    // Bedrock intentionally publishes no exhaustive allow-list, but consumes
+    // service_tier by renaming it (Converse) or omitting it (Invoke). Explicit
+    // allow-list restoration must not put the raw spelling back on the wire.
+    let mapped = chat
+        .supported_params()
+        .or_else(|| (deployment.provider_slug() == "bedrock").then(|| vec!["service_tier"]));
     restore_allowed_params(
         &mut transformed,
         &request,
@@ -1595,6 +1607,98 @@ mod tests {
         assert!(out.get("logprobs").is_none());
         assert_eq!(out["max_tokens"], 100);
         assert_eq!(out["model"], "claude");
+    }
+
+    #[tokio::test]
+    async fn service_tier_drop_policy_preserves_valid_values_and_drops_only_invalid_ones() {
+        for model in ["anthropic/claude-sonnet-4-5", "azure_ai/claude-sonnet-4-5"] {
+            for global in [false, true] {
+                for local in [None, Some(false), Some(true)] {
+                    let mut state = state_for_openai_test();
+                    std::sync::Arc::make_mut(&mut state.config)
+                        .oxllm_settings
+                        .drop_params = Some(global);
+                    let deployment = Deployment {
+                        oxllm_params: OxllmParams {
+                            model: model.into(),
+                            api_base: Some("https://example.test/anthropic/v1".into()),
+                            drop_params: local,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                    let provider = state.registry.resolve_for_deployment(&deployment).unwrap();
+                    let chat = provider.chat().unwrap();
+                    for (tier, expected) in [
+                        ("auto", "auto"),
+                        ("default", "standard_only"),
+                        ("standard_only", "standard_only"),
+                    ] {
+                        let request = json!({"messages":[{"role":"user","content":"hello"}],"service_tier":tier});
+                        let body = apply_drop_params(&state, chat, &request, &deployment)
+                            .unwrap()
+                            .unwrap();
+                        assert_eq!(
+                            body["service_tier"], expected,
+                            "{model} global={global} local={local:?}"
+                        );
+                    }
+                    let request = json!({"messages":[{"role":"user","content":"hello"}],"service_tier":"flex"});
+                    let result = apply_drop_params(&state, chat, &request, &deployment);
+                    if local.unwrap_or(global) {
+                        assert!(result.unwrap().unwrap().get("service_tier").is_none());
+                        let mut allowed = deployment.clone();
+                        allowed.oxllm_params.allowed_openai_params =
+                            Some(vec!["service_tier".into()]);
+                        assert!(
+                            apply_drop_params(&state, chat, &request, &allowed)
+                                .unwrap()
+                                .unwrap()
+                                .get("service_tier")
+                                .is_none(),
+                            "invalid tier must not be restored by the allow list"
+                        );
+                    } else {
+                        assert!(
+                            matches!(result, Err(oxllm_core::Error::BadRequest(message)) if message.contains("service_tier"))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bedrock_allow_list_cannot_restore_a_translated_service_tier() {
+        let state = state_for_openai_test();
+        for converse in [false, true] {
+            let deployment = Deployment {
+                oxllm_params: OxllmParams {
+                    model: "bedrock/anthropic.claude-sonnet-4-5".into(),
+                    allowed_openai_params: Some(vec!["service_tier".into()]),
+                    extra: serde_json::from_value(json!({"use_converse_api":converse})).unwrap(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let request =
+                json!({"messages":[{"role":"user","content":"hello"}],"service_tier":"auto"});
+            let body = apply_drop_params(
+                &state,
+                &oxllm_providers::bedrock::BedrockProvider,
+                &request,
+                &deployment,
+            )
+            .unwrap()
+            .unwrap();
+            assert!(
+                body.get("service_tier").is_none(),
+                "raw tier must not be reinserted: {body}"
+            );
+            if converse {
+                assert_eq!(body["serviceTier"], json!({"type":"default"}));
+            }
+        }
     }
 
     /// `metadata.tags` never reaches a provider: real upstreams validate

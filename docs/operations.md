@@ -545,6 +545,14 @@ provider fields/tool-call IDs.
 
 ### Claude thinking budgets
 
+Direct Anthropic and Foundry Claude requests map `service_tier: "default"` to
+`"standard_only"`; `"auto"` and `"standard_only"` are preserved. Valid tiers
+remain active with `drop_params: true`; that policy drops only unmappable
+values. An explicit deployment `drop_params: false` overrides a global true
+setting and keeps unmappable values as local 400s. Bedrock Converse uses its
+own `serviceTier` mapping; allow-list restoration cannot reinsert the raw
+`service_tier` spelling onto its native body.
+
 On translated Claude routes (direct Anthropic, Foundry, Vertex and Bedrock
 Invoke/Converse), manual thinking budgets are clamped into
 `1024 <= thinking.budget_tokens < max_tokens` when that window exists. An explicit

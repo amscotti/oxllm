@@ -593,31 +593,36 @@ impl ChatProvider for AnthropicProvider {
         // `service_tier`: mapped onto Anthropic's tier for the routes that
         // accept it (direct Anthropic and Foundry Claude — reference
         // `SERVICE_TIER_PROVIDERS`). OpenAI's `default` becomes
-        // `standard_only`; unmappable values are client errors with a
-        // drop_params hint — and because the field is not advertised in
-        // `supported_params`, enabling drop_params strips it before this
-        // transform, mirroring the reference's drop-with-warning behavior.
+        // `standard_only`. Drop only unmappable values when the effective
+        // drop_params policy is enabled; key-based stripping cannot distinguish
+        // those values from supported ones. The host resolves global defaults
+        // onto the deployment before calling this pure transform.
         // Vertex Claude and Bedrock InvokeModel drop it — only the Anthropic
         // API routes accept it.
-        if let Some(tier) = request
-            .get("service_tier")
-            .filter(|value| !value.is_null())
-            .and_then(Value::as_str)
-        {
+        if let Some(tier) = request.get("service_tier").filter(|value| !value.is_null()) {
             match deployment.provider_slug() {
                 "anthropic" | "azure_ai" => {
-                    let mapped = match tier {
-                        "auto" => "auto",
-                        "default" | "standard_only" => "standard_only",
-                        other => {
+                    let mapped = match tier.as_str() {
+                        Some("auto") => Some("auto"),
+                        Some("default" | "standard_only") => Some("standard_only"),
+                        _ if deployment.oxllm_params.drop_params == Some(true) => {
+                            tracing::warn!(
+                                param = "service_tier",
+                                "dropping unmappable Anthropic service tier (drop_params=true)"
+                            );
+                            None
+                        }
+                        _ => {
                             return Err(oxllm_core::Error::BadRequest(format!(
-                                "{model} does not support service_tier='{other}'. Anthropic accepts \
+                                "{model} does not support service_tier={tier}. Anthropic accepts \
                                  'auto', 'standard_only', or OpenAI's 'default' (sent as \
                                  'standard_only'). To drop unsupported params, set drop_params = true."
                             )));
                         }
                     };
-                    out.insert("service_tier".to_string(), json!(mapped));
+                    if let Some(mapped) = mapped {
+                        out.insert("service_tier".to_string(), json!(mapped));
+                    }
                 }
                 _ => {}
             }
@@ -1017,11 +1022,8 @@ impl ChatProvider for AnthropicProvider {
             // Feature #2/#3: speed passthrough and web_search_options → hosted
             // tool are honored by `transform_request`, so advertise them so
             // `drop_params` doesn't strip them before the transform runs.
-            // `service_tier` is deliberately NOT listed: the host's
-            // drop_params strip then removes unmappable values before the
-            // transform (the reference's drop-with-warning behavior), while
-            // a kept value is mapped or rejected below.
             "speed",
+            "service_tier",
             "web_search_options",
             "context_management",
             // MCP server tools: `tools[]` already covers the `type: "url"` /

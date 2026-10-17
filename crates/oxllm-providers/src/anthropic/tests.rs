@@ -1489,6 +1489,23 @@ fn request_service_tier_maps_onto_the_anthropic_tier() {
     }
 }
 
+#[test]
+fn malformed_service_tiers_follow_the_effective_drop_policy() {
+    for drop_params in [false, true] {
+        let mut deployment = deployment();
+        deployment.oxllm_params.drop_params = Some(drop_params);
+        for tier in [json!(42), json!(true), json!({}), json!([])] {
+            let result = AnthropicProvider
+                .transform_request(&json!({"messages":[],"service_tier":tier}), &deployment);
+            if drop_params {
+                assert!(result.unwrap().get("service_tier").is_none());
+            } else {
+                assert!(matches!(result, Err(oxllm_core::Error::BadRequest(_))));
+            }
+        }
+    }
+}
+
 // --- Empty string content in user message ---
 // Empty content is rewritten to the reference placeholder instead of an
 // empty string (Anthropic rejects `content: ""`).
