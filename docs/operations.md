@@ -673,6 +673,15 @@ check. `enforce_model_rate_limits` is accepted as a declaration of deployment
 RPM/TPM enforcement, which runs for every selected deployment independently of
 the optional-filter list.
 
+`optional_pre_call_checks: [prompt_caching]` (with
+`oxllm_settings.prompt_caching_enabled: true`) pins cacheable prompt prefixes to
+the deployment whose provider-side cache is warm. Pins live 5 minutes by
+default; a request marking an ephemeral `cache_control` breakpoint with
+`ttl: "1h"` extends its pin to one hour when the serving model publishes a 1h
+cache-write rate, keeping affinity for as long as the cached entry can survive.
+On Bedrock Converse the same capability check forwards `ttl` onto `cachePoint`
+blocks, so a 1h pin never outlives the provider entry it tracks.
+
 `oxllm_settings.datadog_config` sends successful-request and terminal-failure
 logs, excluding cache-hit/master-key request events. Failure messages redact
 credential-shaped values. Adding `service_callback: [datadog]` enables separate

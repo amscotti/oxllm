@@ -111,15 +111,21 @@ pub(super) fn transform_request_converse_with_base_model(
     for msg in &request_messages {
         let role = msg.get("role").and_then(Value::as_str).unwrap_or("user");
         match role {
-            "system" | "developer" => accumulate_system_blocks(msg, &mut system_blocks),
+            "system" | "developer" => {
+                accumulate_system_blocks(msg, &mut system_blocks, feature_model)
+            }
             "user" => {
-                let blocks = convert_user_content(msg)?;
+                let blocks = convert_user_content(msg, feature_model)?;
                 if !blocks.is_empty() {
                     converse_messages.push(json!({"role": "user", "content": blocks}));
                 }
             }
             "assistant" => {
-                let blocks = convert_assistant_content(msg, is_anthropic_model(feature_model))?;
+                let blocks = convert_assistant_content(
+                    msg,
+                    is_anthropic_model(feature_model),
+                    feature_model,
+                )?;
                 if !blocks.is_empty() {
                     converse_messages.push(json!({"role": "assistant", "content": blocks}));
                 }
@@ -131,13 +137,13 @@ pub(super) fn transform_request_converse_with_base_model(
                 // `cachePoint` sibling block — matches the reference tool-
                 // result cache handling.
                 if has_cache_control(msg) || tool_result_content_has_cache_control(msg) {
-                    content.push(build_cache_point_block());
+                    content.push(build_cache_point_block(msg, feature_model));
                 }
                 converse_messages.push(json!({"role": "user", "content": content}));
             }
             _ => {
                 // Unknown role — treat as user (lenient fallback).
-                let blocks = convert_user_content(msg)?;
+                let blocks = convert_user_content(msg, feature_model)?;
                 if !blocks.is_empty() {
                     converse_messages.push(json!({"role": "user", "content": blocks}));
                 }
@@ -1211,10 +1217,51 @@ fn tool_result_content_has_cache_control(msg: &Value) -> bool {
 
 /// Build a Converse `cachePoint` content block from an OpenAI-style
 /// `cache_control` hint. The `type` is always `"default"` (the only value
-/// Bedrock's Converse API accepts). The reference optionally forwards a `ttl` for
-/// Claude 4.5 models; we keep the basic `{type: "default"}` form.
-fn build_cache_point_block() -> Value {
-    json!({"cachePoint": {"type": "default"}})
+/// Bedrock's Converse API accepts). A `ttl` of `"5m"`/`"1h"` is forwarded for
+/// models whose card publishes a 1h cache-write rate (reference
+/// `_build_cache_point_block`); other models keep the plain form.
+fn build_cache_point_block(carrier: &Value, model: &str) -> Value {
+    let mut block = json!({"cachePoint": {"type": "default"}});
+    // Bedrock accepts an explicit `ttl` ("5m"/"1h") on `cachePoint` for
+    // models whose card publishes a 1h cache-write rate (reference
+    // `_build_cache_point_block`). Anything else keeps the plain form.
+    if let Some(ttl) = cache_control_ttl(carrier)
+        && matches!(ttl, "5m" | "1h")
+        && bedrock_cache_point_ttl_supported(model)
+    {
+        block["cachePoint"]["ttl"] = json!(ttl);
+    }
+    block
+}
+
+/// The `cache_control.ttl` marked on the carrier itself or on one of its
+/// content parts — the same two levels `has_cache_control` scans.
+fn cache_control_ttl(carrier: &Value) -> Option<&str> {
+    let direct = carrier
+        .get("cache_control")
+        .and_then(|control| control.get("ttl"))
+        .and_then(Value::as_str);
+    direct.or_else(|| {
+        carrier
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|parts| {
+                parts.iter().find_map(|part| {
+                    part.get("cache_control")
+                        .and_then(|control| control.get("ttl"))
+                        .and_then(Value::as_str)
+                })
+            })
+    })
+}
+
+/// Whether the Bedrock model accepts a `cachePoint` `ttl`, decided by a
+/// published 1h cache-write rate on its card (presence-based, matching the
+/// reference `supports_bedrock_prompt_cache_ttl`).
+fn bedrock_cache_point_ttl_supported(model: &str) -> bool {
+    oxllm_core::lookup_pricing_with_provider(model, "bedrock")
+        .and_then(|pricing| pricing.cache_creation_input_token_cost_above_1hr)
+        .is_some()
 }
 
 /// Push every text fragment found in a system message's `content` into
@@ -1224,14 +1271,14 @@ fn build_cache_point_block() -> Value {
 /// `{cachePoint: {type: "default"}}` block is injected immediately after
 /// the text block — this is the standard Anthropic prompt-caching breakpoint
 /// pattern on Converse.
-fn accumulate_system_blocks(msg: &Value, out: &mut Vec<Value>) {
+fn accumulate_system_blocks(msg: &Value, out: &mut Vec<Value>, model: &str) {
     let content = &msg["content"];
     match content {
         Value::String(s) => {
             if !s.is_empty() {
                 out.push(json!({"text": s}));
                 if has_cache_control(msg) {
-                    out.push(build_cache_point_block());
+                    out.push(build_cache_point_block(msg, model));
                 }
             }
         }
@@ -1249,7 +1296,7 @@ fn accumulate_system_blocks(msg: &Value, out: &mut Vec<Value>) {
                         if !t.is_empty() {
                             out.push(json!({"text": t}));
                             if has_cache_control(elem) {
-                                out.push(build_cache_point_block());
+                                out.push(build_cache_point_block(msg, model));
                             }
                         }
                     }
@@ -1278,7 +1325,7 @@ fn accumulate_system_blocks(msg: &Value, out: &mut Vec<Value>) {
 /// call path. Empty text is dropped to avoid emitting blank content blocks
 /// (which Bedrock rejects). A `cache_control` hint on the message or a
 /// content block injects a trailing `{cachePoint: {type: "default"}}` block.
-fn convert_user_content(msg: &Value) -> Result<Vec<Value>> {
+fn convert_user_content(msg: &Value, model: &str) -> Result<Vec<Value>> {
     let content = &msg["content"];
     let mut blocks = Vec::new();
     match content {
@@ -1286,7 +1333,7 @@ fn convert_user_content(msg: &Value) -> Result<Vec<Value>> {
             if !s.is_empty() {
                 blocks.push(json!({"text": s}));
                 if has_cache_control(msg) {
-                    blocks.push(build_cache_point_block());
+                    blocks.push(build_cache_point_block(msg, model));
                 }
             }
         }
@@ -1302,7 +1349,7 @@ fn convert_user_content(msg: &Value) -> Result<Vec<Value>> {
                             if !t.is_empty() {
                                 blocks.push(json!({"text": t}));
                                 if has_cache_control(elem) {
-                                    blocks.push(build_cache_point_block());
+                                    blocks.push(build_cache_point_block(elem, model));
                                 }
                             }
                         }
@@ -1321,13 +1368,13 @@ fn convert_user_content(msg: &Value) -> Result<Vec<Value>> {
                     "image_url" => {
                         blocks.push(data_url_to_converse_media(obj)?);
                         if has_cache_control(elem) {
-                            blocks.push(build_cache_point_block());
+                            blocks.push(build_cache_point_block(elem, model));
                         }
                     }
                     "file" => {
                         blocks.push(openai_file_to_converse_document(obj)?);
                         if has_cache_control(elem) {
-                            blocks.push(build_cache_point_block());
+                            blocks.push(build_cache_point_block(elem, model));
                         }
                     }
                     _ => {}
@@ -1420,7 +1467,11 @@ fn tag_trailing_user_messages_as_guarded(messages: &mut [Value]) {
 /// and, on failure, fall back to `{}` so the block remains well-formed
 /// (Bedrock rejects non-object `input`). A `cache_control` hint on a text
 /// content block injects a trailing `{cachePoint: {type: "default"}}` block.
-fn convert_assistant_content(msg: &Value, require_signature: bool) -> Result<Vec<Value>> {
+fn convert_assistant_content(
+    msg: &Value,
+    require_signature: bool,
+    model: &str,
+) -> Result<Vec<Value>> {
     let content = &msg["content"];
     let tool_calls = &msg["tool_calls"];
     let mut blocks: Vec<Value> = crate::util::thinking_blocks_for_replay(msg, require_signature)?
@@ -1437,7 +1488,7 @@ fn convert_assistant_content(msg: &Value, require_signature: bool) -> Result<Vec
             if !s.is_empty() {
                 blocks.push(json!({"text": s}));
                 if has_cache_control(msg) {
-                    blocks.push(build_cache_point_block());
+                    blocks.push(build_cache_point_block(msg, model));
                 }
             }
         }
@@ -1460,7 +1511,7 @@ fn convert_assistant_content(msg: &Value, require_signature: bool) -> Result<Vec
                         if !t.is_empty() {
                             blocks.push(json!({"text": t}));
                             if has_cache_control(elem) {
-                                blocks.push(build_cache_point_block());
+                                blocks.push(build_cache_point_block(elem, model));
                             }
                         }
                     }

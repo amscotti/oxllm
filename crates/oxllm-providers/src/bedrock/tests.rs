@@ -3784,6 +3784,70 @@ mod converse_tests {
         assert_eq!(system[1]["cachePoint"]["type"], "default");
     }
 
+    /// A `cache_control.ttl` is forwarded onto the `cachePoint` for models
+    /// whose card publishes a 1h cache-write rate; unsupported models keep
+    /// the plain `{type: "default"}` form (reference `_build_cache_point_block`).
+    #[test]
+    fn converse_cache_point_ttl_forwarded_only_for_one_hour_capable_models() {
+        for (model, ttl, expect_ttl) in [
+            (
+                "anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "1h",
+                Some("1h"),
+            ),
+            (
+                "anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "5m",
+                Some("5m"),
+            ),
+            ("anthropic.claude-sonnet-4-20250514-v1:0", "1h", None),
+            ("anthropic.claude-sonnet-4-5-20250929-v1:0", "2h", None),
+        ] {
+            let req = json!({
+                "messages": [
+                    {"role": "system", "content": "You are helpful.",
+                     "cache_control": {"type": "ephemeral", "ttl": ttl}},
+                    {"role": "user", "content": "Hi"},
+                ],
+            });
+            let out =
+                converse::transform_request_converse(&req, model, &empty_extra()).expect("ok");
+            let point = &out["system"][1]["cachePoint"];
+            assert_eq!(point["type"], "default", "{model} ttl={ttl}");
+            match expect_ttl {
+                Some(expected) => assert_eq!(point["ttl"], expected, "{model} ttl={ttl}"),
+                None => assert!(point.get("ttl").is_none(), "{model} ttl={ttl}: {point}"),
+            }
+        }
+    }
+
+    /// A part-level `cache_control.ttl` rides on the cachePoint that follows
+    /// that part, not one synthesized for the whole message.
+    #[test]
+    fn converse_cache_point_ttl_follows_the_marked_content_part() {
+        let req = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "part 1"},
+                    {"type": "text", "text": "part 2",
+                     "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+                ],
+            }],
+        });
+        let out = converse::transform_request_converse(
+            &req,
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            &empty_extra(),
+        )
+        .expect("ok");
+        let content = out["messages"][0]["content"].as_array().expect("content");
+        assert_eq!(content[1]["text"], "part 2");
+        assert_eq!(content[2]["cachePoint"]["ttl"], "1h");
+        // The unmarked first part has no cachePoint of its own.
+        assert!(content[0].get("cachePoint").is_none());
+    }
+
     /// A block-level `cache_control` on a system content element injects a
     /// cachePoint after that specific text block.
     #[test]

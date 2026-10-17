@@ -934,8 +934,9 @@ async fn try_model_with_retries(
                             // threshold gates the write.
                             if let Some((hash, est_tokens)) = hash_tokens {
                                 if pcache.engages(deployment, est_tokens) {
+                                    let pin_ttl = pcache.pin_ttl_for(deployment, request_body);
                                     pcache
-                                        .pin(hash, &call_ctx.api_key_hash, &cooldown_key)
+                                        .pin(hash, &call_ctx.api_key_hash, &cooldown_key, pin_ttl)
                                         .await;
                                 }
                             }
