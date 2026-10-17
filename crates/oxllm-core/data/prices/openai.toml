@@ -3,7 +3,7 @@
 # Costs are USD per token.
 
 ["azure/ada"]
-input_cost_per_token = 1.000000e-7
+input_cost_per_token = 1.100000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 8191
 
@@ -319,8 +319,8 @@ max_input_tokens = 16384
 max_output_tokens = 4096
 
 ["azure/gpt-3.5-turbo-instruct-0914"]
-input_cost_per_token = 1.500000e-6
-output_cost_per_token = 2.000000e-6
+input_cost_per_token = 1.650000e-6
+output_cost_per_token = 2.200000e-6
 max_input_tokens = 4097
 
 ["azure/gpt-35-turbo"]
@@ -354,13 +354,13 @@ max_input_tokens = 16385
 max_output_tokens = 4096
 
 ["azure/gpt-35-turbo-instruct"]
-input_cost_per_token = 1.500000e-6
-output_cost_per_token = 2.000000e-6
+input_cost_per_token = 1.650000e-6
+output_cost_per_token = 2.200000e-6
 max_input_tokens = 4097
 
 ["azure/gpt-35-turbo-instruct-0914"]
-input_cost_per_token = 1.500000e-6
-output_cost_per_token = 2.000000e-6
+input_cost_per_token = 1.650000e-6
+output_cost_per_token = 2.200000e-6
 max_input_tokens = 4097
 
 ["azure/gpt-4"]
@@ -400,20 +400,20 @@ max_input_tokens = 32768
 max_output_tokens = 4096
 
 ["azure/gpt-4-turbo"]
-input_cost_per_token = 1.000000e-5
-output_cost_per_token = 3.000000e-5
+input_cost_per_token = 1.100000e-5
+output_cost_per_token = 3.300000e-5
 max_input_tokens = 128000
 max_output_tokens = 4096
 
 ["azure/gpt-4-turbo-2024-04-09"]
-input_cost_per_token = 1.000000e-5
-output_cost_per_token = 3.000000e-5
+input_cost_per_token = 1.100000e-5
+output_cost_per_token = 3.300000e-5
 max_input_tokens = 128000
 max_output_tokens = 4096
 
 ["azure/gpt-4-turbo-vision-preview"]
-input_cost_per_token = 1.000000e-5
-output_cost_per_token = 3.000000e-5
+input_cost_per_token = 1.100000e-5
+output_cost_per_token = 3.300000e-5
 max_input_tokens = 128000
 max_output_tokens = 4096
 
@@ -1109,17 +1109,17 @@ max_output_tokens = 100000
 cache_read_input_token_cost = 2.750000e-7
 
 ["azure/text-embedding-3-large"]
-input_cost_per_token = 1.300000e-7
+input_cost_per_token = 1.430000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 8192
 
 ["azure/text-embedding-3-small"]
-input_cost_per_token = 2.000000e-8
+input_cost_per_token = 2.200000e-8
 output_cost_per_token = 0.0
 max_input_tokens = 8192
 
 ["azure/text-embedding-ada-002"]
-input_cost_per_token = 1.000000e-7
+input_cost_per_token = 1.100000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 8192
 

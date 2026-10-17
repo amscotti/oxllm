@@ -674,3 +674,21 @@ cache_read_input_token_cost = 2.000000e-7
 output_cost_per_token_above_200k_tokens = 5.000000e-6
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
+
+["xai/grok-voice-latest"]
+mode = "realtime"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.333333e-3
+
+["xai/grok-voice-2.0"]
+mode = "realtime"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.333333e-3
+
+["xai/grok-voice-3.0"]
+mode = "realtime"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+input_cost_per_second = 1.333333e-3

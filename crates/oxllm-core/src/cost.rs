@@ -467,7 +467,12 @@ impl ModelPricing {
             && self.mode.as_deref().is_none_or(|mode| {
                 matches!(
                     mode,
-                    "chat" | "responses" | "completion" | "text_completion"
+                    // Realtime voice sessions bill per wall-clock second of
+                    // the live session (the reference's live-session
+                    // cost_calculation); audio_transcription stays excluded
+                    // because its seconds are media duration, not elapsed
+                    // request time.
+                    "chat" | "responses" | "completion" | "text_completion" | "realtime"
                 )
             })
     }
@@ -1416,6 +1421,35 @@ mod tests {
             "got {cost}, expected {}",
             token_cost + search_cost
         );
+    }
+
+    #[test]
+    fn realtime_voice_rows_bill_per_elapsed_second() {
+        // xAI grok-voice (and OpenAI live) sessions bill per wall-clock
+        // second of the live session; the rows must be per-second priced so
+        // duration settlement reaches them and lowest-cost routing does not
+        // read their zero token rates as free.
+        for model in [
+            "xai/grok-voice-latest",
+            "xai/grok-voice-2.0",
+            "xai/grok-voice-3.0",
+            "gpt-live-1",
+        ] {
+            let pricing = lookup_pricing(model).unwrap_or_else(|| panic!("{model} must be priced"));
+            assert!(
+                pricing.is_per_second_priced(),
+                "{model}: realtime rows must bill per elapsed second"
+            );
+            let rate = pricing
+                .input_cost_per_second
+                .or(pricing.cost_per_second_rate)
+                .unwrap_or_else(|| panic!("{model} per-second rate"));
+            assert!(rate > 0.0, "{model}");
+        }
+        // Audio transcription seconds are media duration, not elapsed
+        // request time — those rows stay off the wall-clock path.
+        let transcription = lookup_pricing("xai/grok-voice-transcribe-2.0").expect("priced");
+        assert!(!transcription.is_per_second_priced());
     }
 
     #[test]
@@ -3234,8 +3268,8 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
         );
         let ada = lookup_pricing("azure/ada").expect("azure/ada must be priced");
         assert!(
-            (ada.input_cost_per_token - 1.0e-7).abs() < 1e-15,
-            "azure/ada input rate must be 1.0e-7"
+            (ada.input_cost_per_token - 1.1e-7).abs() < 1e-15,
+            "azure/ada input rate must be 1.1e-7 (2026-10 Azure pricing sync)"
         );
     }
 
