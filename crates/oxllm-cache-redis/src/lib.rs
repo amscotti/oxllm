@@ -3,6 +3,18 @@
 //! Implements the [`oxllm_core::Cache`] trait backed by Redis. All data keys are
 //! prefixed with `{prefix}:` to avoid collisions. Uses `ConnectionManager` for
 //! automatic reconnection and connection pooling.
+//!
+//! Budget receipts use a reserved `__oxllm_budget_window__:{key}` companion
+//! within the same cache prefix. Lua reserves/returns its opaque generation
+//! atomically with the numeric counter; all cache writers invalidate generation
+//! on replacement and preserve its fixed lifetime. Positive adjustments and
+//! refunds apply only while that original admission window still exists.
+//!
+//! Standalone Redis only: the counter scripts address two keys (the counter
+//! and its companion), and Redis Cluster routes multi-key scripts to a single
+//! slot — two unprefixed-alike keys hash to different slots and every counter
+//! op would fail with CROSSSLOT. `ConnectionManager` speaks the standalone
+//! (or sentinel-primary) protocol; do not point `redis_url` at a cluster node.
 
 #![forbid(unsafe_code)]
 
@@ -12,7 +24,7 @@ mod inner {
 
     use async_trait::async_trait;
     use oxllm_core::Cache as CacheTrait;
-    use oxllm_core::{Error, IncrResult};
+    use oxllm_core::{CounterWindow, Error, IncrResult, WindowedIncrResult};
     use redis::AsyncCommands;
     use redis::Script;
     use redis::aio::{ConnectionManager, PubSubStream};
@@ -59,12 +71,19 @@ return {value, redis.call('PTTL', KEYS[1])}
     /// TOCTOU at the window edge that the previous multi-round-trip impl had.
     /// `INCRBYFLOAT` already returns a bulk string, so the f64 survives intact.
     const INCR_SCRIPT: &str = r#"
+local existed = redis.call('EXISTS', KEYS[1])
 local new_val = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
+if existed == 0 then redis.call('DEL', KEYS[2]) end
 if ARGV[2] ~= '' then
   local existing_ttl = redis.call('PTTL', KEYS[1])
   if existing_ttl < 0 then
     redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]))
   end
+end
+if redis.call('EXISTS', KEYS[2]) == 1 then
+  local ttl = redis.call('PTTL', KEYS[1])
+  if ttl >= 0 then redis.call('PEXPIRE', KEYS[2], ttl)
+  elseif ttl == -2 then redis.call('DEL', KEYS[2]) end
 end
 return new_val
 "#;
@@ -89,10 +108,12 @@ return new_val
     /// captured before `SET` (which clears expiry) and re-applied; the original
     /// window is stamped only on first creation (`PTTL < 0`).
     const INCR_IF_BELOW_SCRIPT: &str = r#"
-local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local raw = redis.call('GET', KEYS[1])
+local current = tonumber(raw or '0')
 local new_val = current + tonumber(ARGV[1])
 local ceiling = tonumber(ARGV[2])
 if new_val <= ceiling then
+  if not raw then redis.call('DEL', KEYS[2]) end
   local existing_ttl = redis.call('PTTL', KEYS[1])
   redis.call('SET', KEYS[1], string.format('%.17g', new_val))
   if existing_ttl >= 0 then
@@ -100,10 +121,81 @@ if new_val <= ceiling then
   elseif ARGV[3] ~= '' then
     redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[3]))
   end
+  if redis.call('EXISTS', KEYS[2]) == 1 then
+    local ttl = redis.call('PTTL', KEYS[1])
+    if ttl >= 0 then redis.call('PEXPIRE', KEYS[2], ttl)
+    elseif ttl == -2 then redis.call('DEL', KEYS[2]) end
+  end
   return {1, string.format('%.17g', new_val)}
 else
   return {0, string.format('%.17g', current)}
 end
+"#;
+
+    /// Replacement invalidates the old budget identity atomically, including
+    /// same-value SET/reset operations. Counter values remain plain numbers.
+    const SET_SCRIPT: &str = r#"
+redis.call('DEL', KEYS[2])
+redis.call('SET', KEYS[1], ARGV[1])
+if ARGV[2] ~= '' then redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2])) end
+return 1
+"#;
+
+    /// Reservation, ceiling, generation and fixed TTL are one atomic write.
+    /// A conditional top-up cannot silently reserve in a replacement window.
+    const WINDOWED_RESERVE_SCRIPT: &str = r#"
+local raw = redis.call('GET', KEYS[1])
+local window = raw and redis.call('GET', KEYS[2]) or false
+if ARGV[4] ~= '' and (not raw or window ~= ARGV[4]) then
+  return {2, '0', ''}
+end
+local current = tonumber(raw or '0')
+if not current or current ~= current or math.abs(current) == math.huge then
+  return redis.error_reply('non-finite or corrupt budget counter')
+end
+local value = current + tonumber(ARGV[1])
+if value ~= value or math.abs(value) == math.huge then
+  return redis.error_reply('non-finite budget reservation')
+end
+if value > tonumber(ARGV[2]) then return {0, string.format('%.17g', current), ''} end
+local ttl = redis.call('PTTL', KEYS[1])
+if raw and ttl == -2 then return {2, '0', ''} end
+window = window or ARGV[5]
+redis.call('SET', KEYS[1], string.format('%.17g', value))
+if ttl >= 0 then
+  redis.call('PEXPIRE', KEYS[1], ttl)
+elseif ARGV[3] ~= '' then
+  redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[3]))
+end
+redis.call('SET', KEYS[2], window)
+local remaining = redis.call('PTTL', KEYS[1])
+if remaining >= 0 then
+  redis.call('PEXPIRE', KEYS[2], remaining)
+elseif remaining == -2 then
+  redis.call('DEL', KEYS[2])
+end
+return {1, string.format('%.17g', value), window}
+"#;
+
+    /// Both signs of settlement/rollback belong to the admission window only.
+    /// Never create a missing counter or adjust a replacement incarnation.
+    const WINDOWED_ADJUST_SCRIPT: &str = r#"
+local raw = redis.call('GET', KEYS[1])
+if not raw or redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
+local current = tonumber(raw)
+if not current then return redis.error_reply('corrupt budget counter') end
+local value = current + tonumber(ARGV[2])
+if value ~= value or math.abs(value) == math.huge then
+  return redis.error_reply('non-finite budget settlement')
+end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl == -2 then return 0 end
+redis.call('SET', KEYS[1], string.format('%.17g', value))
+if ttl >= 0 then
+  redis.call('PEXPIRE', KEYS[1], ttl)
+  redis.call('PEXPIRE', KEYS[2], ttl)
+end
+return 1
 "#;
 
     /// Lua: decrement only when the key exists, so budget reservation
@@ -185,6 +277,9 @@ end
         incr_script: Script,
         incr_if_below_script: Script,
         decr_if_exists_script: Script,
+        set_script: Script,
+        windowed_reserve_script: Script,
+        windowed_adjust_script: Script,
     }
 
     impl RedisCache {
@@ -250,11 +345,18 @@ end
                 incr_script: Script::new(INCR_SCRIPT),
                 incr_if_below_script: Script::new(INCR_IF_BELOW_SCRIPT),
                 decr_if_exists_script: Script::new(DECR_IF_EXISTS_SCRIPT),
+                set_script: Script::new(SET_SCRIPT),
+                windowed_reserve_script: Script::new(WINDOWED_RESERVE_SCRIPT),
+                windowed_adjust_script: Script::new(WINDOWED_ADJUST_SCRIPT),
             })
         }
 
         fn key(&self, key: &str) -> String {
             prefixed(&self.prefix, key)
+        }
+
+        fn window_key(&self, key: &str) -> String {
+            self.key(&format!("__oxllm_budget_window__:{key}"))
         }
 
         /// Get a value and the time it may still be cached. `None` in the TTL
@@ -399,23 +501,31 @@ end
             }
             let redis_key = self.key(key);
             let mut conn = self.conn.clone();
-            let fut = if let Some(ttl) = ttl {
-                let millis = ttl_to_millis(ttl);
-                conn.pset_ex::<_, _, ()>(&redis_key, &value, millis)
-            } else {
-                conn.set::<_, _, ()>(&redis_key, &value)
-            };
-            match tokio::time::timeout(REDIS_OP_TIMEOUT, fut).await {
-                Ok(Ok(())) => {}
+            let ttl_arg = ttl
+                .map(ttl_to_millis)
+                .map(|ttl| ttl.to_string())
+                .unwrap_or_default();
+            let result: Result<redis::RedisResult<i64>, _> = tokio::time::timeout(
+                REDIS_OP_TIMEOUT,
+                self.set_script
+                    .key(&redis_key)
+                    .key(self.window_key(key))
+                    .arg(value)
+                    .arg(ttl_arg)
+                    .invoke_async(&mut conn),
+            )
+            .await;
+            match result {
+                Ok(Ok(_)) => {}
                 Ok(Err(e)) => tracing::warn!(error = %e, key = %key, "redis set failed"),
                 Err(_) => tracing::warn!(key = %key, "redis set timed out"),
             }
         }
 
         async fn delete(&self, key: &str) {
-            let redis_key = self.key(key);
+            let redis_keys = [self.key(key), self.window_key(key)];
             let mut conn = self.conn.clone();
-            match tokio::time::timeout(REDIS_OP_TIMEOUT, conn.del::<_, ()>(&redis_key)).await {
+            match tokio::time::timeout(REDIS_OP_TIMEOUT, conn.del::<_, ()>(&redis_keys)).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => tracing::warn!(error = %e, key = %key, "redis delete failed"),
                 Err(_) => tracing::warn!(key = %key, "redis delete timed out"),
@@ -439,6 +549,7 @@ end
                 REDIS_OP_TIMEOUT,
                 self.incr_script
                     .key(&redis_key)
+                    .key(self.window_key(key))
                     .arg(by)
                     .arg(&ttl_arg)
                     .invoke_async(&mut conn),
@@ -530,6 +641,7 @@ end
                 REDIS_OP_TIMEOUT,
                 self.incr_if_below_script
                     .key(&redis_key)
+                    .key(self.window_key(key))
                     .arg(delta)
                     .arg(ceiling)
                     .arg(&ttl_arg)
@@ -561,6 +673,83 @@ end
                     Err(Error::Network(format!("redis incr_if_below failed: {e}")))
                 }
             }
+        }
+
+        async fn incr_if_below_in_window(
+            &self,
+            key: &str,
+            delta: f64,
+            ceiling: f64,
+            ttl: Option<Duration>,
+            expected: Option<&CounterWindow>,
+        ) -> Result<WindowedIncrResult, Error> {
+            validate_finite_incr_if_below(delta, ceiling)?;
+            if delta < 0.0 {
+                return Err(Error::Config("negative budget reservation".into()));
+            }
+            let ttl_arg = ttl
+                .map(ttl_to_millis)
+                .map(|ttl| ttl.to_string())
+                .unwrap_or_default();
+            let candidate = CounterWindow::fresh();
+            let mut conn = self.conn.clone();
+            let result: redis::RedisResult<(i64, String, String)> = tokio::time::timeout(
+                REDIS_OP_TIMEOUT,
+                self.windowed_reserve_script
+                    .key(self.key(key))
+                    .key(self.window_key(key))
+                    .arg(delta)
+                    .arg(ceiling)
+                    .arg(ttl_arg)
+                    .arg(expected.map(CounterWindow::as_str).unwrap_or_default())
+                    .arg(candidate.as_str())
+                    .invoke_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Network("redis windowed reservation timed out".into()))?;
+            let (flag, value, window) = result.map_err(|error| {
+                Error::Network(format!("redis windowed reservation failed: {error}"))
+            })?;
+            let value = value
+                .parse::<f64>()
+                .map_err(|error| Error::Network(format!("invalid redis budget value: {error}")))?;
+            match flag {
+                0 => Ok(WindowedIncrResult::Rejected(value)),
+                1 if !window.is_empty() => Ok(WindowedIncrResult::Allowed {
+                    value,
+                    window: CounterWindow::from_token(window),
+                }),
+                2 => Ok(WindowedIncrResult::WindowChanged),
+                _ => Err(Error::Network("invalid redis budget window receipt".into())),
+            }
+        }
+
+        async fn incr_in_window(
+            &self,
+            key: &str,
+            delta: f64,
+            window: &CounterWindow,
+        ) -> Result<bool, Error> {
+            if !delta.is_finite() {
+                return Err(Error::Config(
+                    "incr_in_window rejected non-finite delta".into(),
+                ));
+            }
+            let mut conn = self.conn.clone();
+            let result: redis::RedisResult<i64> = tokio::time::timeout(
+                REDIS_OP_TIMEOUT,
+                self.windowed_adjust_script
+                    .key(self.key(key))
+                    .key(self.window_key(key))
+                    .arg(window.as_str())
+                    .arg(delta)
+                    .invoke_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Network("redis windowed adjustment timed out".into()))?;
+            result.map(|applied| applied == 1).map_err(|error| {
+                Error::Network(format!("redis windowed adjustment failed: {error}"))
+            })
         }
 
         async fn ping(&self) -> bool {

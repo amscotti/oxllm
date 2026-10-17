@@ -21,6 +21,47 @@ pub enum IncrResult {
     Rejected(f64),
 }
 
+/// Opaque identity of one counter incarnation, not a request timestamp or a
+/// caller-estimated deadline. Stores assign/return it inside the same atomic
+/// operation that reserves spend. Expiry, deletion and replacement invalidate it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CounterWindow(String);
+
+impl CounterWindow {
+    /// Mint a new independent window identity (also distinct across cache
+    /// instances). The token is never supplied by an HTTP client.
+    pub fn fresh() -> Self {
+        Self(format!("{:032x}", rand::random::<u128>()))
+    }
+
+    /// Reconstitute a store-returned identity without interpreting it.
+    pub fn from_token(token: impl Into<String>) -> Self {
+        Self(token.into())
+    }
+
+    /// Store representation, for atomic compare operations such as Redis Lua.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Outcome of [`Cache::incr_if_below_in_window`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum WindowedIncrResult {
+    /// Spend was reserved in exactly this counter window.
+    Allowed {
+        /// Counter value after reservation.
+        value: f64,
+        /// Receipt for later conditional adjustments/refunds.
+        window: CounterWindow,
+    },
+    /// The ceiling refused the reservation; nothing changed.
+    Rejected(f64),
+    /// A conditional top-up's original window expired or was replaced; nothing
+    /// changed. The caller must reject/retry admission, not debit a new window.
+    WindowChanged,
+}
+
 /// Abstract cache trait for response cache, rate-limit counters, and key cache.
 ///
 /// Implementations: `InMemoryCache` (moka, in `oxllm-server`), `RedisCache`
@@ -124,6 +165,54 @@ pub trait Cache: Send + Sync {
         }
     }
 
+    /// Atomically reserve a non-negative `delta` and return the exact counter
+    /// window that owns it. With `expected = Some(window)`, reserve only in that
+    /// existing window (for admission top-ups); a stale receipt returns
+    /// [`WindowedIncrResult::WindowChanged`] without creating or modifying a key.
+    ///
+    /// Window identity, fixed TTL, ceiling check and debit must be one atomic
+    /// operation. Reading a TTL/generation after `incr_if_below` is not sufficient.
+    /// Every counter writer must invalidate the identity on replacement/reset.
+    ///
+    /// The backward-compatible default fails closed without touching storage:
+    /// an arbitrary legacy Cache cannot prove atomic window ownership. Shipped
+    /// counter stores override this; response-only stores need not do so.
+    async fn incr_if_below_in_window(
+        &self,
+        _key: &str,
+        _delta: f64,
+        _ceiling: f64,
+        _ttl: Option<Duration>,
+        _expected: Option<&CounterWindow>,
+    ) -> Result<WindowedIncrResult, Error> {
+        Err(Error::Config(
+            "cache does not support atomic budget window reservations".into(),
+        ))
+    }
+
+    /// Atomically apply `delta` (positive or negative) only if `key` still has
+    /// exactly `window`'s live incarnation. Preserve its original TTL. Return
+    /// false without writing when the window expired, was reset/recreated, or
+    /// cannot be proven; never create a replacement counter on this path.
+    ///
+    /// Budget accounting uses an admission-window policy: once the admitted
+    /// window ends, both positive adjustments and refunds are discarded, not
+    /// transferred into another request's window. The durable actual-cost
+    /// ledger remains independent and is recorded once.
+    async fn incr_in_window(
+        &self,
+        _key: &str,
+        delta: f64,
+        _window: &CounterWindow,
+    ) -> Result<bool, Error> {
+        if !delta.is_finite() {
+            return Err(Error::Config(
+                "incr_in_window rejected non-finite delta".into(),
+            ));
+        }
+        Ok(false)
+    }
+
     /// Decrement counter `key` by `by` **only when the counter currently
     /// exists** (and has not expired), returning whether the decrement was
     /// applied.
@@ -135,6 +224,8 @@ pub trait Cache: Send + Sync {
     /// permanently discounts every subsequent window's spend. Skipping the
     /// decrement on an absent/expired counter accepts a small one-window
     /// over-debit in exchange for never creating negative residue.
+    /// Presence does NOT establish reservation ownership after expiry and
+    /// recreation: budget adjustments/refunds must use [`Cache::incr_in_window`].
     ///
     /// The default implementation is check-then-decrement (non-atomic);
     /// stores with native atomic primitives (in-memory write locks, Redis
@@ -209,6 +300,33 @@ pub trait Cache: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn legacy_cache_window_defaults_fail_closed_without_speculative_writes() {
+        let cache = FailingRollbackCache {
+            value: std::sync::Mutex::new(0.25),
+        };
+        assert!(
+            cache
+                .incr_if_below_in_window("spend:x", 0.5, 1.0, Some(Duration::from_secs(60)), None)
+                .await
+                .is_err()
+        );
+        let unproven = CounterWindow::fresh();
+        assert!(
+            !cache
+                .incr_in_window("spend:x", -0.5, &unproven)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !cache
+                .incr_in_window("spend:x", 0.5, &unproven)
+                .await
+                .unwrap()
+        );
+        assert_eq!(*cache.value.lock().unwrap(), 0.25);
+    }
 
     /// A minimal in-memory `Cache` whose `incr` succeeds for non-negative
     /// deltas and fails for negative deltas (simulating a store that cannot

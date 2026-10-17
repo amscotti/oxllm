@@ -117,6 +117,18 @@ pub async fn run_post_failure_hooks(hooks: &[Arc<dyn Hook>], ctx: &CallContext, 
     }
 }
 
+/// Settle a known complete charge through the registered reservation hooks,
+/// without fabricating a successful response or dispatching success callbacks.
+pub(crate) async fn run_budget_settlement_hooks(
+    hooks: &[Arc<dyn Hook>],
+    ctx: &CallContext,
+    cost: f64,
+) {
+    for hook in hooks {
+        hook.settle_budget(ctx, cost).await;
+    }
+}
+
 /// Deliver dependency-health failures only to configured service observers.
 /// Request metering and reservation hooks are not invoked for these events.
 pub async fn run_service_failure_hooks(hooks: &[Arc<dyn Hook>], event: &ServiceFailureEvent) {

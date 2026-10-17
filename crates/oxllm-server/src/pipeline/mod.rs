@@ -889,6 +889,18 @@ pub async fn release_concurrency(state: &AppState, call_ctx: &CallContext) {
     run_release_concurrency(&state.hooks, call_ctx).await;
 }
 
+/// Settle a partial session's known complete charge without changing its
+/// terminal status. Use the admitted hook instances, not a second BudgetHook.
+pub(crate) async fn settle_partial_budget(state: &AppState, call_ctx: &mut CallContext, cost: f64) {
+    call_ctx.cost_override = Some(cost);
+    crate::hooks::runner::run_budget_settlement_hooks(&state.hooks, call_ctx, cost).await;
+    // Ownership has moved from the estimate to the measured debit. In
+    // particular, post_failure must NOT refund that debit (or lose a positive
+    // actual-minus-estimate adjustment). Other failure callbacks still run on
+    // the same frozen cost_override; only budget rollback is now disarmed.
+    call_ctx.budget_estimate = None;
+}
+
 /// Retain the concrete rate card and reserve any positive price delta after a
 /// deployment is selected. Shared by transformed and hooked-raw endpoints.
 pub(crate) async fn prepare_deployment_pricing(
@@ -896,6 +908,31 @@ pub(crate) async fn prepare_deployment_pricing(
     ctx: &mut CallContext,
     deployment: &Deployment,
     request: &Value,
+) -> oxllm_core::Result<()> {
+    let duration_estimate = sanitize_timeout_secs(
+        crate::orchestration::request_controls::seconds(request, "timeout")
+            .or(deployment.oxllm_params.timeout)
+            .unwrap_or_else(|| state.config.oxllm_settings.request_timeout.unwrap_or(600) as f64),
+    );
+    prepare_deployment_pricing_with_duration_estimate(
+        state,
+        ctx,
+        deployment,
+        request,
+        duration_estimate,
+    )
+    .await
+}
+
+/// Transport-specific duration bounds must be stashed before any key-budget
+/// top-up or router reservation. Realtime's live cap is independent of HTTP
+/// request/idle timeouts; ordinary HTTP callers retain their existing estimate.
+pub(crate) async fn prepare_deployment_pricing_with_duration_estimate(
+    state: &AppState,
+    ctx: &mut CallContext,
+    deployment: &Deployment,
+    request: &Value,
+    duration_estimate: Duration,
 ) -> oxllm_core::Result<()> {
     ctx.pre_call_pricing_is_free = false;
     ctx.deployment_id = deployment
@@ -953,11 +990,7 @@ pub(crate) async fn prepare_deployment_pricing(
     })
     .flatten();
     ctx.pricing_model = Some(pricing_model);
-    ctx.upstream_duration_estimate = Some(sanitize_timeout_secs(
-        crate::orchestration::request_controls::seconds(request, "timeout")
-            .or(deployment.oxllm_params.timeout)
-            .unwrap_or_else(|| state.config.oxllm_settings.request_timeout.unwrap_or(600) as f64),
-    ));
+    ctx.upstream_duration_estimate = Some(duration_estimate);
     let settings = &state.config.oxllm_settings;
     let mut hook = crate::hooks::BudgetHook::new(
         state.cache.clone(),

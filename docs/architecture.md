@@ -384,12 +384,23 @@ RateLimitHook → CacheHook → BudgetHook → CostTrackingHook → MetricsHook
 
 **Reservation / rollback semantics:** exact cost is unknowable before the
 upstream responds, so `BudgetHook::pre_call` **atomically reserves** a
-conservative estimate via `Cache::incr_if_below`. `post_success` settles to
-the actual cost (`actual − estimate`); `post_failure` **releases** the
-reservation so failed requests don't consume budget. The estimate is computed
-once per request and stashed on `CallContext.budget_estimate`;
-`CallContext.token_estimate` (a `OnceLock`) shares the prompt-token estimate
-between the rate-limit and budget hooks.
+conservative estimate via `Cache::incr_if_below_in_window`, which also returns
+an opaque per-scope counter-window receipt (`CounterWindow`). `post_success`
+settles to the actual cost (`actual − estimate`) and `post_failure`
+**releases** the reservation so failed requests don't consume budget — both
+through `Cache::incr_in_window`, which applies only while the *original*
+admission window is still live. A receipt can never adjust or refund a
+replacement counter: once a budget window expires and a later request recreates
+it, both positive adjustments and refunds are discarded rather than debited to
+the wrong window (the durable spend ledger is independent and still records
+the actual cost). Top-ups after deployment selection reserve in the same
+window or reject. The estimate is computed once per request and stashed on
+`CallContext.budget_estimate` alongside the receipts in
+`CallContext.budget_windows`; `CallContext.token_estimate` (a `OnceLock`)
+shares the prompt-token estimate between the rate-limit and budget hooks.
+A partial session whose complete cost is known before its terminal failure
+(realtime duration-priced sessions) settles once through `Hook::settle_budget`
+and disarms the later failure refund without emitting success events.
 
 `CallContext` carries per-request fields (model, key hash, identity ids,
 per-scope limits, `cache_hit`, `budget_estimate`, `deployment_pricing`,

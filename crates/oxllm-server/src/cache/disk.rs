@@ -21,6 +21,9 @@
 //! atomicity is not provided.
 //!
 //! Not wired in by default — construct explicitly with [`DiskCache::new`].
+//! This legacy backend does not supply atomic budget-window receipts: budget
+//! admission fails closed through the Cache default rather than refunding an
+//! unproven file incarnation. Response caching and legacy counters are unchanged.
 
 use std::fmt::Write as _;
 use std::io::ErrorKind;

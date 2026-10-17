@@ -200,6 +200,12 @@ pub struct CallContext {
     /// `post_success` / `post_failure` so token estimation runs once per
     /// request. `None` when no budget reservation was made.
     pub budget_estimate: Option<f64>,
+    /// Atomic per-scope counter-window receipts acquired by BudgetHook.
+    /// `Some` is mandatory after production budget admission, even for zero
+    /// estimates. Each scope has its own lifetime; a stale receipt must never
+    /// adjust/refund a replacement counter. `None` supports legacy synthetic
+    /// contexts that manually supplied `budget_estimate` without running hooks.
+    pub budget_windows: Option<std::collections::HashMap<String, crate::cache::CounterWindow>>,
     /// Admission hint: every configured primary-group deployment carries a
     /// provably zero-price override. Used only before concrete pricing is
     /// selected; a paid fallback still requires its normal budget top-up.
@@ -238,9 +244,10 @@ pub struct CallContext {
     pub upstream_total_duration: std::time::Duration,
     /// Time spent looking up a response-cache hit.
     pub cache_lookup_duration: std::time::Duration,
-    /// Selected deployment's timeout used to reserve duration-priced spend.
-    /// Streaming reservations remain estimates because idle timeouts do not
-    /// bound the total length of a healthy stream.
+    /// Selected transport's estimate used to reserve duration-priced spend:
+    /// the deployment timeout for HTTP, or the live-session bound for realtime.
+    /// HTTP streaming reservations remain estimates because idle timeouts do
+    /// not bound the total length of a healthy stream.
     pub upstream_duration_estimate: Option<std::time::Duration>,
     /// Whether any attempt received an upstream HTTP response. Later local
     /// failures must not refund rate-limit occupancy already used upstream.
@@ -640,6 +647,18 @@ pub trait Hook: Send + Sync {
     /// Called after a failed upstream response.
     async fn post_failure(&self, ctx: &CallContext, err: &crate::Error) {
         let _ = (ctx, err);
+    }
+
+    /// Settle a reserved budget to a known, complete charge independently of
+    /// terminal success/failure notification. Partial duration-priced sessions
+    /// can have an exact charge even when their token usage is incomplete.
+    ///
+    /// Only reservation hooks implement this; it must not emit success events.
+    /// The host calls it once with a finite, non-negative cost, then clears the
+    /// settled budget reservation before any subsequent failure hooks. Token-
+    /// priced partial sessions with unknown full cost do not use this path.
+    async fn settle_budget(&self, ctx: &CallContext, cost: f64) {
+        let _ = (ctx, cost);
     }
 
     /// Observe a configured infrastructure dependency's health failure.

@@ -6,14 +6,18 @@
 //! [`Cache::incr_if_below`] in `pre_call`. Concurrent callers cannot
 //! collectively exceed the ceiling. `post_success` adjusts the reservation
 //! to the actual computed cost (`actual − estimate`); `post_failure` releases
-//! the reserved estimate so failed requests do not permanently consume budget.
+//! an unsettled estimate. A partial session with known complete cost can use
+//! `settle_budget` first, independently of its terminal failure notification.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use oxllm_core::{Cache, CallContext, Error, Hook, HookAction, IncrResult, ResponseSummary};
+use oxllm_core::{
+    Cache, CallContext, CounterWindow, Error, Hook, HookAction, IncrResult, ResponseSummary,
+    WindowedIncrResult,
+};
 
 use crate::hooks::spend_keys::{
     customer_spend_key, model_spend_key, org_spend_key, project_spend_key, spend_key,
@@ -306,7 +310,8 @@ impl BudgetHook {
         self.model_max_budget.as_ref()?.get(model).copied()
     }
 
-    /// Atomically reserve `estimate` against `limit` on `key`.
+    /// Legacy estimate reservation for synthetic contexts that did not run
+    /// admission. Production pre_call uses reserve_and_record/window receipts.
     ///
     /// U2: oxllm is already fail-closed. When the
     /// backing store (e.g. Redis) returns an `Err` from `incr_if_below`
@@ -355,13 +360,74 @@ impl BudgetHook {
         }
     }
 
+    /// Reserve `estimate` in one counter window, returning its receipt.
+    ///
+    /// `WindowChanged` maps to [`Error::RateLimited`], not `BudgetExceeded`:
+    /// a stale receipt at top-up is a transient admission race (the window
+    /// rolled over mid-flight and the replacement has fresh capacity), so the
+    /// client should retry — a terminal-looking `budget_exceeded` code would
+    /// make SDKs give up on a request that would succeed immediately.
+    async fn reserve_window(
+        &self,
+        key: &str,
+        estimate: f64,
+        limit: f64,
+        ttl: Option<Duration>,
+        reason: &str,
+        expected: Option<&CounterWindow>,
+    ) -> Result<CounterWindow, Error> {
+        if !estimate.is_finite() {
+            return Err(Error::Config(
+                "non-finite budget reservation estimate".into(),
+            ));
+        }
+        match self
+            .cache
+            .incr_if_below_in_window(key, estimate.max(0.0), limit, ttl, expected)
+            .await?
+        {
+            WindowedIncrResult::Allowed { value, window } if estimate > 0.0 || value < limit => {
+                Ok(window)
+            }
+            WindowedIncrResult::Allowed { .. } | WindowedIncrResult::Rejected(_) => Err(
+                Error::BudgetExceeded(format!("{reason} ({limit}) exceeded for this key")),
+            ),
+            WindowedIncrResult::WindowChanged => Err(Error::RateLimited(
+                "budget window changed during admission; retry the request".into(),
+            )),
+        }
+    }
+
+    async fn reserve_and_record(
+        &self,
+        key: &str,
+        estimate: f64,
+        limit: f64,
+        ttl: Option<Duration>,
+        reason: &str,
+        reserved: &mut Vec<(String, CounterWindow)>,
+    ) -> Result<(), Error> {
+        let window = self
+            .reserve_window(key, estimate, limit, ttl, reason, None)
+            .await?;
+        reserved.push((key.to_string(), window));
+        Ok(())
+    }
+
+    async fn release_window(&self, key: &str, estimate: f64, window: &CounterWindow) {
+        if estimate > 0.0 {
+            if let Err(error) = self.cache.incr_in_window(key, -estimate, window).await {
+                tracing::warn!(%error, "budget window release failed");
+                ::metrics::counter!(BUDGET_SETTLE_FAILED_TOTAL, "op" => "release").increment(1);
+            }
+        }
+    }
+
     async fn release(&self, key: &str, estimate: f64) {
-        // When the budget window is shorter than the request's in-flight
-        // duration, the spend counter can expire mid-flight; the decrement
-        // below is therefore existence-gated so it can never re-create the
-        // key as a persistent NEGATIVE counter (which would discount every
-        // later window's cap until restart). The release is simply skipped
-        // in that case — accepted over-debit, never negative residue.
+        // Compatibility only for manually constructed contexts without
+        // admission receipts. Existence prevents recreating an absent counter,
+        // but cannot prove ownership of a replacement window. Production
+        // reservations/refunds always use release_window instead.
         if estimate > 0.0 {
             // Best-effort: a mid-flight cache outage (Redis goes down after
             // `pre_call` reserved successfully) means the reservation is
@@ -381,6 +447,14 @@ impl BudgetHook {
     /// Shared by `post_failure` (upstream error) and the cache-hit path of
     /// `post_success` (no upstream cost incurred).
     async fn release_reservations(&self, ctx: &CallContext, estimate: f64) {
+        if let Some(windows) = &ctx.budget_windows {
+            for (key, window) in windows {
+                self.release_window(key, estimate, window).await;
+            }
+            return;
+        }
+        // Legacy synthetic contexts may supply an estimate without admission
+        // receipts. Production pre_call always installs the window map below.
         if most_restrictive(ctx.max_budget, self.max_budget).is_some() {
             self.release(&spend_key(&ctx.api_key_hash), estimate).await;
         }
@@ -452,6 +526,114 @@ impl BudgetHook {
             ::metrics::counter!(BUDGET_SETTLE_FAILED_TOTAL, "op" => "adjust").increment(1);
         }
     }
+
+    /// The same monetary operation for success and known-cost partial work.
+    /// Terminal status must not affect which reserved scopes/TTLs are settled.
+    async fn settle_reservations(&self, ctx: &CallContext, actual: f64) {
+        if ctx.is_master {
+            return;
+        }
+        let Some(estimate) = ctx.budget_estimate else {
+            return;
+        };
+        if ctx.cache_hit {
+            self.release_reservations(ctx, estimate).await;
+            return;
+        }
+        if let Some(windows) = &ctx.budget_windows {
+            let delta = actual - estimate;
+            if delta != 0.0 {
+                for (key, window) in windows {
+                    if let Err(error) = self.cache.incr_in_window(key, delta, window).await {
+                        tracing::warn!(%error, "budget window adjust failed");
+                        ::metrics::counter!(BUDGET_SETTLE_FAILED_TOTAL, "op" => "adjust")
+                            .increment(1);
+                    }
+                }
+            }
+            return;
+        }
+        let ttl = Some(self.budget_ttl(ctx));
+        if most_restrictive(ctx.max_budget, self.max_budget).is_some() {
+            self.adjust(&spend_key(&ctx.api_key_hash), estimate, actual, ttl)
+                .await;
+        }
+        if ctx.team_max_budget.is_some() {
+            if let Some(team_id) = ctx.team_id.as_deref() {
+                self.adjust(
+                    &team_spend_key(team_id),
+                    estimate,
+                    actual,
+                    Some(self.team_budget_ttl(ctx)),
+                )
+                .await;
+            }
+        }
+        if ctx.org_max_budget.is_some() {
+            if let Some(org_id) = ctx.org_id.as_deref() {
+                self.adjust(
+                    &org_spend_key(org_id),
+                    estimate,
+                    actual,
+                    Some(self.org_budget_ttl(ctx)),
+                )
+                .await;
+            }
+        }
+        if ctx.project_max_budget.is_some() {
+            if let Some(project_id) = ctx.project_id.as_deref() {
+                self.adjust(
+                    &project_spend_key(project_id),
+                    estimate,
+                    actual,
+                    Some(self.project_budget_ttl(ctx)),
+                )
+                .await;
+            }
+        }
+        if ctx.user_max_budget.is_some() {
+            if let Some(user_id) = ctx.user_id.as_deref() {
+                self.adjust(
+                    &user_spend_key(user_id),
+                    estimate,
+                    actual,
+                    Some(self.user_budget_ttl(ctx)),
+                )
+                .await;
+            }
+        }
+        if ctx.customer_max_budget.is_some() {
+            if let Some(end_user_id) = ctx.end_user_id.as_deref() {
+                self.adjust(
+                    &customer_spend_key(end_user_id),
+                    estimate,
+                    actual,
+                    Some(self.customer_budget_ttl(ctx)),
+                )
+                .await;
+            }
+        }
+        if !ctx.tag_budgets.is_empty() {
+            for (tag, _) in &ctx.tag_budgets {
+                self.adjust(&tag_spend_key(tag), estimate, actual, ttl)
+                    .await;
+            }
+        } else if ctx.tag_max_budget.is_some() {
+            if let Some(tag) = ctx.request_tag.as_deref() {
+                self.adjust(&tag_spend_key(tag), estimate, actual, ttl)
+                    .await;
+            }
+        }
+        if self.model_budget(&ctx.model).is_some() {
+            self.adjust(
+                &model_spend_key(&ctx.model),
+                estimate,
+                actual,
+                Some(self.budget_duration),
+            )
+            .await;
+        }
+    }
 }
 
 #[async_trait]
@@ -490,7 +672,7 @@ impl Hook for BudgetHook {
         let project_ttl = Some(self.project_budget_ttl(ctx));
         let user_ttl = Some(self.user_budget_ttl(ctx));
         let customer_ttl = Some(self.customer_budget_ttl(ctx));
-        let mut reserved_keys: Vec<String> = Vec::new();
+        let mut reserved_keys: Vec<(String, CounterWindow)> = Vec::new();
 
         if let Some(limit) = key_limit {
             // DELIBERATE DIVERGENCE FROM THE REFERENCE (C31): oxllm treats a
@@ -508,16 +690,18 @@ impl Hook for BudgetHook {
                 ));
             }
             let key = spend_key(&ctx.api_key_hash);
-            if let Err(err) = self.reserve(&key, estimate, limit, ttl, "max_budget").await {
+            if let Err(err) = self
+                .reserve_and_record(&key, estimate, limit, ttl, "max_budget", &mut reserved_keys)
+                .await
+            {
                 return Ok(reject_over_budget("key", err));
             }
-            reserved_keys.push(key);
         }
 
         if let (Some(limit), Some(team_id)) = (team_limit, ctx.team_id.as_deref()) {
             if limit <= 0.0 {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget(
                     "team",
@@ -526,21 +710,27 @@ impl Hook for BudgetHook {
             }
             let tkey = team_spend_key(team_id);
             if let Err(err) = self
-                .reserve(&tkey, estimate, limit, team_ttl, "team max_budget")
+                .reserve_and_record(
+                    &tkey,
+                    estimate,
+                    limit,
+                    team_ttl,
+                    "team max_budget",
+                    &mut reserved_keys,
+                )
                 .await
             {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget("team", err));
             }
-            reserved_keys.push(tkey);
         }
 
         if let (Some(limit), Some(org_id)) = (org_limit, ctx.org_id.as_deref()) {
             if limit <= 0.0 {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget(
                     "org",
@@ -549,21 +739,27 @@ impl Hook for BudgetHook {
             }
             let okey = org_spend_key(org_id);
             if let Err(err) = self
-                .reserve(&okey, estimate, limit, org_ttl, "org max_budget")
+                .reserve_and_record(
+                    &okey,
+                    estimate,
+                    limit,
+                    org_ttl,
+                    "org max_budget",
+                    &mut reserved_keys,
+                )
                 .await
             {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget("org", err));
             }
-            reserved_keys.push(okey);
         }
 
         if let (Some(limit), Some(project_id)) = (project_limit, ctx.project_id.as_deref()) {
             if limit <= 0.0 {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget(
                     "project",
@@ -572,21 +768,27 @@ impl Hook for BudgetHook {
             }
             let pkey = project_spend_key(project_id);
             if let Err(err) = self
-                .reserve(&pkey, estimate, limit, project_ttl, "project max_budget")
+                .reserve_and_record(
+                    &pkey,
+                    estimate,
+                    limit,
+                    project_ttl,
+                    "project max_budget",
+                    &mut reserved_keys,
+                )
                 .await
             {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget("project", err));
             }
-            reserved_keys.push(pkey);
         }
 
         if let (Some(limit), Some(user_id)) = (user_limit, ctx.user_id.as_deref()) {
             if limit <= 0.0 {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget(
                     "user",
@@ -595,21 +797,27 @@ impl Hook for BudgetHook {
             }
             let ukey = user_spend_key(user_id);
             if let Err(err) = self
-                .reserve(&ukey, estimate, limit, user_ttl, "user max_budget")
+                .reserve_and_record(
+                    &ukey,
+                    estimate,
+                    limit,
+                    user_ttl,
+                    "user max_budget",
+                    &mut reserved_keys,
+                )
                 .await
             {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget("user", err));
             }
-            reserved_keys.push(ukey);
         }
 
         if let (Some(limit), Some(end_user_id)) = (customer_limit, ctx.end_user_id.as_deref()) {
             if limit <= 0.0 {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget(
                     "customer",
@@ -618,15 +826,21 @@ impl Hook for BudgetHook {
             }
             let ckey = customer_spend_key(end_user_id);
             if let Err(err) = self
-                .reserve(&ckey, estimate, limit, customer_ttl, "customer max_budget")
+                .reserve_and_record(
+                    &ckey,
+                    estimate,
+                    limit,
+                    customer_ttl,
+                    "customer max_budget",
+                    &mut reserved_keys,
+                )
                 .await
             {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget("customer", err));
             }
-            reserved_keys.push(ckey);
         }
 
         if !ctx.tag_budgets.is_empty() {
@@ -636,8 +850,8 @@ impl Hook for BudgetHook {
             // shared-key / per-application cap pattern).
             for (tag, limit) in &ctx.tag_budgets {
                 if *limit <= 0.0 {
-                    for k in &reserved_keys {
-                        self.release(k, estimate).await;
+                    for (k, window) in &reserved_keys {
+                        self.release_window(k, estimate, window).await;
                     }
                     return Ok(reject_over_budget(
                         "tag",
@@ -648,14 +862,21 @@ impl Hook for BudgetHook {
                 }
                 let tkey = tag_spend_key(tag);
                 if self
-                    .reserve(&tkey, estimate, *limit, ttl, "tag max_budget")
+                    .reserve_and_record(
+                        &tkey,
+                        estimate,
+                        *limit,
+                        ttl,
+                        "tag max_budget",
+                        &mut reserved_keys,
+                    )
                     .await
                     .is_err()
                 {
                     // Releases every earlier reservation, including the tag
                     // counters pushed by previous iterations of this loop.
-                    for k in &reserved_keys {
-                        self.release(k, estimate).await;
+                    for (k, window) in &reserved_keys {
+                        self.release_window(k, estimate, window).await;
                     }
                     return Ok(reject_over_budget(
                         "tag",
@@ -664,12 +885,11 @@ impl Hook for BudgetHook {
                         )),
                     ));
                 }
-                reserved_keys.push(tkey);
             }
         } else if let (Some(limit), Some(tag)) = (tag_limit, ctx.request_tag.as_deref()) {
             if limit <= 0.0 {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget(
                     "tag",
@@ -678,21 +898,27 @@ impl Hook for BudgetHook {
             }
             let tkey = tag_spend_key(tag);
             if let Err(err) = self
-                .reserve(&tkey, estimate, limit, ttl, "tag max_budget")
+                .reserve_and_record(
+                    &tkey,
+                    estimate,
+                    limit,
+                    ttl,
+                    "tag max_budget",
+                    &mut reserved_keys,
+                )
                 .await
             {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget("tag", err));
             }
-            reserved_keys.push(tkey);
         }
 
         if let Some(limit) = model_limit {
             if limit <= 0.0 {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget(
                     "model",
@@ -704,18 +930,19 @@ impl Hook for BudgetHook {
             }
             let mkey = model_spend_key(&ctx.model);
             if self
-                .reserve(
+                .reserve_and_record(
                     &mkey,
                     estimate,
                     limit,
                     Some(self.budget_duration),
                     "model budget",
+                    &mut reserved_keys,
                 )
                 .await
                 .is_err()
             {
-                for k in &reserved_keys {
-                    self.release(k, estimate).await;
+                for (k, window) in &reserved_keys {
+                    self.release_window(k, estimate, window).await;
                 }
                 return Ok(reject_over_budget(
                     "model",
@@ -730,44 +957,12 @@ impl Hook for BudgetHook {
         // Stash so post_success / post_failure can adjust or release without
         // re-running token estimation on the same request body.
         ctx.budget_estimate = Some(estimate);
+        ctx.budget_windows = Some(reserved_keys.into_iter().collect());
         Ok(HookAction::Continue)
     }
 
     async fn post_success(&self, ctx: &CallContext, resp: &ResponseSummary) {
-        if ctx.is_master {
-            return;
-        }
-        // Prefer the pre_call reservation; if missing, nothing was reserved.
-        let Some(estimate) = ctx.budget_estimate else {
-            return;
-        };
-        let key_limit = most_restrictive(ctx.max_budget, self.max_budget);
-        let team_limit = ctx.team_max_budget;
-        let org_limit = ctx.org_max_budget;
-        let project_limit = ctx.project_max_budget;
-        let user_limit = ctx.user_max_budget;
-        let customer_limit = ctx.customer_max_budget;
-        let tag_limit = ctx.tag_max_budget;
-        let model_limit = self.model_budget(&ctx.model);
-        if key_limit.is_none()
-            && team_limit.is_none()
-            && org_limit.is_none()
-            && project_limit.is_none()
-            && user_limit.is_none()
-            && customer_limit.is_none()
-            && tag_limit.is_none()
-            && ctx.tag_budgets.is_empty()
-            && model_limit.is_none()
-        {
-            return;
-        }
-
-        // Cache hit: the request was served without an upstream call, so no
-        // cost was incurred — release the reservation instead of settling
-        // it. Returning early here would leak the estimated spend for the
-        // rest of the TTL window on every cache hit.
-        if ctx.cache_hit {
-            self.release_reservations(ctx, estimate).await;
+        if ctx.is_master || ctx.budget_estimate.is_none() {
             return;
         }
 
@@ -783,80 +978,11 @@ impl Hook for BudgetHook {
         // Unknown pricing → treat actual as 0 so the reservation is released
         // rather than left as a permanent over-charge of the estimate.
         let actual = crate::hooks::cost_fallback::fallback_cost(ctx, resp).unwrap_or(0.0);
+        self.settle_reservations(ctx, actual).await;
+    }
 
-        let ttl = Some(self.budget_ttl(ctx));
-        let team_ttl = Some(self.team_budget_ttl(ctx));
-        let org_ttl = Some(self.org_budget_ttl(ctx));
-        let project_ttl = Some(self.project_budget_ttl(ctx));
-        let user_ttl = Some(self.user_budget_ttl(ctx));
-        let customer_ttl = Some(self.customer_budget_ttl(ctx));
-
-        if key_limit.is_some() {
-            self.adjust(&spend_key(&ctx.api_key_hash), estimate, actual, ttl)
-                .await;
-        }
-        if team_limit.is_some() {
-            if let Some(team_id) = ctx.team_id.as_deref() {
-                self.adjust(&team_spend_key(team_id), estimate, actual, team_ttl)
-                    .await;
-            }
-        }
-        if org_limit.is_some() {
-            if let Some(org_id) = ctx.org_id.as_deref() {
-                self.adjust(&org_spend_key(org_id), estimate, actual, org_ttl)
-                    .await;
-            }
-        }
-        if project_limit.is_some() {
-            if let Some(project_id) = ctx.project_id.as_deref() {
-                self.adjust(
-                    &project_spend_key(project_id),
-                    estimate,
-                    actual,
-                    project_ttl,
-                )
-                .await;
-            }
-        }
-        if user_limit.is_some() {
-            if let Some(user_id) = ctx.user_id.as_deref() {
-                self.adjust(&user_spend_key(user_id), estimate, actual, user_ttl)
-                    .await;
-            }
-        }
-        if customer_limit.is_some() {
-            if let Some(end_user_id) = ctx.end_user_id.as_deref() {
-                self.adjust(
-                    &customer_spend_key(end_user_id),
-                    estimate,
-                    actual,
-                    customer_ttl,
-                )
-                .await;
-            }
-        }
-        if !ctx.tag_budgets.is_empty() {
-            // Settle exactly the scopes reserved by pre_call, including when
-            // the primary tag has no budget of its own.
-            for (tag, _) in &ctx.tag_budgets {
-                self.adjust(&tag_spend_key(tag), estimate, actual, ttl)
-                    .await;
-            }
-        } else if tag_limit.is_some() {
-            if let Some(tag) = ctx.request_tag.as_deref() {
-                self.adjust(&tag_spend_key(tag), estimate, actual, ttl)
-                    .await;
-            }
-        }
-        if model_limit.is_some() {
-            self.adjust(
-                &model_spend_key(&ctx.model),
-                estimate,
-                actual,
-                Some(self.budget_duration),
-            )
-            .await;
-        }
+    async fn settle_budget(&self, ctx: &CallContext, cost: f64) {
+        self.settle_reservations(ctx, cost).await;
     }
 
     async fn post_failure(&self, ctx: &CallContext, _err: &Error) {
@@ -905,8 +1031,12 @@ impl BudgetHook {
     /// deployments would otherwise under-reserve at `pre_call` (table rates)
     /// and overshoot the hard cap at settle.
     ///
-    /// No-op when no prior reservation exists, pricing is absent, or the new
-    /// estimate is not higher. Fail-closed on cache errors.
+    /// No-op when no prior reservation exists or the new estimate is not higher.
+    /// A top-up must still own every original window; expiry/replacement rejects
+    /// admission without reserving a partial delta in another request's window.
+    /// Fail-closed on cache errors and stale receipts — the stale-receipt
+    /// rejection surfaces as retryable [`Error::RateLimited`], since the
+    /// replacement window typically has fresh capacity.
     pub async fn top_up_for_deployment_pricing(&self, ctx: &mut CallContext) -> Result<(), Error> {
         if ctx.is_master {
             return Ok(());
@@ -946,9 +1076,10 @@ impl BudgetHook {
         let project_ttl = Some(self.project_budget_ttl(ctx));
         let user_ttl = Some(self.user_budget_ttl(ctx));
         let customer_ttl = Some(self.customer_budget_ttl(ctx));
-        let mut topped: Vec<String> = Vec::new();
+        let mut topped: Vec<(String, Option<CounterWindow>)> = Vec::new();
 
         // Helper that rolls back prior tops on failure.
+        #[expect(clippy::too_many_arguments)]
         async fn top(
             this: &BudgetHook,
             key: String,
@@ -956,15 +1087,39 @@ impl BudgetHook {
             limit: f64,
             ttl: Option<Duration>,
             reason: &str,
-            topped: &mut Vec<String>,
+            topped: &mut Vec<(String, Option<CounterWindow>)>,
+            windows: Option<&HashMap<String, CounterWindow>>,
         ) -> Result<(), Error> {
-            if let Err(e) = this.reserve(&key, delta, limit, ttl, reason).await {
-                for k in topped.iter() {
-                    this.release(k, delta).await;
+            let result = if let Some(windows) = windows {
+                match windows.get(&key) {
+                    Some(window) => this
+                        .reserve_window(&key, delta, limit, ttl, reason, Some(window))
+                        .await
+                        .map(Some),
+                    None => Err(Error::Config(
+                        "missing budget window receipt during top-up".into(),
+                    )),
                 }
-                return Err(e);
+            } else {
+                // Compatibility for manually reserved, synthetic contexts.
+                // Production admission always supplies per-scope receipts.
+                this.reserve(&key, delta, limit, ttl, reason)
+                    .await
+                    .map(|()| None)
+            };
+            match result {
+                Ok(window) => topped.push((key, window)),
+                Err(error) => {
+                    for (key, window) in topped.iter() {
+                        if let Some(window) = window {
+                            this.release_window(key, delta, window).await;
+                        } else {
+                            this.release(key, delta).await;
+                        }
+                    }
+                    return Err(error);
+                }
             }
-            topped.push(key);
             Ok(())
         }
 
@@ -977,6 +1132,7 @@ impl BudgetHook {
                 key_ttl,
                 "key max_budget",
                 &mut topped,
+                ctx.budget_windows.as_ref(),
             )
             .await?;
         }
@@ -989,6 +1145,7 @@ impl BudgetHook {
                 team_ttl,
                 "team max_budget",
                 &mut topped,
+                ctx.budget_windows.as_ref(),
             )
             .await?;
         }
@@ -1001,6 +1158,7 @@ impl BudgetHook {
                 org_ttl,
                 "org max_budget",
                 &mut topped,
+                ctx.budget_windows.as_ref(),
             )
             .await?;
         }
@@ -1013,6 +1171,7 @@ impl BudgetHook {
                 project_ttl,
                 "project max_budget",
                 &mut topped,
+                ctx.budget_windows.as_ref(),
             )
             .await?;
         }
@@ -1025,6 +1184,7 @@ impl BudgetHook {
                 user_ttl,
                 "user max_budget",
                 &mut topped,
+                ctx.budget_windows.as_ref(),
             )
             .await?;
         }
@@ -1037,6 +1197,7 @@ impl BudgetHook {
                 customer_ttl,
                 "customer max_budget",
                 &mut topped,
+                ctx.budget_windows.as_ref(),
             )
             .await?;
         }
@@ -1050,6 +1211,7 @@ impl BudgetHook {
                     key_ttl,
                     "tag max_budget",
                     &mut topped,
+                    ctx.budget_windows.as_ref(),
                 )
                 .await?;
             }
@@ -1062,6 +1224,7 @@ impl BudgetHook {
                 key_ttl,
                 "tag max_budget",
                 &mut topped,
+                ctx.budget_windows.as_ref(),
             )
             .await?;
         }
@@ -1074,6 +1237,7 @@ impl BudgetHook {
                 Some(self.budget_duration),
                 "model budget",
                 &mut topped,
+                ctx.budget_windows.as_ref(),
             )
             .await?;
         }
@@ -1924,6 +2088,49 @@ mod tests {
         );
     }
 
+    /// A stale receipt at top-up is a transient admission race, not an
+    /// exhausted cap: the failure must classify as retryable rate limiting so
+    /// SDKs do not treat it like a terminal `budget_exceeded` verdict.
+    #[tokio::test]
+    async fn top_up_after_window_replacement_fails_with_retryable_rate_limit() {
+        let cache = Arc::new(InMemoryCache::default());
+        let hook = BudgetHook::with_duration(cache.clone(), Some(100.0), Duration::from_secs(60));
+        let mut ctx = make_ctx();
+        ctx.request_body = std::sync::Arc::new(serde_json::json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100
+        }));
+        hook.pre_call(&mut ctx).await.expect("ok");
+        let base = ctx.budget_estimate.expect("estimate");
+
+        // The budget window rolls over mid-flight and another request recreates
+        // the counter in a fresh incarnation. The held receipt is now stale.
+        cache.expire_counter_for_test("spend:abc").await;
+        cache
+            .incr_if_below("spend:abc", 0.01, 100.0, Some(Duration::from_secs(60)))
+            .await
+            .unwrap();
+
+        ctx.deployment_pricing = Some(oxllm_core::DeploymentPricing {
+            input_cost_per_token: 0.0001,
+            output_cost_per_token: 0.0003,
+            ..Default::default()
+        });
+        let error = hook
+            .top_up_for_deployment_pricing(&mut ctx)
+            .await
+            .expect_err("stale receipt must reject");
+        assert!(
+            matches!(error, Error::RateLimited(ref message) if message.contains("window changed")),
+            "expected retryable RateLimited, got {error:?}"
+        );
+        // Fail-closed without side effects: the estimate is untouched and the
+        // replacement request's counter was not debited or rolled back.
+        assert_eq!(ctx.budget_estimate, Some(base));
+        assert_eq!(cache.counter_value("spend:abc").await, Some(0.01));
+    }
+
     /// LOW (C31): `top_up_for_deployment_pricing` must pass each scope its OWN
     /// resolved TTL (matching `pre_call`), not the key's window. With a store
     /// that resets TTL on every increment, threading the key TTL into the team
@@ -1974,6 +2181,31 @@ mod tests {
             }
             async fn counter_value(&self, key: &str) -> Option<f64> {
                 self.inner.counter_value(key).await
+            }
+
+            async fn incr_if_below_in_window(
+                &self,
+                key: &str,
+                delta: f64,
+                ceiling: f64,
+                ttl: Option<Duration>,
+                expected: Option<&CounterWindow>,
+            ) -> Result<WindowedIncrResult, Error> {
+                if let Some(ttl) = ttl {
+                    self.seen.lock().unwrap().insert(key.to_string(), ttl);
+                }
+                self.inner
+                    .incr_if_below_in_window(key, delta, ceiling, ttl, expected)
+                    .await
+            }
+
+            async fn incr_in_window(
+                &self,
+                key: &str,
+                delta: f64,
+                window: &CounterWindow,
+            ) -> Result<bool, Error> {
+                self.inner.incr_in_window(key, delta, window).await
             }
         }
 
@@ -3062,6 +3294,25 @@ mod tests {
         }
         async fn counter_value(&self, key: &str) -> Option<f64> {
             self.inner.counter_value(key).await
+        }
+
+        async fn incr_if_below_in_window(
+            &self,
+            key: &str,
+            delta: f64,
+            ceiling: f64,
+            ttl: Option<Duration>,
+            expected: Option<&CounterWindow>,
+        ) -> Result<WindowedIncrResult, Error> {
+            self.inner
+                .incr_if_below_in_window(key, delta, ceiling, ttl, expected)
+                .await
+        }
+
+        async fn incr_in_window(&self, _: &str, _: f64, _: &CounterWindow) -> Result<bool, Error> {
+            Err(Error::Network(
+                "cache backend unavailable mid-flight".into(),
+            ))
         }
     }
 

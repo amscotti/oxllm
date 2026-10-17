@@ -19,7 +19,7 @@ pub mod registry;
 pub mod router;
 pub mod tokens;
 
-pub use cache::{Cache, IncrResult};
+pub use cache::{Cache, CounterWindow, IncrResult, WindowedIncrResult};
 pub use cost::{
     DeploymentPricing, ModelPricing, TokenRates, calculate_cost, calculate_cost_for_service_tier,
     calculate_cost_with_override, calculate_cost_with_override_for_provider,

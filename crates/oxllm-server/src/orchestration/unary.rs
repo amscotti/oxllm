@@ -249,7 +249,14 @@ where
             ctx.pre_call
                 .excluded_deployment_keys
                 .push(cooldown_key.clone());
-            last_err = Some(ApiError::budget_exceeded(error.to_string()));
+            // Preserve the retryable RateLimited classification of a stale
+            // admission window; only genuine caps render as budget_exceeded.
+            let rejection = if matches!(error, oxllm_core::Error::RateLimited(_)) {
+                ApiError::from(error)
+            } else {
+                ApiError::budget_exceeded(error.to_string())
+            };
+            last_err = Some(rejection);
             continue;
         }
         state.router.record_in_flight(&cooldown_key, 1);

@@ -18,6 +18,10 @@ pub(super) enum SessionEnd {
 }
 
 impl SessionEnd {
+    pub(super) fn is_failure(&self) -> bool {
+        matches!(self, Self::UpstreamError(_) | Self::TaskAborted)
+    }
+
     pub(super) fn should_drain(&self) -> bool {
         matches!(self, Self::ClientDisconnected | Self::TimedOut)
     }

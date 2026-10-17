@@ -82,6 +82,28 @@ impl Cache for SpyCache {
         self.inner.decr_if_exists(key, by).await
     }
 
+    async fn incr_if_below_in_window(
+        &self,
+        key: &str,
+        delta: f64,
+        ceiling: f64,
+        ttl: Option<Duration>,
+        expected: Option<&oxllm_core::CounterWindow>,
+    ) -> Result<oxllm_core::WindowedIncrResult, Error> {
+        self.inner
+            .incr_if_below_in_window(key, delta, ceiling, ttl, expected)
+            .await
+    }
+
+    async fn incr_in_window(
+        &self,
+        key: &str,
+        delta: f64,
+        window: &oxllm_core::CounterWindow,
+    ) -> Result<bool, Error> {
+        self.inner.incr_in_window(key, delta, window).await
+    }
+
     async fn counter_value(&self, key: &str) -> Option<f64> {
         self.inner.counter_value(key).await
     }

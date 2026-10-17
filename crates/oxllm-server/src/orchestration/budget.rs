@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use oxllm_core::router::deployment_key;
-use oxllm_core::{Cache, CallContext, IncrResult};
+use oxllm_core::{Cache, CallContext, CounterWindow, WindowedIncrResult};
 
 use crate::hooks::budget::{BUDGET_EXCEEDED_TOTAL, estimate_max_request_cost};
 use crate::hooks::spend_keys::{deployment_spend_key, provider_spend_key};
@@ -125,6 +125,9 @@ fn deployment_budget_ttl(deployment: &oxllm_core::deployment::Deployment) -> Dur
 struct RouterBudgetReservationEntry {
     key: String,
     estimate: f64,
+    // None is retained only for legacy manually constructed test reservations.
+    // Every production reservation is issued atomically with Some(window).
+    window: Option<CounterWindow>,
 }
 
 /// Reservations made by [`reserve_router_budgets`]: one entry per
@@ -146,17 +149,29 @@ impl RouterBudgetReservation {
             .map(|e| e.estimate)
     }
 
+    fn window_for(&self, key: &str) -> Option<&CounterWindow> {
+        self.entries
+            .iter()
+            .find(|entry| entry.key == key)
+            .and_then(|entry| entry.window.as_ref())
+    }
+
     /// Release every reserved estimate (upstream-failure paths). Zero
     /// estimates were never incremented, so there is nothing to release.
     ///
-    /// Decrements only counters that still exist: a release landing after
-    /// the budget window expired must not mint a fresh negative,
-    /// never-expiring counter that permanently discounts every later
-    /// window's spend (the small over-debit is the accepted trade).
+    /// Production entries carry an atomic window receipt: an expired/replaced
+    /// window is never refunded, even if another request recreated the key.
     pub async fn release(&self, cache: &Arc<dyn Cache>) {
         for entry in &self.entries {
             if entry.estimate > 0.0 {
-                if let Err(e) = cache.decr_if_exists(&entry.key, entry.estimate).await {
+                let result = if let Some(window) = &entry.window {
+                    cache
+                        .incr_in_window(&entry.key, -entry.estimate, window)
+                        .await
+                } else {
+                    cache.decr_if_exists(&entry.key, entry.estimate).await
+                };
+                if let Err(e) = result {
                     tracing::warn!(
                         key = %entry.key,
                         error = %e,
@@ -300,17 +315,31 @@ async fn reserve_router_scope(
         return Err(router_budget_error(scope, id, estimate, limit, ttl));
     }
     let estimate = estimate.max(0.0);
-    match state.cache.incr_if_below(&key, estimate, limit, ttl).await {
-        Ok(IncrResult::Allowed(spend)) => {
+    match state
+        .cache
+        .incr_if_below_in_window(&key, estimate, limit, ttl, None)
+        .await
+    {
+        Ok(WindowedIncrResult::Allowed {
+            value: spend,
+            window,
+        }) => {
             if estimate == 0.0 && (!spend.is_finite() || spend >= limit) {
                 return Err(router_budget_error(scope, id, spend, limit, ttl));
             }
-            reservation
-                .entries
-                .push(RouterBudgetReservationEntry { key, estimate });
+            reservation.entries.push(RouterBudgetReservationEntry {
+                key,
+                estimate,
+                window: Some(window),
+            });
             Ok(())
         }
-        Ok(IncrResult::Rejected(spend)) => Err(router_budget_error(scope, id, spend, limit, ttl)),
+        Ok(WindowedIncrResult::Rejected(spend)) => {
+            Err(router_budget_error(scope, id, spend, limit, ttl))
+        }
+        Ok(WindowedIncrResult::WindowChanged) => {
+            Err(router_budget_error(scope, id, estimate, limit, ttl))
+        }
         Err(e) => {
             // Fail closed: same posture as key-level BudgetHook. A cache
             // outage must not disable deployment/provider caps.
@@ -537,7 +566,15 @@ pub async fn settle_router_spend(
         let key = deployment_spend_key(dep_key);
         let reserved = reservation.estimate_for(&key).unwrap_or(0.0);
         let ttl = Some(deployment_budget_ttl(deployment));
-        if let Err(e) = settle_counter(&state.cache, &key, cost - reserved, ttl).await {
+        if let Err(e) = settle_counter(
+            &state.cache,
+            &key,
+            cost - reserved,
+            ttl,
+            reservation.window_for(&key),
+        )
+        .await
+        {
             tracing::warn!(error = %e, "deployment spend record failed");
         }
     }
@@ -546,22 +583,33 @@ pub async fn settle_router_spend(
         let key = provider_spend_key(provider_slug);
         let reserved = reservation.estimate_for(&key).unwrap_or(0.0);
         let ttl = Some(parse_budget_duration(&provider_budget.time_period));
-        if let Err(e) = settle_counter(&state.cache, &key, cost - reserved, ttl).await {
+        if let Err(e) = settle_counter(
+            &state.cache,
+            &key,
+            cost - reserved,
+            ttl,
+            reservation.window_for(&key),
+        )
+        .await
+        {
             tracing::warn!(error = %e, "provider spend record failed");
         }
     }
 }
 
-/// Apply a settle delta (`actual − reserved`) to one spend counter. A
-/// negative delta only decrements a counter that still exists: settling
-/// after the budget window rolled over must not mint a negative,
-/// never-expiring counter that discounts every subsequent window.
+/// Apply a settle delta (`actual − reserved`) in its original admission window.
+/// Both signs are skipped if that window expired/replaced; the durable actual
+/// ledger is independent. None is only for unreserved/legacy synthetic calls.
 async fn settle_counter(
     cache: &Arc<dyn Cache>,
     key: &str,
     delta: f64,
     ttl: Option<Duration>,
+    window: Option<&CounterWindow>,
 ) -> Result<(), oxllm_core::Error> {
+    if let Some(window) = window {
+        return cache.incr_in_window(key, delta, window).await.map(|_| ());
+    }
     if delta > 0.0 {
         cache.incr(key, delta, ttl).await.map(|_| ())
     } else if delta < 0.0 {
@@ -576,6 +624,7 @@ mod tests {
     use super::*;
     use crate::config::types::{GeneralSettings, OxllmSettings, ProxyConfig, RouterSettings};
     use crate::state::AppState;
+    use oxllm_core::IncrResult;
     use oxllm_core::deployment::{Deployment, OxllmParams};
 
     fn make_ctx() -> CallContext {
@@ -669,6 +718,33 @@ mod tests {
                     self.resume.notified().await;
                 }
                 Ok(result)
+            }
+
+            async fn incr_if_below_in_window(
+                &self,
+                key: &str,
+                delta: f64,
+                ceiling: f64,
+                ttl: Option<Duration>,
+                expected: Option<&CounterWindow>,
+            ) -> oxllm_core::Result<WindowedIncrResult> {
+                self.inner
+                    .incr_if_below_in_window(key, delta, ceiling, ttl, expected)
+                    .await
+            }
+
+            async fn incr_in_window(
+                &self,
+                key: &str,
+                delta: f64,
+                window: &CounterWindow,
+            ) -> oxllm_core::Result<bool> {
+                let applied = self.inner.incr_in_window(key, delta, window).await?;
+                if applied && delta < 0.0 && self.decrements.fetch_add(1, Ordering::SeqCst) == 0 {
+                    self.entered.notify_one();
+                    self.resume.notified().await;
+                }
+                Ok(applied)
             }
         }
 
@@ -1027,6 +1103,7 @@ mod tests {
             entries: vec![RouterBudgetReservationEntry {
                 key: key.clone(),
                 estimate: 1.0,
+                window: None,
             }],
         };
         settle_router_spend(&state, &dep, DEP_KEY, Some(0.0), &reservation).await;

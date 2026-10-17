@@ -319,6 +319,28 @@ impl CacheTrait for BlobCounterCache {
     async fn decr_if_exists(&self, key: &str, by: f64) -> Result<bool, Error> {
         self.counters.decr_if_exists(key, by).await
     }
+
+    async fn incr_if_below_in_window(
+        &self,
+        key: &str,
+        delta: f64,
+        ceiling: f64,
+        ttl: Option<Duration>,
+        expected: Option<&oxllm_core::CounterWindow>,
+    ) -> Result<oxllm_core::WindowedIncrResult, Error> {
+        self.counters
+            .incr_if_below_in_window(key, delta, ceiling, ttl, expected)
+            .await
+    }
+
+    async fn incr_in_window(
+        &self,
+        key: &str,
+        delta: f64,
+        window: &oxllm_core::CounterWindow,
+    ) -> Result<bool, Error> {
+        self.counters.incr_in_window(key, delta, window).await
+    }
     /// Delegate to the in-memory store (infallible) rather than the trait
     /// default, which would route through `get` and read a response blob.
     async fn try_counter_value(&self, key: &str) -> Result<Option<f64>, Error> {
@@ -2094,6 +2116,36 @@ mod tests {
         // budget-reset scheduler (which reads this same instance) sees it.
         assert_eq!(memory.counter_value("spend:k").await, Some(5.0));
         assert_eq!(cache.counter_value("spend:k").await, Some(5.0));
+    }
+
+    #[tokio::test]
+    async fn blob_counter_cache_budget_window_receipts_are_owned_by_its_memory_counter_layer() {
+        let memory = Arc::new(InMemoryCache::default());
+        let cache = BlobCounterCache {
+            blob: Arc::new(StubBlob),
+            counters: memory.clone(),
+        };
+        let key = "spend:window";
+        let oxllm_core::WindowedIncrResult::Allowed { window: a, .. } = cache
+            .incr_if_below_in_window(key, 0.8, 1.0, Some(Duration::from_secs(60)), None)
+            .await
+            .unwrap()
+        else {
+            panic!("budget receipt required");
+        };
+        memory.expire_counter_for_test(key).await;
+        let oxllm_core::WindowedIncrResult::Allowed { window: b, .. } = cache
+            .incr_if_below_in_window(key, 0.01, 1.0, Some(Duration::from_secs(60)), None)
+            .await
+            .unwrap()
+        else {
+            panic!("replacement receipt required");
+        };
+        assert_ne!(a, b);
+        assert!(!cache.incr_in_window(key, -0.8, &a).await.unwrap());
+        assert_eq!(cache.counter_value(key).await, Some(0.01));
+        assert!(cache.incr_in_window(key, 0.02, &b).await.unwrap());
+        assert!((memory.counter_value(key).await.unwrap() - 0.03).abs() < 1e-12);
     }
 
     /// Non-response keys (`vk:*` auth snapshots, tombstones, coordination

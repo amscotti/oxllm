@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use moka::Expiry;
 use moka::future::Cache;
-use oxllm_core::{Cache as CacheTrait, Error, IncrResult};
+use oxllm_core::{Cache as CacheTrait, CounterWindow, Error, IncrResult, WindowedIncrResult};
 use tokio::sync::RwLock;
 
 #[cfg(feature = "redis")]
@@ -119,6 +119,7 @@ struct CounterState {
     value: f64,
     window_start: Instant,
     expires_at: Option<Instant>,
+    budget_window: Option<CounterWindow>,
 }
 
 impl CounterState {
@@ -128,6 +129,7 @@ impl CounterState {
             value,
             window_start: now,
             expires_at: ttl.map(|d| now + clamp_ttl(d)),
+            budget_window: None,
         }
     }
 
@@ -338,6 +340,17 @@ impl InMemoryCache {
                 state.expires_at
             }
         })
+    }
+
+    /// Advance just this counter past its actual fixed-window expiry. Test-only
+    /// clock control: the normal counter read/recreation paths still run.
+    #[cfg(test)]
+    pub(crate) async fn expire_counter_for_test(&self, key: &str) {
+        let mut counters = self.counters.write().await;
+        let state = counters
+            .get_mut(key)
+            .expect("counter must exist before expiry");
+        state.expires_at = Some(Instant::now() - Duration::from_nanos(1));
     }
 
     /// Atomically check eligibility and zero a counter. Under one write lock,
@@ -558,6 +571,110 @@ impl CacheTrait for InMemoryCache {
                 Some(state.value)
             }
         })
+    }
+
+    async fn incr_if_below_in_window(
+        &self,
+        key: &str,
+        delta: f64,
+        ceiling: f64,
+        ttl: Option<Duration>,
+        expected: Option<&CounterWindow>,
+    ) -> Result<WindowedIncrResult, Error> {
+        if !delta.is_finite() || delta < 0.0 || !ceiling.is_finite() {
+            return Err(Error::Config("invalid windowed budget reservation".into()));
+        }
+        let (result, mirror) = {
+            let mut guard = self.counters.write().await;
+            self.maybe_sweep_locked(&mut guard);
+            let now = Instant::now();
+            let live = guard.get(key).filter(|state| !state.is_expired(now));
+            if expected.is_some_and(|expected| {
+                live.and_then(|state| state.budget_window.as_ref()) != Some(expected)
+            }) {
+                return Ok(WindowedIncrResult::WindowChanged);
+            }
+            let current = live.map_or(0.0, |state| state.value);
+            let new_value = current + delta;
+            if !current.is_finite() || !new_value.is_finite() {
+                return Err(Error::Config("non-finite budget counter".into()));
+            }
+            if new_value > ceiling {
+                (WindowedIncrResult::Rejected(current), None)
+            } else {
+                let mut state = match guard.remove(key) {
+                    Some(state) if !state.is_expired(now) => state,
+                    _ => CounterState::fresh(0.0, ttl),
+                };
+                state.value = new_value;
+                if state.expires_at.is_none() {
+                    state.expires_at = ttl.map(|ttl| now + clamp_ttl(ttl));
+                }
+                let window = state
+                    .budget_window
+                    .get_or_insert_with(CounterWindow::fresh)
+                    .clone();
+                let expires_at = state.expires_at;
+                guard.insert(key.to_string(), state);
+                (
+                    WindowedIncrResult::Allowed {
+                        value: new_value,
+                        window,
+                    },
+                    Some((new_value, expires_at)),
+                )
+            }
+        };
+        if let Some((value, expires_at)) = mirror {
+            self.store
+                .insert(
+                    key.to_string(),
+                    CachedEntry {
+                        value: value.to_string(),
+                        expires_at,
+                    },
+                )
+                .await;
+        }
+        Ok(result)
+    }
+
+    async fn incr_in_window(
+        &self,
+        key: &str,
+        delta: f64,
+        window: &CounterWindow,
+    ) -> Result<bool, Error> {
+        if !delta.is_finite() {
+            return Err(Error::Config(
+                "incr_in_window rejected non-finite delta".into(),
+            ));
+        }
+        let (value, expires_at) = {
+            let mut guard = self.counters.write().await;
+            self.maybe_sweep_locked(&mut guard);
+            let Some(state) = guard.get_mut(key).filter(|state| {
+                !state.is_expired(Instant::now()) && state.budget_window.as_ref() == Some(window)
+            }) else {
+                return Ok(false);
+            };
+            let value = state.value + delta;
+            if !value.is_finite() {
+                return Err(Error::Config("non-finite budget settlement".into()));
+            }
+            state.value = value;
+            (value, state.expires_at)
+        };
+        self.store
+            .insert(
+                key.to_string(),
+                CachedEntry {
+                    value: value.to_string(),
+                    expires_at,
+                },
+            )
+            .await;
+        Ok(true)
     }
 
     /// Atomically decrement only when the counter exists (see
@@ -781,6 +898,41 @@ impl CacheTrait for DualCache {
         self.memory.counter_value(key).await
     }
 
+    async fn incr_if_below_in_window(
+        &self,
+        key: &str,
+        delta: f64,
+        ceiling: f64,
+        ttl: Option<Duration>,
+        expected: Option<&CounterWindow>,
+    ) -> Result<WindowedIncrResult, Error> {
+        if let Some(redis) = &self.redis {
+            // A receipt belongs to the authoritative store, never to a local
+            // mirror's independently created window. These budget counters all
+            // have authoritative fixed TTLs; they need no local reset/mirror.
+            redis
+                .incr_if_below_in_window(key, delta, ceiling, ttl, expected)
+                .await
+        } else {
+            self.memory
+                .incr_if_below_in_window(key, delta, ceiling, ttl, expected)
+                .await
+        }
+    }
+
+    async fn incr_in_window(
+        &self,
+        key: &str,
+        delta: f64,
+        window: &CounterWindow,
+    ) -> Result<bool, Error> {
+        if let Some(redis) = &self.redis {
+            redis.incr_in_window(key, delta, window).await
+        } else {
+            self.memory.incr_in_window(key, delta, window).await
+        }
+    }
+
     /// When Redis is configured it is the fleet source of truth: a Redis
     /// backend error must surface as `Err` (not be masked as `None`) so callers
     /// like the alerting budget-reset detector can skip evaluation during an
@@ -823,6 +975,9 @@ impl CacheTrait for DualCache {
         }
     }
 }
+
+#[cfg(test)]
+mod budget_window_tests;
 
 #[cfg(test)]
 mod tests {

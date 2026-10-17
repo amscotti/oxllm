@@ -28,9 +28,10 @@
 //! token usage (e.g. OpenAI Realtime `response.done`), the session settles
 //! the actual cost via the post-success hook chain (budget debit, spend log,
 //! deployment TPM) at session close. Disconnects get a bounded cancel/drain
-//! to recover usage. A control-only session releases its reservation; delivered
+//! to recover usage. Token-priced control-only sessions release reservations;
 //! output still lacking usage retains the existing estimate, like partial chat
-//! streams, and is recorded as partial with unknown cost (no invented tokens).
+//! streams. Duration-priced sessions settle their known elapsed charge even
+//! without final tokens (no invented token counts).
 //!
 //! # Frame handling
 //!
@@ -91,6 +92,15 @@ pub(super) const WS_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 /// idle timeout), but oxllm-as-edge provides one.
 const REALTIME_MAX_SESSION_DURATION: Duration = Duration::from_secs(600);
 
+/// Duration billing currently measures from connection start through teardown.
+/// Reserve the live cap plus successful connect, an in-flight bounded write,
+/// usage drain and socket close, not an unrelated HTTP timeout. This remains an
+/// estimate (scheduling and multi-event transforms can add time), not a new cap.
+const REALTIME_DURATION_ESTIMATE: Duration = REALTIME_MAX_SESSION_DURATION
+    .saturating_add(UPSTREAM_CONNECT_TIMEOUT)
+    .saturating_add(WS_SEND_TIMEOUT)
+    .saturating_add(USAGE_DRAIN_TIMEOUT.saturating_mul(2));
+
 /// Cap on a single WebSocket message size (reassembled) for both the client
 /// and upstream sides of the realtime proxy. Tungstenite's default is 64 MiB;
 /// realtime audio frames are typically a few KiB and JSON events are smaller,
@@ -129,12 +139,39 @@ async fn settle_reserved_realtime_session(
         .as_ref()
         .ok()
         .and_then(|outcome| outcome.usage.as_ref());
-    let cost = outcome.as_ref().ok().and_then(|_| {
-        crate::hooks::cost_fallback::resolve_cost(ctx, model, usage, None, None, provider)
-    });
     let mut settlement_ctx = ctx.clone();
-    settlement_ctx.cost_override = cost.or(ctx.cost_override);
-    if cost.is_some() || usage.is_some() {
+    let duration_pricing = realtime_duration_pricing(ctx, model, provider);
+    let duration_priced = duration_pricing.is_some();
+    if let Some(pricing) = duration_pricing {
+        // Pin the effective duration card for every later hook/exporter, not
+        // just this first resolution. In particular, unavailable timing must
+        // stay unknown rather than fall back to token prices on a public alias.
+        settlement_ctx.deployment_pricing = Some(pricing);
+    }
+    let cost = outcome.as_ref().ok().and_then(|_| {
+        crate::hooks::cost_fallback::resolve_cost(
+            &settlement_ctx,
+            model,
+            usage,
+            None,
+            None,
+            provider,
+        )
+    });
+    // A setup/connection failure is not a live session. Explicitly freeze its
+    // zero charge as well, so a failure observer cannot price setup elapsed time.
+    settlement_ctx.cost_override = if outcome.is_err() {
+        Some(0.0)
+    } else {
+        cost.or(ctx.cost_override)
+    };
+    let retain_unknown_estimate = outcome.as_ref().is_ok_and(|outcome| {
+        outcome.unmetered_output && (!duration_priced || !outcome.end.is_failure())
+    });
+    // Tokens cannot replace missing duration evidence, including via the
+    // router's nominal-unknown-token-cost fallback. Retain or release the same
+    // estimate as the key scopes when no elapsed charge can be established.
+    if cost.is_some() || (usage.is_some() && !duration_priced) {
         crate::orchestration::budget::settle_router_spend(
             state,
             deployment,
@@ -143,10 +180,7 @@ async fn settle_reserved_realtime_session(
             &reservation,
         )
         .await;
-    } else if !outcome
-        .as_ref()
-        .is_ok_and(|outcome| outcome.unmetered_output)
-    {
+    } else if !retain_unknown_estimate {
         reservation.release(&state.cache).await;
     }
     settle_realtime_session(state, &settlement_ctx, model, provider, dep_key, outcome).await;
@@ -400,11 +434,12 @@ pub async fn handle_realtime_upgrade(
             return Err(error);
         }
     };
-    if let Err(error) = crate::pipeline::prepare_deployment_pricing(
+    if let Err(error) = crate::pipeline::prepare_deployment_pricing_with_duration_estimate(
         &state,
         &mut pipeline.call_ctx,
         &deployment,
         &serde_json::json!({"model":model}),
+        REALTIME_DURATION_ESTIMATE,
     )
     .await
     {
@@ -589,9 +624,10 @@ pub async fn handle_realtime_upgrade(
 ///
 /// Setup failures always run failure hooks. Successfully connected sessions
 /// with recovered usage settle the reported amount. If output remains
-/// unmetered after the bounded drain, keep the existing reservation as a
-/// conservative estimate and release only concurrency, matching chat's partial
-/// stream policy. This is not a token estimate or a claim of known actual cost.
+/// unmetered after the bounded drain, token-priced sessions keep the existing
+/// reservation as a conservative estimate, matching chat's partial policy.
+/// A duration-priced session's elapsed cost is complete independently of token
+/// usage, so settle that snapshot without turning a failure into a success.
 async fn settle_realtime_session(
     state: &crate::state::AppState,
     call_ctx: &oxllm_core::CallContext,
@@ -623,10 +659,23 @@ async fn settle_realtime_session(
         )),
         _ => None,
     };
+    let mut partial_ctx = call_ctx.clone();
+    let duration_cost = call_ctx.cost_override.filter(|cost| {
+        cost.is_finite()
+            && *cost >= 0.0
+            && realtime_duration_pricing(call_ctx, model, provider_slug).is_some()
+    });
+    if (failure.is_some() || outcome.unmetered_output)
+        && let Some(cost) = duration_cost
+    {
+        crate::pipeline::settle_partial_budget(state, &mut partial_ctx, cost).await;
+    }
+    let call_ctx = &partial_ctx;
     if let Some(error) = failure {
-        // As in chat, an upstream fault refunds the key reservation. Keep a
-        // partial ledger record when the provider had already reported usage.
-        if outcome.usage.is_some() || outcome.unmetered_output {
+        // Token-priced faults retain their existing refund policy. Known
+        // duration charges were already settled, so failure hooks cannot undo
+        // measured work; even a connected control-only fault has elapsed cost.
+        if outcome.usage.is_some() || outcome.unmetered_output || duration_cost.is_some() {
             record_partial_realtime(
                 state,
                 call_ctx,
@@ -636,8 +685,8 @@ async fn settle_realtime_session(
             )
             .await;
         }
-        // Preserve the partial record first; failure hooks still refund the
-        // reservation, while the cost observer skips its claimed terminal row.
+        // Preserve the partial record first; the cost observer skips its
+        // claimed terminal row, while all failure callbacks still run.
         crate::pipeline::post_failure(state, call_ctx, &error).await;
     } else if outcome.unmetered_output {
         crate::pipeline::release_concurrency(state, call_ctx).await;
@@ -649,11 +698,16 @@ async fn settle_realtime_session(
             outcome.usage.as_ref(),
         )
         .await;
-        tracing::warn!(
-            request_id = %call_ctx.request_id,
-            reservation_retained = ?call_ctx.budget_estimate,
-            "realtime output lacks final usage; retaining existing estimate, actual cost unknown"
-        );
+        if duration_cost.is_some() {
+            tracing::info!(request_id = %call_ctx.request_id, cost = duration_cost,
+                "realtime output lacks final tokens; settled known duration cost");
+        } else {
+            tracing::warn!(
+                request_id = %call_ctx.request_id,
+                reservation_retained = ?call_ctx.budget_estimate,
+                "realtime output lacks final usage; retaining existing estimate, actual cost unknown"
+            );
+        }
     } else {
         crate::pipeline::post_success(
             state,
@@ -666,6 +720,35 @@ async fn settle_realtime_session(
         )
         .await;
     }
+}
+
+/// Explicit token rates take precedence over duration, including on catalog
+/// voice models. Only duration pricing makes the *whole* partial charge known;
+/// reported tokens from one response must not settle another unmetered one.
+fn realtime_duration_pricing(
+    ctx: &oxllm_core::CallContext,
+    model: &str,
+    provider: &str,
+) -> Option<oxllm_core::DeploymentPricing> {
+    if let Some(pricing) = &ctx.deployment_pricing {
+        return pricing.is_per_second_priced().then(|| pricing.clone());
+    }
+    [
+        Some(model),
+        ctx.pricing_model.as_deref(),
+        ctx.deployment_model.as_deref(),
+        Some(ctx.model.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|model| oxllm_core::lookup_pricing_with_provider(model, provider))
+    .filter(|pricing| pricing.is_per_second_priced())
+    .map(|pricing| oxllm_core::DeploymentPricing {
+        cost_per_second_rate: pricing.cost_per_second_rate,
+        input_cost_per_second: pricing.input_cost_per_second,
+        output_cost_per_second: pricing.output_cost_per_second,
+        ..Default::default()
+    })
 }
 
 async fn record_partial_realtime(

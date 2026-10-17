@@ -229,6 +229,10 @@ pub(super) async fn await_settlement(task: Option<JoinHandle<()>>) {
 }
 
 #[cfg(test)]
+#[path = "duration_tests.rs"]
+mod duration_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
@@ -259,12 +263,36 @@ mod tests {
     /// settlement at this boundary previously refunded an already-debited
     /// router reservation or abandoned the remaining key/parallel cleanup.
     #[derive(Default)]
-    struct DelayedCache {
+    pub(super) struct DelayedCache {
         inner: InMemoryCache,
-        pause_key: Mutex<Option<String>>,
-        entered: Notify,
-        resume: Notify,
-        decrements: Mutex<HashMap<String, usize>>,
+        pub(super) pause_key: Mutex<Option<String>>,
+        pub(super) entered: Notify,
+        pub(super) resume: Notify,
+        pub(super) decrements: Mutex<HashMap<String, usize>>,
+    }
+
+    impl DelayedCache {
+        async fn after_decrement(&self, key: &str) {
+            *self
+                .decrements
+                .lock()
+                .unwrap()
+                .entry(key.into())
+                .or_default() += 1;
+            let pause = {
+                let mut pause_key = self.pause_key.lock().unwrap();
+                if pause_key.as_deref() == Some(key) {
+                    pause_key.take();
+                    true
+                } else {
+                    false
+                }
+            };
+            if pause {
+                self.entered.notify_one();
+                self.resume.notified().await;
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -295,24 +323,32 @@ mod tests {
         }
         async fn decr_if_exists(&self, key: &str, by: f64) -> oxllm_core::Result<bool> {
             let applied = self.inner.decr_if_exists(key, by).await?;
-            *self
-                .decrements
-                .lock()
-                .unwrap()
-                .entry(key.into())
-                .or_default() += 1;
-            let pause = {
-                let mut pause_key = self.pause_key.lock().unwrap();
-                if pause_key.as_deref() == Some(key) {
-                    pause_key.take();
-                    true
-                } else {
-                    false
-                }
-            };
-            if pause {
-                self.entered.notify_one();
-                self.resume.notified().await;
+            self.after_decrement(key).await;
+            Ok(applied)
+        }
+
+        async fn incr_if_below_in_window(
+            &self,
+            key: &str,
+            delta: f64,
+            ceiling: f64,
+            ttl: Option<Duration>,
+            expected: Option<&oxllm_core::CounterWindow>,
+        ) -> oxllm_core::Result<oxllm_core::WindowedIncrResult> {
+            self.inner
+                .incr_if_below_in_window(key, delta, ceiling, ttl, expected)
+                .await
+        }
+
+        async fn incr_in_window(
+            &self,
+            key: &str,
+            delta: f64,
+            window: &oxllm_core::CounterWindow,
+        ) -> oxllm_core::Result<bool> {
+            let applied = self.inner.incr_in_window(key, delta, window).await?;
+            if applied && delta < 0.0 {
+                self.after_decrement(key).await;
             }
             Ok(applied)
         }

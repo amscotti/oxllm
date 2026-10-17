@@ -638,9 +638,15 @@ async fn try_model_with_retries(
                 .pre_call
                 .excluded_deployment_keys
                 .push(cooldown_key.clone());
-            last_outcome = Some(ModelOutcome::Retryable(ApiError::budget_exceeded(
-                error.to_string(),
-            )));
+            // A stale admission window is a retryable race, not an exhausted
+            // cap: keep its RateLimited classification instead of flattening
+            // every pricing failure into a terminal-looking budget verdict.
+            let rejection = if matches!(error, oxllm_core::Error::RateLimited(_)) {
+                ApiError::from(error)
+            } else {
+                ApiError::budget_exceeded(error.to_string())
+            };
+            last_outcome = Some(ModelOutcome::Retryable(rejection));
             continue;
         }
 

@@ -123,3 +123,25 @@ async fn subscribe_times_out_under_partition() {
         .expect("subscribe hung (REDIS_OP_TIMEOUT missing?)");
     assert!(res.is_err(), "expected Err under Redis partition, got Ok");
 }
+
+#[tokio::test]
+async fn budget_window_reservation_times_out_under_partition() {
+    let cache = blackhole_cache("blackhole-budget-reserve").await;
+    let result = tokio::time::timeout(
+        OUTER,
+        cache.incr_if_below_in_window("spend:x", 0.5, 1.0, Some(Duration::from_secs(60)), None),
+    )
+    .await
+    .expect("windowed reservation must have an operation timeout");
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn budget_window_adjustment_times_out_under_partition() {
+    let cache = blackhole_cache("blackhole-budget-adjust").await;
+    let window = oxllm_core::CounterWindow::fresh();
+    let result = tokio::time::timeout(OUTER, cache.incr_in_window("spend:x", -0.5, &window))
+        .await
+        .expect("windowed adjustment must have an operation timeout");
+    assert!(result.is_err());
+}
