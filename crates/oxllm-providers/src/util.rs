@@ -471,8 +471,29 @@ pub(crate) fn strict_tool_definition(tool: &Value) -> oxllm_core::Result<bool> {
     }
 }
 
-/// A `thinking` block the API rejects: the text is missing or whitespace.
-/// `redacted_thinking` carries opaque data, not text, so it is never blank.
+/// A `thinking` block the API rejects on replay: the text is missing or
+/// whitespace AND it carries no signature. A signed blank block is valid —
+/// models returning `display: omitted` produce exactly that shape, and the
+/// signature binds it to the original (omitted) text, so it must be replayed
+/// unchanged rather than dropped or refilled. `redacted_thinking` carries
+/// opaque data, not text, so it is never blank.
+#[cfg(any(feature = "anthropic", feature = "bedrock"))]
+pub(crate) fn is_blank_unsigned_thinking_block(block: &Value) -> bool {
+    block.get("type").and_then(Value::as_str) == Some("thinking")
+        && block
+            .get("thinking")
+            .and_then(Value::as_str)
+            .is_none_or(|text| text.trim().is_empty())
+        && block
+            .get("signature")
+            .and_then(Value::as_str)
+            .is_none_or(|signature| signature.is_empty())
+}
+
+/// A `thinking` block whose text is missing or whitespace, signed or not.
+/// Used to decide whether a single block may be refilled from
+/// `reasoning_content` (the streaming-aggregation shape); replay dropping is
+/// decided by [`is_blank_unsigned_thinking_block`] instead.
 #[cfg(any(feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn is_blank_thinking_block(block: &Value) -> bool {
     block.get("type").and_then(Value::as_str) == Some("thinking")
@@ -486,9 +507,12 @@ pub(crate) fn is_blank_thinking_block(block: &Value) -> bool {
 /// Content-array blocks take precedence when clients also send their mirrored
 /// `thinking_blocks` field, so a signed block is not replayed twice.
 ///
-/// A thinking block with no text is omitted. When there is exactly one such
-/// block, non-empty `reasoning_content` fills it; several blank blocks are
-/// not split. A non-blank block still needs its signature when required.
+/// An unsigned thinking block with no text is omitted. A signed blank block
+/// — the `display: omitted` replay shape — is kept unchanged: its signature
+/// binds the original text, so refilling or dropping it would break replay.
+/// When there is exactly one blank block, non-empty `reasoning_content` fills
+/// it; several blank blocks are not split. A non-blank block still needs its
+/// signature when required.
 #[cfg(any(feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn thinking_blocks_for_replay(
     message: &Value,
@@ -513,9 +537,21 @@ pub(crate) fn thinking_blocks_for_replay(
         })?;
         for block in blocks {
             let mut block = block.clone();
+            // Content-array blocks take precedence over their mirrored
+            // `thinking_blocks` entry: compare the RAW block before any
+            // refill so a refilled copy is never replayed beside the inline
+            // original (two blocks sharing one signature cannot both
+            // validate).
+            if content.is_some_and(|blocks| blocks.contains(&block)) {
+                continue;
+            }
             // Some streaming clients aggregate one signature block alongside
-            // reasoning_content. With exactly one block the association is
-            // unambiguous; never guess how to split text across several blocks.
+            // reasoning_content — oxllm's own stream emits the thinking text
+            // and the signature separately, so the refill reconstructs
+            // exactly the text the signature covers. With exactly one block
+            // the association is unambiguous; never guess how to split text
+            // across several blocks. A genuine `display: omitted` block has
+            // no reasoning_content to fill, so the refill stays inert there.
             if blocks.len() == 1 && is_blank_thinking_block(&block) {
                 if let Some(text) = message
                     .get("reasoning_content")
@@ -525,8 +561,24 @@ pub(crate) fn thinking_blocks_for_replay(
                     block["thinking"] = json!(text);
                 }
             }
-            if is_blank_thinking_block(&block) {
+            // An unsigned blank block cannot be replayed (the signature is
+            // what makes a blank `display: omitted` block acceptable); a
+            // signed blank stays, whatever its text.
+            if is_blank_unsigned_thinking_block(&block) {
                 continue;
+            }
+            // oxllm's stream emits signature-only blocks (no `thinking`
+            // key). A signed block normalizes to the empty-text replay shape
+            // the API accepts; the reference applies the same default on the
+            // Converse surface (`_thinking_text`).
+            if block.get("type").and_then(Value::as_str) == Some("thinking")
+                && block.get("thinking").and_then(Value::as_str).is_none()
+                && block
+                    .get("signature")
+                    .and_then(Value::as_str)
+                    .is_some_and(|signature| !signature.is_empty())
+            {
+                block["thinking"] = json!("");
             }
             let valid = match block.get("type").and_then(Value::as_str) {
                 Some("thinking") => {
@@ -544,9 +596,7 @@ pub(crate) fn thinking_blocks_for_replay(
                         .into(),
                 ));
             }
-            if !content.is_some_and(|blocks| blocks.contains(&block)) {
-                replay.push(block);
-            }
+            replay.push(block);
         }
     }
     if require_signature

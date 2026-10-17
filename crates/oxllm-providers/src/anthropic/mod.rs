@@ -1844,13 +1844,26 @@ fn normalize_message(msg: &Value) -> Result<Value> {
             }
             Value::Array(arr) => {
                 for block in arr {
-                    // A thinking block with no text is rejected ("each
-                    // thinking block must contain thinking"), signature or
-                    // not. Drop it so a replayed empty block does not 400.
-                    if crate::util::is_blank_thinking_block(block) {
+                    // An unsigned thinking block with no text is rejected
+                    // ("each thinking block must contain thinking" applies
+                    // without a signature); a signed blank block is the
+                    // `display: omitted` replay shape and stays. Signature-only
+                    // blocks (oxllm's streaming spelling) normalize to the
+                    // empty-text form the API accepts.
+                    let mut block = block.clone();
+                    if block.get("type").and_then(Value::as_str) == Some("thinking")
+                        && block.get("thinking").and_then(Value::as_str).is_none()
+                        && block
+                            .get("signature")
+                            .and_then(Value::as_str)
+                            .is_some_and(|signature| !signature.is_empty())
+                    {
+                        block["thinking"] = json!("");
+                    }
+                    if crate::util::is_blank_unsigned_thinking_block(&block) {
                         continue;
                     }
-                    content_blocks.push(convert_content_block_to_anthropic(block));
+                    content_blocks.push(convert_content_block_to_anthropic(&block));
                 }
             }
             Value::String(_) => {}

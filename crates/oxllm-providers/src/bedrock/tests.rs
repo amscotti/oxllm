@@ -2134,7 +2134,7 @@ mod converse_tests {
     }
 
     #[test]
-    fn converse_drops_blank_thinking_content() {
+    fn converse_replays_signed_blank_thinking_content() {
         let req = json!({
             "messages": [{
                 "role": "assistant",
@@ -2152,9 +2152,61 @@ mod converse_tests {
         )
         .expect("ok");
         let content = out["messages"][0]["content"].as_array().expect("content");
-        assert_eq!(content.len(), 2);
+        assert_eq!(content.len(), 3);
+        assert_eq!(
+            content[0]["reasoningContent"]["reasoningText"]["signature"],
+            "sig_blank"
+        );
+        assert_eq!(
+            content[0]["reasoningContent"]["reasoningText"]["text"], "  ",
+            "signed blank text is forwarded verbatim"
+        );
+        assert_eq!(content[1]["text"], "Answer.");
+        assert_eq!(content[2]["reasoningContent"]["redactedContent"], "opaque");
+
+        // The signature-only streaming spelling defaults to empty text.
+        let signature_only = json!({
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "signature": "sig_stream"},
+                    {"type": "text", "text": "Answer."},
+                ],
+            }],
+        });
+        let out = converse::transform_request_converse(
+            &signature_only,
+            "anthropic.claude-sonnet-4-5",
+            &empty_extra(),
+        )
+        .expect("ok");
+        let content = out["messages"][0]["content"].as_array().expect("content");
+        assert_eq!(content[0]["reasoningContent"]["reasoningText"]["text"], "");
+        assert_eq!(
+            content[0]["reasoningContent"]["reasoningText"]["signature"],
+            "sig_stream"
+        );
+        assert_eq!(content[1]["text"], "Answer.");
+
+        // Unsigned blank thinking keeps the historical drop.
+        let unsigned = json!({
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "  "},
+                    {"type": "text", "text": "Answer."},
+                ],
+            }],
+        });
+        let out = converse::transform_request_converse(
+            &unsigned,
+            "anthropic.claude-sonnet-4-5",
+            &empty_extra(),
+        )
+        .expect("ok");
+        let content = out["messages"][0]["content"].as_array().expect("content");
+        assert_eq!(content.len(), 1);
         assert_eq!(content[0]["text"], "Answer.");
-        assert_eq!(content[1]["reasoningContent"]["redactedContent"], "opaque");
     }
 
     /// Empty inference params still produce an `inferenceConfig: {}` field

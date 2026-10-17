@@ -395,8 +395,11 @@ fn request_assistant_message_with_redacted_thinking() {
 }
 
 #[test]
-fn request_drops_blank_thinking_blocks() {
+fn request_replays_signed_blank_thinking_blocks() {
     let p = AnthropicProvider;
+    // A signed blank thinking block is the `display: omitted` replay shape:
+    // Anthropic binds the signature to the omitted text, so it must be
+    // forwarded unchanged rather than dropped (LiteLLM #41362/#46342).
     let req = json!({
         "model": "claude-sonnet-4-5",
         "messages": [{
@@ -411,10 +414,30 @@ fn request_drops_blank_thinking_blocks() {
     });
     let out = p.transform_request(&req, &deployment()).expect("ok");
     let content = out["messages"][0]["content"].as_array().expect("content");
-    assert_eq!(content.len(), 2);
-    assert_eq!(content[0]["type"], "text");
-    assert_eq!(content[0]["text"], "Answer.");
-    assert_eq!(content[1]["type"], "redacted_thinking");
+    assert_eq!(content.len(), 3);
+    assert_eq!(content[0]["type"], "thinking");
+    assert_eq!(content[0]["thinking"], "   ");
+    assert_eq!(content[0]["signature"], "sig_blank");
+    assert_eq!(content[1]["type"], "text");
+    assert_eq!(content[1]["text"], "Answer.");
+    assert_eq!(content[2]["type"], "redacted_thinking");
+
+    // Without a signature the same block is still dropped: the API rejects
+    // unsigned empty thinking.
+    let unsigned = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [{
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "   "},
+                {"type": "text", "text": "Answer."}
+            ]
+        }],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&unsigned, &deployment()).expect("ok");
+    // The lone surviving text block collapses back to plain-string content.
+    assert_eq!(out["messages"][0]["content"], "Answer.");
 
     let filled = json!({
         "model": "claude-sonnet-4-5",
@@ -433,17 +456,104 @@ fn request_drops_blank_thinking_blocks() {
     );
     assert_eq!(out["messages"][0]["content"][0]["signature"], "sig_fill");
 
+    // A single signed blank block without reasoning_content is replayed
+    // unchanged (the `display: omitted` shape) rather than skipped.
+    let kept = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [{
+            "role": "assistant",
+            "content": "Answer.",
+            "thinking_blocks": [{"type": "thinking", "thinking": " ", "signature": "sig_keep"}],
+        }],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&kept, &deployment()).expect("ok");
+    let content = out["messages"][0]["content"].as_array().expect("content");
+    assert_eq!(content.len(), 2);
+    assert_eq!(content[0]["type"], "thinking");
+    assert_eq!(content[0]["signature"], "sig_keep");
+    assert_eq!(content[1]["type"], "text");
+    assert_eq!(content[1]["text"], "Answer.");
+
+    // An unsigned blank block with no reasoning_content to fill it stays
+    // dropped, leaving the plain text content.
     let skipped = json!({
         "model": "claude-sonnet-4-5",
         "messages": [{
             "role": "assistant",
             "content": "Answer.",
-            "thinking_blocks": [{"type": "thinking", "thinking": " ", "signature": "sig_skip"}],
+            "thinking_blocks": [{"type": "thinking", "thinking": " "}],
         }],
         "max_tokens": 100,
     });
     let out = p.transform_request(&skipped, &deployment()).expect("ok");
     assert_eq!(out["messages"][0]["content"], "Answer.");
+
+    // oxllm's streaming emits signature-only blocks (no `thinking` key); a
+    // `display: omitted` stream has no reasoning_content either. The replay
+    // normalizes to the empty-text shape instead of erroring or dropping.
+    let signature_only = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [{
+            "role": "assistant",
+            "content": "Answer.",
+            "thinking_blocks": [{"type": "thinking", "signature": "sig_stream"}],
+        }],
+        "max_tokens": 100,
+    });
+    let out = p
+        .transform_request(&signature_only, &deployment())
+        .expect("ok");
+    let content = out["messages"][0]["content"].as_array().expect("content");
+    assert_eq!(content.len(), 2);
+    assert_eq!(content[0]["type"], "thinking");
+    assert_eq!(content[0]["thinking"], "");
+    assert_eq!(content[0]["signature"], "sig_stream");
+
+    // The inline spelling of the same shape normalizes identically.
+    let inline_signature_only = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [{
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "signature": "sig_inline"},
+                {"type": "text", "text": "Answer."}
+            ]
+        }],
+        "max_tokens": 100,
+    });
+    let out = p
+        .transform_request(&inline_signature_only, &deployment())
+        .expect("ok");
+    let content = out["messages"][0]["content"].as_array().expect("content");
+    assert_eq!(content[0]["type"], "thinking");
+    assert_eq!(content[0]["thinking"], "");
+    assert_eq!(content[0]["signature"], "sig_inline");
+
+    // A mirrored content block wins over its `thinking_blocks` copy: the
+    // refill must not produce a second block sharing the same signature.
+    let mirrored = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [{
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "", "signature": "sig_mirror"},
+                {"type": "text", "text": "Answer."}
+            ],
+            "reasoning_content": "stream text",
+            "thinking_blocks": [{"type": "thinking", "thinking": "", "signature": "sig_mirror"}],
+        }],
+        "max_tokens": 100,
+    });
+    let out = p.transform_request(&mirrored, &deployment()).expect("ok");
+    let content = out["messages"][0]["content"].as_array().expect("content");
+    let thinking_count = content
+        .iter()
+        .filter(|block| block["type"] == "thinking")
+        .count();
+    assert_eq!(thinking_count, 1, "mirrored block replays exactly once");
+    assert_eq!(content[0]["thinking"], "");
+    assert_eq!(content[0]["signature"], "sig_mirror");
 }
 
 // --- User message with image content ---
