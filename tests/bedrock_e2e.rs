@@ -228,3 +228,206 @@ async fn bedrock_strips_bedrock_prefix_in_url() {
     assert_eq!(resp.status(), 200);
     let _ = handle.shutdown_tx.send(());
 }
+
+#[tokio::test]
+async fn bedrock_geo_prefixes_keep_signed_runtime_paths_and_family_features() {
+    for (model, nova) in [
+        ("jp.amazon.nova-2-lite-v1:0", true),
+        ("au.anthropic.claude-sonnet-4-5-20250929-v1:0", false),
+    ] {
+        for explicit_converse in [false, true] {
+            let mock = MockServer::start();
+            let converse = nova || explicit_converse;
+            let api = if converse { "converse" } else { "invoke" };
+            let mut config = bedrock_config(
+                &mock.base_url(),
+                "regional-model",
+                &format!("bedrock/{model}"),
+            );
+            if explicit_converse {
+                config.model_list[0]
+                    .oxllm_params
+                    .extra
+                    .insert("use_converse_api".into(), json!(true));
+            }
+            config.router_settings.routing.num_retries = Some(0);
+            let handle = start_oxllm(config).await.expect("server start");
+            let mut request = json!({
+                "model": "regional-model", "max_tokens": 4096, "reasoning_effort": "low",
+                "messages": [
+                    {"role": "system", "content": [{"type": "text", "text": "instructions", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]},
+                    {"role": "user", "content": "look up the weather"}
+                ],
+                "tools": [{"type": "function", "function": {"name": "get.weather", "parameters": {"type": "object"}}, "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
+                "tool_choice": "auto"
+            });
+            let thinking = json!({"type": "enabled", "budget_tokens": 1024});
+            let serial = json!({"type": "auto", "disable_parallel_tool_use": true});
+            let expected = if nova {
+                request["web_search_options"] = json!({});
+                json!({
+                    "inferenceConfig": {"maxTokens": 4096},
+                    "additionalModelRequestFields": {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": "low"}},
+                    "toolConfig": {"tools": [
+                        {"toolSpec": {"name": "get_weather"}},
+                        {"systemTool": {"name": "nova_grounding"}}
+                    ], "toolChoice": {"auto": {}}}
+                })
+            } else {
+                request["top_k"] = json!(20);
+                request["parallel_tool_calls"] = json!(false);
+                if converse {
+                    json!({
+                        "inferenceConfig": {"maxTokens": 4096},
+                        "additionalModelRequestFields": {"thinking": thinking, "top_k": 20, "tool_choice": serial},
+                        "system": [{"text": "instructions"}, {"cachePoint": {"type": "default", "ttl": "1h"}}],
+                        "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather"}}]}
+                    })
+                } else {
+                    json!({
+                        "anthropic_version": "bedrock-2023-05-31", "max_tokens": 4096,
+                        "thinking": thinking, "top_k": 20, "tool_choice": serial,
+                        "system": request["messages"][0]["content"],
+                        "tools": [{"name": "get_weather", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+                    })
+                }
+            };
+            let upstream = mock.mock(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(format!("/model/{model}/{api}"))
+                    .header_exists("authorization")
+                    .header_exists("x-amz-date")
+                    .header_exists("x-amz-content-sha256")
+                    .json_body_partial(expected.to_string());
+                let response = if converse {
+                    json!({
+                        "output": {"message": {"role": "assistant", "content": [{"text": "regional answer"}]}},
+                        "stopReason": "end_turn", "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
+                    })
+                } else {
+                    json!({
+                        "id": "msg-regional", "type": "message", "role": "assistant", "model": model,
+                        "content": [{"type": "text", "text": "regional answer"}],
+                        "stop_reason": "end_turn", "usage": {"input_tokens": 10, "output_tokens": 5}
+                    })
+                };
+                then.status(200).json_body(response);
+            });
+            let client = reqwest::Client::new();
+            let response = client
+                .post(handle.url("/v1/chat/completions"))
+                .json(&request)
+                .send()
+                .await
+                .expect("request");
+            let status = response.status();
+            let body: Value = response.json().await.expect("json");
+            assert_eq!(
+                status, 200,
+                "{model}, explicit_converse={explicit_converse}: {body}"
+            );
+            assert_eq!(body["model"], "regional-model");
+            assert_eq!(body["choices"][0]["message"]["content"], "regional answer");
+
+            if nova {
+                request["top_k"] = json!(20);
+                let response = client
+                    .post(handle.url("/v1/chat/completions"))
+                    .json(&request)
+                    .send()
+                    .await
+                    .expect("unsupported top_k request");
+                let status = response.status();
+                let body: Value = response.json().await.expect("error json");
+                assert_eq!(status, 400, "Nova 2 top_k must still fail locally: {body}");
+                assert!(body["error"]["message"].as_str().unwrap().contains("top_k"));
+            }
+            upstream.assert_hits(1);
+            let _ = handle.shutdown_tx.send(());
+        }
+    }
+}
+
+#[tokio::test]
+async fn bedrock_noncanonical_geo_heads_keep_custom_invoke_fields_unless_converse_is_explicit() {
+    for model in [
+        "jp.jp.amazon.nova-2-lite-v1:0",
+        "au.au.amazon.nova-2-lite-v1:0",
+        "jp.au.amazon.nova-2-lite-v1:0",
+        "au.jp.amazon.nova-2-lite-v1:0",
+        "us.eu.amazon.nova-2-lite-v1:0",
+        "jp.us-east-1.amazon.nova-2-lite-v1:0",
+        "us-east-1.au.amazon.nova-2-lite-v1:0",
+        "jp..amazon.nova-2-lite-v1:0",
+        "au.-amazon.nova-2-lite-v1:0",
+        "au.jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    ] {
+        for explicit_converse in [false, true] {
+            let mock = MockServer::start();
+            let mut config = bedrock_config(
+                &mock.base_url(),
+                "custom-model",
+                &format!("bedrock/{model}"),
+            );
+            config.model_list[0]
+                .oxllm_params
+                .extra
+                .insert("use_converse_api".into(), json!(explicit_converse));
+            config.router_settings.routing.num_retries = Some(0);
+            let handle = start_oxllm(config).await.expect("server start");
+            let request = json!({
+                "model": "custom-model", "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 32, "custom_field": {"preserve": true}
+            });
+            let api = if explicit_converse {
+                "converse"
+            } else {
+                "invoke"
+            };
+            let expected = if explicit_converse {
+                json!({"messages": [{"role": "user", "content": [{"text": "hello"}]}], "inferenceConfig": {"maxTokens": 32}})
+            } else {
+                let mut body = request.clone();
+                body["model"] = json!(model);
+                body
+            };
+            let upstream = mock.mock(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(format!("/model/{model}/{api}"))
+                    .header_exists("authorization")
+                    .header_exists("x-amz-date")
+                    .header_exists("x-amz-content-sha256")
+                    .json_body_partial(expected.to_string());
+                let response = if explicit_converse {
+                    json!({
+                        "output": {"message": {"role": "assistant", "content": [{"text": "custom answer"}]}},
+                        "stopReason": "end_turn", "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}
+                    })
+                } else {
+                    json!({
+                        "id": "chatcmpl-custom", "object": "chat.completion", "model": model,
+                        "choices": [{"index": 0, "message": {"role": "assistant", "content": "custom answer"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                    })
+                };
+                then.status(200).json_body(response);
+            });
+            let response = reqwest::Client::new()
+                .post(handle.url("/v1/chat/completions"))
+                .json(&request)
+                .send()
+                .await
+                .expect("request");
+            let status = response.status();
+            let body: Value = response.json().await.expect("json");
+            assert_eq!(
+                status, 200,
+                "{model}, explicit_converse={explicit_converse}: {body}"
+            );
+            assert_eq!(body["model"], "custom-model");
+            assert_eq!(body["choices"][0]["message"]["content"], "custom answer");
+            upstream.assert_hits(1);
+            let _ = handle.shutdown_tx.send(());
+        }
+    }
+}

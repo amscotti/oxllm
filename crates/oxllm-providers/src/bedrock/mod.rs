@@ -144,8 +144,9 @@ const MUST_USE_CONVERSE: &[&str] = &[
 impl BedrockProvider {
     /// Returns true when the deployment targets an Anthropic model on Bedrock
     /// (model id starts with `anthropic.`, also behind a cross-region
-    /// inference prefix like `us.` / `eu.` / `apac.`). Those models take the
-    /// Anthropic Messages body shape with `anthropic_version` inlined.
+    /// inference prefix like `us.` / `eu.` / `apac.` / `jp.` / `au.`). Those
+    /// models take the Anthropic Messages body shape with `anthropic_version`
+    /// inlined.
     fn is_anthropic_model(model: &str) -> bool {
         detect_bedrock_provider(model) == BedrockVendor::Anthropic
     }
@@ -827,12 +828,12 @@ impl Provider for BedrockProvider {
 
 /// Strip a cross-region inference prefix from a Bedrock model id.
 ///
-/// Handles geo prefixes (`us.`, `eu.`, `apac.`, `global.`) and
-/// region-specific ids (`us-east-1.`, `eu-west-1.`). `us-east-1.` is not
+/// Handles known geo prefixes (`us.`, `eu.`, `apac.`, `global.`, `jp.`, `au.`)
+/// and region-specific ids (`us-east-1.`, `eu-west-1.`). `us-east-1.` is not
 /// treated as `us.` — that would leave `east-1.anthropic…` and miss the
-/// Anthropic detector.
+/// Anthropic detector. Arbitrary two-letter custom prefixes are not geo ids.
 pub(super) fn strip_cross_region_prefix(model: &str) -> &str {
-    for prefix in ["us.", "eu.", "apac.", "global."] {
+    for prefix in ["us.", "eu.", "apac.", "global.", "jp.", "au."] {
         if let Some(rest) = model.strip_prefix(prefix) {
             if !rest.starts_with('-') {
                 return rest;
@@ -876,11 +877,11 @@ pub fn strip_model_suffixes(model: &str) -> String {
 }
 
 /// Detect the underlying vendor of a Bedrock model id. Strips the `bedrock/`
-/// routing prefix and the cross-region prefix (`us.` / `eu.` / `apac.`)
-/// before matching. Foundation-model and system inference-profile ARNs expose
-/// their model id; application/custom/provisioned ARNs remain opaque. Amazon
-/// models are split into `Nova`, `Titan`, and the generic `Amazon` fallback.
-/// Models with no recognised vendor prefix yield
+/// routing prefix and known cross-region prefixes (`us.`, `eu.`, `apac.`,
+/// `global.`, `jp.`, `au.`) before matching. Foundation-model and system
+/// inference-profile ARNs expose their model id; application/custom/provisioned
+/// ARNs remain opaque. Amazon models are split into `Nova`, `Titan`, and the
+/// generic `Amazon` fallback. Models with no recognised vendor prefix yield
 /// [`BedrockVendor::Unknown`].
 pub fn detect_bedrock_provider(model: &str) -> BedrockVendor {
     let Some(base) = model_id_for_family(model) else {
@@ -921,6 +922,7 @@ pub fn detect_bedrock_provider(model: &str) -> BedrockVendor {
 
 /// Return only model identifiers whose resource shape exposes a known family.
 /// An application profile's chosen name is not evidence of its source model.
+/// Removes at most one geo/region prefix; callers must not normalize it again.
 pub(super) fn model_id_for_family(model: &str) -> Option<&str> {
     let model = model.strip_prefix("bedrock/").unwrap_or(model);
     let model = if model.starts_with("arn:") {
@@ -961,8 +963,9 @@ pub fn should_use_converse(model: &str, explicit: bool) -> bool {
     let Some(base) = model_id_for_family(model) else {
         return false;
     };
+    // The family helper already removed one geo/region prefix. Stripping again
+    // would promote nested custom ids such as `jp.jp.amazon.nova-2-lite-v1:0`.
     let base = strip_model_suffixes(base);
-    let base = strip_cross_region_prefix(&base);
     MUST_USE_CONVERSE.iter().any(|m| base.starts_with(m))
 }
 

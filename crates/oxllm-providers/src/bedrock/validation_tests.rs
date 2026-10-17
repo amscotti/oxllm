@@ -1184,6 +1184,10 @@ fn validation_serial_tools_share_known_family_detection_for_ids_and_arns() {
         "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/anthropic.claude-profile",
         "arn:aws:bedrock:us-east-1:123456789012:inference-profile/claude-production",
         "arn:aws:bedrock:us-east-1:123456789012:provisioned-model/anthropic.claude-production",
+        "arn:aws:bedrock:ap-southeast-2:123456789012:application-inference-profile/au.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "arn:aws:bedrock:ap-northeast-1:123456789012:custom-model/jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "arn:aws:bedrock:ap-southeast-2:123456789012:provisioned-model/au.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "arn:aws:bedrock:ap-northeast-1:123456789012:imported-model/jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
     ] {
         assert_ne!(detect_bedrock_provider(model), BedrockVendor::Anthropic);
         assert!(matches!(
@@ -1355,6 +1359,8 @@ fn validation_opaque_claude_profiles_use_hints_for_serial_tools_without_replacin
             for hint in [
                 "anthropic.claude-3-7-sonnet-20250219-v1:0",
                 "bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+                "bedrock/jp.anthropic.claude-3-7-sonnet-20250219-v1:0",
+                "bedrock/au.anthropic.claude-3-7-sonnet-20250219-v1:0",
                 "anthropic/claude-sonnet-4-5",
                 "claude-sonnet-4-5",
             ] {
@@ -1465,7 +1471,7 @@ fn validation_claude_profile_hints_enable_top_k_thinking_and_signed_replay() {
 fn validation_nova_profile_hints_select_nova_fields_and_reject_claude_only_options() {
     let arn = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/profile123";
     let mut configured = deployment(arn, true);
-    set_profile_hint(&mut configured, "bedrock/us.amazon.nova-pro-v1:0", true);
+    set_profile_hint(&mut configured, "bedrock/au.amazon.nova-pro-v1:0", true);
     let body = BedrockProvider
         .transform_request(
             &json!({"messages": [{"role": "user", "content": "hello"}], "top_k": 20}),
@@ -1486,7 +1492,7 @@ fn validation_nova_profile_hints_select_nova_fields_and_reject_claude_only_optio
     ));
 
     configured.model_info = None;
-    set_profile_hint(&mut configured, "amazon.nova-2-lite-v1:0", false);
+    set_profile_hint(&mut configured, "bedrock/jp.amazon.nova-2-lite-v1:0", false);
     let body = BedrockProvider.transform_request(
         &json!({"messages": [{"role": "user", "content": "think"}], "reasoning_effort": "medium"}), &configured,
     ).unwrap();
@@ -1561,8 +1567,12 @@ fn validation_opaque_profiles_reject_missing_invalid_and_recursive_model_hints()
 fn validation_known_runtime_models_and_arns_ignore_conflicting_profile_hints() {
     for runtime in [
         "anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "au.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "jp.anthropic.claude-3-7-sonnet-20250219-v1:0",
         "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0",
         "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "arn:aws:bedrock:ap-southeast-2::foundation-model/au.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "arn:aws:bedrock:ap-northeast-1:123456789012:inference-profile/jp.anthropic.claude-3-7-sonnet-20250219-v1:0",
     ] {
         let mut configured = deployment(runtime, true);
         set_profile_hint(&mut configured, "amazon.nova-2-lite-v1:0", true);
@@ -1581,5 +1591,471 @@ fn validation_known_runtime_models_and_arns_ignore_conflicting_profile_hints() {
             BedrockProvider.endpoint_url(&configured),
             BedrockProvider.endpoint_url(&deployment(runtime, true))
         );
+    }
+}
+
+fn geo_prefixed_model_ids(base: &str) -> Vec<String> {
+    ["us", "eu", "apac", "global", "au", "jp"]
+        .into_iter()
+        .flat_map(|geo| {
+            let model = format!("{geo}.{base}");
+            [
+                model.clone(),
+                format!("arn:aws:bedrock:ap-northeast-1::foundation-model/{model}"),
+                format!("arn:aws:bedrock:ap-southeast-2:123456789012:inference-profile/{model}"),
+            ]
+        })
+        .collect()
+}
+
+fn assert_geo_prefix_url(configured: &Deployment, request: &Value, model: &str, api: &str) {
+    let expected = format!(
+        "https://bedrock-runtime.us-east-1.amazonaws.com/model/{}/{api}",
+        model.replace('/', "%2F")
+    );
+    assert_eq!(BedrockProvider.endpoint_url(configured), expected);
+    assert_eq!(
+        BedrockProvider.endpoint_url_for_request(configured, request),
+        expected
+    );
+    assert_eq!(configured.oxllm_params.model, format!("bedrock/{model}"));
+}
+
+fn assert_geo_prefix_nova2_request(explicit_converse: bool) {
+    let request = json!({
+        "model": "public-alias", "messages": [{"role": "user", "content": "think and look up the weather"}],
+        "max_tokens": 2048, "reasoning_effort": "medium", "web_search_options": {},
+        "tools": [{"type": "function", "function": {"name": "get.weather", "parameters": {"type": "object"}}}],
+        "tool_choice": "auto"
+    });
+    for model in geo_prefixed_model_ids("amazon.nova-2-lite-v1:0") {
+        let configured = deployment(&model, explicit_converse);
+        let body = BedrockProvider
+            .transform_request(&request, &configured)
+            .unwrap_or_else(|error| panic!("{model}: {error}"));
+        assert_geo_prefix_url(&configured, &request, &model, "converse");
+        assert_eq!(
+            body["messages"][0]["content"][0]["text"],
+            request["messages"][0]["content"]
+        );
+        assert_eq!(body["inferenceConfig"]["maxTokens"], 2048);
+        assert_eq!(
+            body["additionalModelRequestFields"],
+            json!({"reasoningConfig": {"type": "enabled", "maxReasoningEffort": "medium"}}),
+            "{model}"
+        );
+        assert_eq!(
+            body["toolConfig"]["tools"][0]["toolSpec"]["name"],
+            "get_weather"
+        );
+        assert_eq!(
+            body["toolConfig"]["tools"][1],
+            json!({"systemTool": {"name": "nova_grounding"}})
+        );
+        assert_eq!(body["toolConfig"]["toolChoice"], json!({"auto": {}}));
+        assert!(body.get("model").is_none());
+        assert!(body.get("anthropic_version").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(detect_bedrock_provider(&model), BedrockVendor::Nova);
+    }
+}
+
+#[test]
+fn geo_prefix_nova2_default_route_maps_reasoning_and_tools() {
+    assert_geo_prefix_nova2_request(false);
+}
+
+#[test]
+fn geo_prefix_nova2_explicit_converse_maps_reasoning_and_tools() {
+    assert_geo_prefix_nova2_request(true);
+}
+
+fn assert_geo_prefix_claude_request(explicit_converse: bool) {
+    let request = json!({
+        "model": "public-alias", "messages": [
+            {"role": "system", "content": [{"type": "text", "text": "instructions", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]},
+            {"role": "user", "content": "look up the weather"}
+        ],
+        "max_tokens": 4096, "temperature": 0.4, "reasoning_effort": "low", "top_k": 20,
+        "tools": [{"type": "function", "function": {"name": "get.weather", "parameters": {"type": "object"}}, "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
+        "tool_choice": "auto", "parallel_tool_calls": false
+    });
+    for model in geo_prefixed_model_ids("anthropic.claude-sonnet-4-5-20250929-v1:0") {
+        let configured = deployment(&model, explicit_converse);
+        let body = BedrockProvider
+            .transform_request(&request, &configured)
+            .unwrap_or_else(|error| panic!("{model}: {error}"));
+        assert_geo_prefix_url(
+            &configured,
+            &request,
+            &model,
+            if explicit_converse {
+                "converse"
+            } else {
+                "invoke"
+            },
+        );
+        let fields = if explicit_converse {
+            assert_eq!(body["inferenceConfig"]["maxTokens"], 4096);
+            assert!(body["inferenceConfig"].get("temperature").is_none());
+            assert!(body["inferenceConfig"].get("topK").is_none());
+            assert_eq!(
+                body["toolConfig"]["tools"][0]["toolSpec"]["name"],
+                "get_weather"
+            );
+            assert!(body["toolConfig"].get("toolChoice").is_none());
+            assert_eq!(
+                body["system"][1],
+                json!({"cachePoint": {"type": "default", "ttl": "1h"}})
+            );
+            // OpenAI tool cache_control is not a Converse-native tool cache point.
+            assert_eq!(body["toolConfig"]["tools"].as_array().unwrap().len(), 1);
+            assert!(
+                body["toolConfig"]["tools"][0]
+                    .get("cache_control")
+                    .is_none()
+            );
+            assert!(body.get("anthropic_version").is_none());
+            &body["additionalModelRequestFields"]
+        } else {
+            assert_eq!(body["anthropic_version"], ANTHROPIC_VERSION);
+            assert_eq!(body["max_tokens"], 4096);
+            assert!(body.get("temperature").is_none());
+            assert_eq!(body["tools"][0]["name"], "get_weather");
+            assert_eq!(
+                body["tools"][0]["cache_control"],
+                request["tools"][0]["cache_control"]
+            );
+            assert_eq!(
+                body["system"][0]["cache_control"],
+                request["messages"][0]["content"][0]["cache_control"]
+            );
+            assert!(body.get("toolConfig").is_none());
+            &body
+        };
+        assert_eq!(
+            fields["thinking"],
+            json!({"type": "enabled", "budget_tokens": 1024}),
+            "{model}"
+        );
+        assert_eq!(fields["top_k"], 20);
+        assert_eq!(
+            fields["tool_choice"],
+            json!({"type": "auto", "disable_parallel_tool_use": true})
+        );
+        assert!(body.get("model").is_none());
+        assert_eq!(detect_bedrock_provider(&model), BedrockVendor::Anthropic);
+        assert_eq!(
+            BedrockProvider::uses_anthropic_messages_api(&request, &configured),
+            !explicit_converse
+        );
+    }
+}
+
+#[test]
+fn geo_prefix_claude_default_invoke_maps_reasoning_serial_tools_and_cache() {
+    assert_geo_prefix_claude_request(false);
+}
+
+#[test]
+fn geo_prefix_claude_explicit_converse_maps_reasoning_serial_tools_and_cache() {
+    assert_geo_prefix_claude_request(true);
+}
+
+#[test]
+fn geo_prefix_nova_top_k_keeps_version_specific_support_with_and_without_tools() {
+    for explicit_converse in [false, true] {
+        for tools in [json!([]), serial_profile_request()["tools"].clone()] {
+            let request = json!({"messages": [{"role": "user", "content": "hello"}], "top_k": 20, "tools": tools});
+            for model in geo_prefixed_model_ids("amazon.nova-pro-v1:0") {
+                let configured = deployment(&model, explicit_converse);
+                let body = BedrockProvider
+                    .transform_request(&request, &configured)
+                    .unwrap();
+                assert_geo_prefix_url(&configured, &request, &model, "converse");
+                assert_eq!(
+                    body["additionalModelRequestFields"],
+                    json!({"inferenceConfig": {"topK": 20}})
+                );
+                assert!(body["inferenceConfig"].get("topK").is_none());
+            }
+            for model in geo_prefixed_model_ids("amazon.nova-2-lite-v1:0") {
+                let configured = deployment(&model, explicit_converse);
+                let result = BedrockProvider.transform_request(&request, &configured);
+                assert_geo_prefix_url(&configured, &request, &model, "converse");
+                assert!(
+                    matches!(result, Err(oxllm_core::Error::BadRequest(message)) if message.contains("top_k")),
+                    "{model}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn geo_prefix_nova2_reasoning_preserves_tool_none_and_serial_tool_rejection() {
+    for model in geo_prefixed_model_ids("amazon.nova-2-lite-v1:0") {
+        let configured = deployment(&model, false);
+        let mut request = serial_profile_request();
+        request["reasoning_effort"] = json!("low");
+        assert!(
+            matches!(
+                BedrockProvider.transform_request(&request, &configured),
+                Err(oxllm_core::Error::BadRequest(message)) if message.contains("parallel_tool_calls")
+            ),
+            "{model}"
+        );
+        for choice in [json!("none"), json!({"type": "none"})] {
+            request["tool_choice"] = choice;
+            let body = BedrockProvider
+                .transform_request(&request, &configured)
+                .unwrap();
+            assert_geo_prefix_url(&configured, &request, &model, "converse");
+            assert_eq!(
+                body["additionalModelRequestFields"],
+                json!({"reasoningConfig": {"type": "enabled", "maxReasoningEffort": "low"}})
+            );
+            assert!(body.get("toolConfig").is_none());
+        }
+    }
+}
+
+#[test]
+fn geo_prefix_wildcards_resolve_original_model_ids_for_both_apis() {
+    for model in [
+        "jp.amazon.nova-2-lite-v1:0",
+        "au.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    ] {
+        for explicit_converse in [false, true] {
+            let mut request = json!({
+                "model": format!("bedrock/{model}"), "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 4096, "reasoning_effort": "low", "tools": serial_profile_request()["tools"]
+            });
+            let direct = deployment(model, explicit_converse);
+            let expected_body = BedrockProvider
+                .transform_request(&request, &direct)
+                .unwrap();
+            let expected_url = BedrockProvider.endpoint_url(&direct);
+            for requested in [model.to_string(), format!("bedrock/{model}")] {
+                request["model"] = json!(requested);
+                let original = request.clone();
+                for wildcard in ["*", "bedrock/*"] {
+                    let mut configured = deployment("*", explicit_converse);
+                    configured.oxllm_params.model = wildcard.into();
+                    assert_eq!(
+                        BedrockProvider.endpoint_url_for_request(&configured, &request),
+                        expected_url
+                    );
+                    assert_eq!(
+                        BedrockProvider
+                            .transform_request(&request, &configured)
+                            .unwrap(),
+                        expected_body
+                    );
+                    assert_eq!(configured.oxllm_params.model, wildcard);
+                }
+                assert_eq!(request, original);
+            }
+        }
+    }
+}
+
+#[test]
+fn geo_prefix_unknown_custom_ids_remain_passthrough_and_do_not_gain_family_features() {
+    let request = json!({
+        "model": "public-alias", "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 4096, "reasoning_effort": "low", "web_search_options": {},
+        "tools": serial_profile_request()["tools"], "custom_field": {"preserve": true}
+    });
+    for model in [
+        "zz.amazon.nova-2-lite-v1:0",
+        "zz.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "japan.amazon.nova-2-lite-v1:0",
+        "aus.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "custom.jp.amazon.nova-2-lite-v1:0",
+        "custom.au.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "jp.custom.vendor-chat",
+        "au.custom.vendor-chat",
+    ] {
+        let mut configured = deployment(model, false);
+        set_profile_hint(
+            &mut configured,
+            "bedrock/au.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            true,
+        );
+        let body = BedrockProvider
+            .transform_request(&request, &configured)
+            .unwrap();
+        assert_geo_prefix_url(&configured, &request, model, "invoke");
+        let mut expected = request.clone();
+        expected["model"] = json!(model);
+        assert_eq!(body, expected);
+        assert_eq!(detect_bedrock_provider(model), BedrockVendor::Unknown);
+
+        configured
+            .oxllm_params
+            .extra
+            .insert("use_converse_api".into(), json!(true));
+        let body = BedrockProvider
+            .transform_request(&request, &configured)
+            .unwrap();
+        assert_geo_prefix_url(&configured, &request, model, "converse");
+        assert!(body.get("additionalModelRequestFields").is_none());
+        assert_eq!(body["toolConfig"]["tools"].as_array().unwrap().len(), 1);
+        for (key, value, error_field) in [
+            ("top_k", json!(20), "top_k"),
+            ("parallel_tool_calls", json!(false), "parallel_tool_calls"),
+        ] {
+            let mut unsupported = request.clone();
+            unsupported[key] = value;
+            assert!(
+                matches!(
+                    BedrockProvider.transform_request(&unsupported, &configured),
+                    Err(oxllm_core::Error::BadRequest(message)) if message.contains(error_field)
+                ),
+                "{model}"
+            );
+        }
+    }
+}
+
+fn assert_noncanonical_geo_model_stays_unknown(id: &str) {
+    for model in [
+        id.to_string(),
+        format!("arn:aws:bedrock:ap-northeast-1::foundation-model/{id}"),
+        format!("arn:aws:bedrock:ap-southeast-2:123456789012:inference-profile/{id}"),
+    ] {
+        let request = json!({
+            "model": "public-alias", "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 32, "custom_field": {"preserve": true}, "web_search_options": {},
+            "tools": serial_profile_request()["tools"]
+        });
+        let mut configured = deployment(&model, false);
+        let body = BedrockProvider
+            .transform_request(&request, &configured)
+            .unwrap();
+        assert_geo_prefix_url(&configured, &request, &model, "invoke");
+        let mut expected = request.clone();
+        expected["model"] = json!(model);
+        assert_eq!(
+            body, expected,
+            "{model}: custom InvokeModel fields must survive"
+        );
+        assert_eq!(
+            detect_bedrock_provider(&model),
+            BedrockVendor::Unknown,
+            "{model}"
+        );
+        assert!(!should_use_converse(&model, false), "{model}");
+
+        let mut wildcard_request = request.clone();
+        wildcard_request["model"] = json!(format!("bedrock/{model}"));
+        let wildcard = deployment("*", false);
+        assert_eq!(
+            BedrockProvider.endpoint_url_for_request(&wildcard, &wildcard_request),
+            BedrockProvider.endpoint_url(&configured)
+        );
+        assert_eq!(
+            BedrockProvider
+                .transform_request(&wildcard_request, &wildcard)
+                .unwrap(),
+            expected
+        );
+
+        configured
+            .oxllm_params
+            .extra
+            .insert("use_converse_api".into(), json!(true));
+        let body = BedrockProvider
+            .transform_request(&request, &configured)
+            .unwrap();
+        assert_geo_prefix_url(&configured, &request, &model, "converse");
+        assert_eq!(body["messages"][0]["content"][0]["text"], "hello");
+        assert_eq!(body["inferenceConfig"]["maxTokens"], 32);
+        assert_eq!(body["toolConfig"]["tools"].as_array().unwrap().len(), 1);
+        assert!(body.get("model").is_none());
+        assert!(body.get("custom_field").is_none());
+        assert!(body.get("additionalModelRequestFields").is_none());
+        for (key, value, error_field) in [
+            ("top_k", json!(20), "top_k"),
+            ("parallel_tool_calls", json!(false), "parallel_tool_calls"),
+        ] {
+            let mut unsupported = request.clone();
+            unsupported[key] = value;
+            assert!(
+                matches!(
+                    BedrockProvider.transform_request(&unsupported, &configured),
+                    Err(oxllm_core::Error::BadRequest(message)) if message.contains(error_field)
+                ),
+                "{model}"
+            );
+        }
+    }
+}
+
+#[test]
+fn geo_prefix_noncanonical_doubled_and_cross_pairs_stay_unknown() {
+    for base in [
+        "amazon.nova-2-lite-v1:0",
+        "anthropic.claude-sonnet-4-5-20250929-v1:0",
+    ] {
+        for outer in ["jp", "au", "us", "eu", "apac", "global"] {
+            for inner in ["jp", "au", "us", "eu", "apac", "global"] {
+                assert_noncanonical_geo_model_stays_unknown(&format!("{outer}.{inner}.{base}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn geo_prefix_noncanonical_malformed_and_nested_region_heads_stay_unknown() {
+    for base in [
+        "amazon.nova-2-lite-v1:0",
+        "anthropic.claude-sonnet-4-5-20250929-v1:0",
+    ] {
+        for geo in ["jp", "au", "us", "eu", "apac", "global"] {
+            for model in [
+                format!("{geo}.us-east-1.{base}"),
+                format!("us-east-1.{geo}.{base}"),
+                format!("{geo}.{geo}-.{base}"),
+                format!("{geo}..{base}"),
+                format!("{geo}.-{base}"),
+                format!(".{geo}.{base}"),
+                format!("{geo}x.{base}"),
+            ] {
+                assert_noncanonical_geo_model_stays_unknown(&model);
+            }
+        }
+    }
+}
+
+#[test]
+fn geo_prefix_must_use_converse_families_need_only_one_prefix_normalization() {
+    // One representative for every MUST_USE_CONVERSE entry, without deriving
+    // expectations from the production allowlist itself.
+    for base in [
+        "ai21.jamba-1-5-large-v1:0",
+        "qwen.qwen3-32b-v1:0",
+        "amazon.nova-2-lite-v1:0",
+        "deepseek.r1-v1:0",
+        "openai.gpt-5.6-sol",
+        "openai.gpt-6.1-sol",
+        "mistral.ministral-3-8b-instruct",
+        "mistral.mistral-large-3-675b-instruct",
+        "mistral.devstral-2-123b",
+        "mistral.magistral-small-2509",
+    ] {
+        for model in geo_prefixed_model_ids(base) {
+            let request =
+                json!({"messages": [{"role": "user", "content": "hello"}], "max_tokens": 32});
+            let configured = deployment(&model, false);
+            let body = BedrockProvider
+                .transform_request(&request, &configured)
+                .unwrap();
+            assert_geo_prefix_url(&configured, &request, &model, "converse");
+            assert_eq!(body["messages"][0]["content"][0]["text"], "hello");
+            assert_eq!(body["inferenceConfig"]["maxTokens"], 32);
+            assert!(body.get("model").is_none());
+        }
     }
 }
