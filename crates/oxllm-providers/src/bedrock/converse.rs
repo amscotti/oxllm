@@ -1725,11 +1725,21 @@ fn build_inference_config(request: &Value, model: &str) -> Value {
         ic.insert("maxTokens".to_string(), json!(mt));
     }
     if !bedrock_gpt_rejects_sampling(model) {
+        // Claude models released after Opus 4.6 removed sampling control:
+        // forward only the values the API still accepts (temperature 1,
+        // top_p >= 0.99) and omit the rest, matching the silent-omit
+        // pattern above. The Anthropic InvokeModel/native path enforces
+        // the same policy with drop_params-aware errors.
+        let claude_rejects_sampling = crate::anthropic::model_rejects_sampling_params(model);
         if let Some(t) = request.get("temperature").and_then(|v| v.as_f64()) {
-            ic.insert("temperature".to_string(), json!(t));
+            if !claude_rejects_sampling || t == 1.0 {
+                ic.insert("temperature".to_string(), json!(t));
+            }
         }
         if let Some(p) = request.get("top_p").and_then(|v| v.as_f64()) {
-            ic.insert("topP".to_string(), json!(p));
+            if !claude_rejects_sampling || p >= 0.99 {
+                ic.insert("topP".to_string(), json!(p));
+            }
         }
     }
     // Grok and GPT 5.6+ reject stop sequences on Converse.
@@ -1886,7 +1896,16 @@ fn build_tool_config(request: &Value, model: &str) -> Result<Option<Value>> {
     let mut tc = Map::new();
     tc.insert("tools".to_string(), Value::Array(tool_specs));
     if let Some(choice) = request.get("tool_choice") {
-        if let Some(mapped) = map_tool_choice(choice) {
+        if let Some(mut mapped) = map_tool_choice(choice) {
+            // Forced tool use (`any`/`tool`) 400s on Fable/Mythos 5.1 and
+            // the Opus/Sonnet 5.5 point releases; downgrade to auto, the
+            // silent-omit pattern this transform uses for other
+            // model-rejected fields.
+            if crate::anthropic::model_rejects_forced_tool_use(model)
+                && (mapped.get("any").is_some() || mapped.get("tool").is_some())
+            {
+                mapped = json!({"auto": {}});
+            }
             tc.insert("toolChoice".to_string(), mapped);
         } else if !choice.is_null() {
             return Err(oxllm_core::Error::BadRequest("tool choice has no lossless native Converse mapping; use auto, required or a named function".into()));

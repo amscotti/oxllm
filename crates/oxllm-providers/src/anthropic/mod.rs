@@ -495,6 +495,36 @@ impl ChatProvider for AnthropicProvider {
             }
         }
 
+        // Fable/Mythos 5.1 and the 5.5 Opus/Sonnet point releases reject
+        // forced tool use (`any`/`tool`) with a 400. Mirror the reference:
+        // downgrade to `auto` under drop_params (preserving
+        // disable_parallel_tool_use), else fail cleanly here.
+        if let Some(tc) = &tool_choice_value {
+            let forced = matches!(tc.get("type").and_then(Value::as_str), Some("any" | "tool"));
+            if forced && model_rejects_forced_tool_use(model) {
+                if deployment.oxllm_params.drop_params == Some(true) {
+                    tracing::warn!(
+                        param = "tool_choice",
+                        model,
+                        "downgrading forced tool use to auto (drop_params=true)"
+                    );
+                    let mut downgraded = Map::new();
+                    downgraded.insert("type".to_string(), json!("auto"));
+                    if let Some(parallel) = tc.get("disable_parallel_tool_use") {
+                        downgraded
+                            .insert("disable_parallel_tool_use".to_string(), parallel.clone());
+                    }
+                    tool_choice_value = Some(Value::Object(downgraded));
+                } else {
+                    return Err(oxllm_core::Error::BadRequest(format!(
+                        "{model} does not support forced tool use \
+                         (tool_choice type 'any' or 'tool'). Use tool_choice \
+                         'auto' or set drop_params = true to downgrade automatically."
+                    )));
+                }
+            }
+        }
+
         if let Some(tc) = tool_choice_value {
             out.insert("tool_choice".to_string(), tc);
         }
@@ -651,6 +681,15 @@ impl ChatProvider for AnthropicProvider {
         if forward.iter().any(|(k, v)| k != v) {
             apply_tool_name_forward_map(&mut out, &forward);
         }
+
+        // Models released after Opus 4.6 removed sampling parameters
+        // entirely (non-default values are a 400 with or without
+        // thinking); enforce before the thinking-temperature rule below.
+        enforce_sampling_param_policy(
+            &mut out,
+            model,
+            deployment.oxllm_params.drop_params == Some(true),
+        )?;
 
         // Extended thinking, including adaptive thinking, accepts only
         // temperature 1. Any other value is a 400, so drop it and let the
@@ -2989,8 +3028,124 @@ fn model_requires_effort_beta(model: &str) -> bool {
         "claude-haiku-5",
         "claude-haiku_5",
         "claude-haiku.5",
+        // The Fable/Mythos families exist only at major version 5
+        // (Mythos Preview carries no numeral); they are adaptive-only
+        // with always-on thinking, exactly like the other 5s.
+        "claude-fable",
+        "claude_fable",
+        "claude.fable",
+        "claude-mythos",
+        "claude_mythos",
+        "claude.mythos",
     ];
     !major_5_markers.iter().any(|p| m.contains(p))
+}
+
+/// `(major, minor)` generation of a Claude opus/sonnet/haiku model id,
+/// parsed from the family-version digits (`claude-opus-5-5` → `(5, 5)`,
+/// `anthropic.claude-sonnet-4-6` → `(4, 6)`). Date suffixes are not
+/// versions: a digit run longer than two (`claude-3-5-sonnet-20240620`,
+/// `claude-sonnet-4-20250514`) yields no minor / no version.
+fn claude_family_version(model: &str) -> Option<(u64, Option<u64>)> {
+    let m = model.to_ascii_lowercase().replace(['_', '.'], "-");
+    let parse_run = |rest: &str| -> Option<(u64, usize)> {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() || digits.len() > 2 {
+            return None;
+        }
+        digits.parse().ok().map(|v| (v, digits.len()))
+    };
+    for family in ["opus-", "sonnet-", "haiku-"] {
+        let Some(idx) = m.find(family) else { continue };
+        let rest = &m[idx + family.len()..];
+        let (major, major_len) = parse_run(rest)?;
+        let minor = rest[major_len..]
+            .strip_prefix('-')
+            .and_then(|r| parse_run(r).map(|(v, _)| v));
+        return Some((major, minor));
+    }
+    None
+}
+
+/// Whether the model rejects non-default sampling parameters with a 400.
+///
+/// Anthropic removed sampling control for models released after Claude
+/// Opus 4.6 (Opus 4.7/4.8, Sonnet 5, and every 5-generation family —
+/// Opus/Sonnet/Haiku 5.x, Fable, Mythos incl. Preview): `temperature`
+/// must be exactly 1, `top_k` is rejected outright, `top_p` must be
+/// >= 0.99. Mirrors the reference `supports_sampling_params` capability.
+pub(crate) fn model_rejects_sampling_params(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    if m.contains("fable") || m.contains("mythos") {
+        return true;
+    }
+    match claude_family_version(model) {
+        Some((major, minor)) => major > 4 || (major == 4 && minor.unwrap_or(0) >= 7),
+        None => false,
+    }
+}
+
+/// Whether the model 400s on forced tool use (`tool_choice` type `any`
+/// or `tool`). Anthropic documents this for Fable 5.1 / Mythos 5.1; the
+/// reference capability map flags the same for Opus 5.5 / Sonnet 5.5
+/// (Haiku 5.5 keeps forced tool use).
+pub(crate) fn model_rejects_forced_tool_use(model: &str) -> bool {
+    let m = model.to_ascii_lowercase().replace(['_', '.'], "-");
+    ["fable-5-1", "mythos-5-1", "opus-5-5", "sonnet-5-5"]
+        .iter()
+        .any(|marker| m.contains(marker))
+}
+
+/// Enforce the post-4.6 sampling-parameter removal on a transformed
+/// Anthropic body: non-default `temperature` / `top_p` / any `top_k` are
+/// dropped (with `drop_params`) or rejected with a clean 400, mirroring
+/// the reference `_apply_sampling_param` instead of forwarding values
+/// the upstream would reject opaquely.
+fn enforce_sampling_param_policy(
+    out: &mut Map<String, Value>,
+    model: &str,
+    drop_params: bool,
+) -> Result<()> {
+    if !model_rejects_sampling_params(model) {
+        return Ok(());
+    }
+    let rejected: Vec<(&str, Value)> = [
+        (
+            "temperature",
+            out.get("temperature")
+                .and_then(Value::as_f64)
+                .is_some_and(|v| v != 1.0),
+        ),
+        (
+            "top_p",
+            out.get("top_p")
+                .and_then(Value::as_f64)
+                .is_some_and(|v| v < 0.99),
+        ),
+        ("top_k", out.contains_key("top_k")),
+    ]
+    .into_iter()
+    .filter(|(_, rejected)| *rejected)
+    .map(|(param, _)| (param, out.get(param).cloned().unwrap_or(Value::Null)))
+    .collect();
+    for (param, value) in rejected {
+        if drop_params {
+            tracing::warn!(
+                param,
+                model,
+                "dropping sampling parameter unsupported by model (drop_params=true)"
+            );
+            out.remove(param);
+        } else {
+            return Err(oxllm_core::Error::BadRequest(format!(
+                "{model} does not support {param}={value}: models released after \
+                 Claude Opus 4.6 reject non-default sampling parameters \
+                 (temperature must be 1, top_p >= 0.99, top_k unsupported). \
+                 Omit the parameter or set drop_params = true to drop it."
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Whether a model uses Anthropic's adaptive-thinking interface
@@ -3051,6 +3206,10 @@ pub fn normalize_effort_for_model(model: &str, effort: &str) -> Option<String> {
     if !is_known_effort(effort) {
         return None;
     }
+    // `minimal` is an OpenAI `reasoning_effort` spelling, not an
+    // Anthropic effort value (low/medium/high/xhigh/max): collapse it to
+    // `low`, matching the reasoning_effort → output_config mapping.
+    let effort = if effort == "minimal" { "low" } else { effort };
     if effort == "none" {
         // `none` is a sentinel meaning "no thinking" — it is not a valid
         // `output_config.effort` value, so drop it (the request transform
@@ -3125,6 +3284,8 @@ pub fn supports_native_output_format(model: &str) -> bool {
         "claude-opus-4-7",
         "claude-opus-4-8",
         "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
     ]
     .iter()
     .any(|family| model.contains(family))

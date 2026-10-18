@@ -437,3 +437,54 @@ fn tool_files_reject_remote_and_malformed_base64_without_dropping_content() {
         );
     }
 }
+
+#[test]
+fn post_4_6_claude_sampling_and_forced_tool_choice_are_gated() {
+    // Claude models released after Opus 4.6 removed sampling control:
+    // only temperature 1 / top_p >= 0.99 may reach inferenceConfig.
+    let request = json!({
+        "messages": [{"role": "user", "content": "hi"}],
+        "temperature": 0.7,
+        "top_p": 0.5,
+        "tools": [{
+            "type": "function",
+            "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}}
+        }],
+        "tool_choice": "required"
+    });
+    let body = transform("us.anthropic.claude-sonnet-5-5", &request);
+    assert!(
+        body["inferenceConfig"].get("temperature").is_none(),
+        "{body}"
+    );
+    assert!(body["inferenceConfig"].get("topP").is_none(), "{body}");
+    // Sonnet 5.5 also rejects forced tool use: downgraded to auto.
+    assert_eq!(
+        body["toolConfig"]["toolChoice"],
+        json!({"auto": {}}),
+        "{body}"
+    );
+
+    let defaults = json!({
+        "messages": [{"role": "user", "content": "hi"}],
+        "temperature": 1.0,
+        "top_p": 0.995
+    });
+    let body = transform("us.anthropic.claude-sonnet-5-5", &defaults);
+    assert_eq!(body["inferenceConfig"]["temperature"], 1.0);
+    assert_eq!(body["inferenceConfig"]["topP"], 0.995);
+
+    // Pre-4.7 Claude keeps sampling + forced tool use verbatim.
+    let body = transform("anthropic.claude-sonnet-4-20250514-v1:0", &request);
+    assert_eq!(body["inferenceConfig"]["temperature"], 0.7);
+    assert_eq!(body["inferenceConfig"]["topP"], 0.5);
+    assert_eq!(body["toolConfig"]["toolChoice"], json!({"any": {}}));
+
+    // Haiku 5.5 keeps forced tool use but still rejects sampling.
+    let body = transform("us.anthropic.claude-haiku-5-5", &request);
+    assert!(
+        body["inferenceConfig"].get("temperature").is_none(),
+        "{body}"
+    );
+    assert_eq!(body["toolConfig"]["toolChoice"], json!({"any": {}}));
+}

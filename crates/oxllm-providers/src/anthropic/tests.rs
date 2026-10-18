@@ -7124,6 +7124,154 @@ fn is_adaptive_thinking_model_helper_is_inverse_of_effort_beta() {
 }
 
 #[test]
+fn generation_predicates_cover_5x_families() {
+    // Fable/Mythos are 5-generation adaptive-only families; before this
+    // they fell through the opus/sonnet/haiku markers and were treated
+    // as legacy budget-thinking models (which they 400 on).
+    for model in [
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-fable-5-1",
+        "claude-mythos-5-1",
+        "claude-mythos-preview",
+        "anthropic.claude-fable-5",
+    ] {
+        assert!(is_adaptive_thinking_model(model), "{model}");
+        assert!(!model_requires_effort_beta(model), "{model}");
+        assert!(model_rejects_sampling_params(model), "{model}");
+    }
+    // Post-4.6 sampling removal across generations and id shapes.
+    for model in [
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "anthropic.claude-opus-5-5",
+        "vertex_ai/claude-sonnet-5-5@default",
+    ] {
+        assert!(model_rejects_sampling_params(model), "{model}");
+    }
+    for model in [
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "claude-opus-4-5",
+        "claude-haiku-4-5",
+        "claude-sonnet-4-20250514",
+        "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "claude-3-haiku-20240307",
+    ] {
+        assert!(!model_rejects_sampling_params(model), "{model}");
+    }
+    // Forced tool use: 5.1/5.5 point releases only; Haiku 5.5 keeps it.
+    for model in [
+        "claude-fable-5-1",
+        "claude-mythos-5-1",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "us.anthropic.claude-opus-5-5",
+    ] {
+        assert!(model_rejects_forced_tool_use(model), "{model}");
+    }
+    for model in [
+        "claude-haiku-5-5",
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-opus-4-8",
+    ] {
+        assert!(!model_rejects_forced_tool_use(model), "{model}");
+    }
+    // `minimal` is an OpenAI spelling; it must collapse to `low`, never
+    // reach Anthropic verbatim in output_config.effort.
+    assert_eq!(
+        normalize_effort_for_model("claude-sonnet-5-5", "minimal"),
+        Some("low".to_string())
+    );
+}
+
+#[test]
+fn transform_enforces_sampling_and_forced_tool_policy_on_5_5() {
+    let provider = AnthropicProvider;
+    let mut dep = adaptive_deployment("claude-sonnet-5-5");
+    let request = json!({
+        "model": "claude-sonnet-5-5",
+        "max_tokens": 100,
+        "temperature": 0.7,
+        "top_p": 0.5,
+        "top_k": 3,
+        "messages": [{"role": "user", "content": "hi"}]
+    });
+    // Without drop_params each non-default sampling value is a clean 400
+    // here instead of an opaque upstream rejection.
+    let error = provider
+        .transform_request(&request, &dep)
+        .expect_err("non-default sampling on Sonnet 5.5 must be rejected");
+    assert!(
+        matches!(error, oxllm_core::Error::BadRequest(ref msg) if msg.contains("temperature")),
+        "{error:?}"
+    );
+    // Default-valued parameters are still accepted by the API and kept.
+    let defaults = json!({
+        "model": "claude-sonnet-5-5",
+        "max_tokens": 100,
+        "temperature": 1.0,
+        "top_p": 0.99,
+        "messages": [{"role": "user", "content": "hi"}]
+    });
+    let out = provider.transform_request(&defaults, &dep).unwrap();
+    assert_eq!(out["temperature"], 1.0);
+    assert_eq!(out["top_p"], 0.99);
+    // With drop_params the offending fields are dropped, not forwarded.
+    dep.oxllm_params.drop_params = Some(true);
+    let out = provider.transform_request(&request, &dep).unwrap();
+    assert!(out.get("temperature").is_none(), "{out}");
+    assert!(out.get("top_p").is_none(), "{out}");
+    assert!(out.get("top_k").is_none(), "{out}");
+    // Older models keep verbatim sampling forwarding.
+    let mut legacy = adaptive_deployment("claude-sonnet-4-6");
+    legacy.oxllm_params.drop_params = Some(true);
+    let out = provider.transform_request(&request, &legacy).unwrap();
+    assert_eq!(out["temperature"], 0.7);
+    assert_eq!(out["top_k"], 3);
+
+    // Forced tool use on Sonnet 5.5: 400 without drop_params, downgrade
+    // to auto with it (preserving disable_parallel_tool_use).
+    let forced = json!({
+        "model": "claude-sonnet-5-5",
+        "max_tokens": 100,
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}}
+        }],
+        "tool_choice": "required",
+        "parallel_tool_calls": false
+    });
+    let mut strict_dep = adaptive_deployment("claude-sonnet-5-5");
+    let error = provider
+        .transform_request(&forced, &strict_dep)
+        .expect_err("forced tool use on Sonnet 5.5 must be rejected");
+    assert!(
+        matches!(error, oxllm_core::Error::BadRequest(ref msg) if msg.contains("forced tool use")),
+        "{error:?}"
+    );
+    strict_dep.oxllm_params.drop_params = Some(true);
+    let out = provider.transform_request(&forced, &strict_dep).unwrap();
+    assert_eq!(out["tool_choice"]["type"], "auto", "{out}");
+    assert_eq!(
+        out["tool_choice"]["disable_parallel_tool_use"], true,
+        "{out}"
+    );
+    // Haiku 5.5 keeps forced tool use.
+    let haiku_dep = adaptive_deployment("claude-haiku-5-5");
+    let out = provider.transform_request(&forced, &haiku_dep).unwrap();
+    assert_eq!(out["tool_choice"]["type"], "any", "{out}");
+}
+
+#[test]
 fn reasoning_effort_budget_matches_litellm_constants() {
     // Budgets must match the reference DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET
     // (constants.py:183-189). `minimal` is clamped up to the Anthropic minimum
