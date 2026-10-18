@@ -441,6 +441,130 @@ fn stream_done_returns_none() {
 }
 
 #[test]
+fn request_preserves_refusal_and_audio_only_assistant_turns() {
+    // A refusal (or audio reply) is real assistant output; the bare-turn
+    // cleanup must not silently delete it from replayed history.
+    for assistant in [
+        json!({"role": "assistant", "content": null, "refusal": "I can't help with that."}),
+        json!({"role": "assistant", "content": null, "audio": {"id": "audio_1"}}),
+    ] {
+        let req = json!({"messages": [
+            {"role": "user", "content": "hi"},
+            assistant.clone(),
+            {"role": "user", "content": "again"}
+        ]});
+        let out = ChatProvider::transform_request(&DatabricksProvider, &req, &deployment()).unwrap();
+        assert_eq!(
+            out["messages"],
+            json!([
+                {"role": "user", "content": "hi"},
+                assistant,
+                {"role": "user", "content": "again"}
+            ]),
+            "assistant: {assistant}"
+        );
+    }
+}
+
+#[test]
+fn request_drops_whitespace_only_assistant_turns_and_filters_empty_text_blocks() {
+    let req = json!({"messages": [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "  \n\t "},
+        {"role": "assistant", "content": [{"type": "text", "text": " "}, {"type": "text", "text": "real"}]},
+        {"role": "user", "content": [{"type": "text", "text": ""}, {"type": "text", "text": "question"}]}
+    ]});
+    let out = ChatProvider::transform_request(&DatabricksProvider, &req, &deployment()).unwrap();
+    assert_eq!(
+        out["messages"],
+        json!([
+            {"role": "user", "content": "hi"},
+            // Whitespace block filtered; the surviving lone text block then
+            // collapses to a string on this non-Claude deployment.
+            {"role": "assistant", "content": "real"},
+            {"role": "user", "content": "question"}
+        ])
+    );
+}
+
+#[test]
+fn request_moves_message_cache_control_into_string_content_block() {
+    let req = json!({"messages": [
+        {"role": "user", "content": "cache me", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+    ]});
+    let out = ChatProvider::transform_request(&DatabricksProvider, &req, &deployment()).unwrap();
+    assert_eq!(
+        out["messages"],
+        json!([{
+            "role": "user",
+            "content": [{"type": "text", "text": "cache me", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+        }])
+    );
+}
+
+#[test]
+fn request_splits_parallel_tool_calls_for_non_claude_models() {
+    let call_a = json!({"id": "call_a", "type": "function", "function": {"name": "a", "arguments": "{}"}});
+    let call_b = json!({"id": "call_b", "type": "function", "function": {"name": "b", "arguments": "{}"}});
+    let req = json!({"messages": [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": "working", "tool_calls": [call_a, call_b]},
+        {"role": "tool", "tool_call_id": "call_b", "content": "result b"},
+        {"role": "tool", "tool_call_id": "call_a", "content": "result a"},
+        {"role": "user", "content": "thanks"}
+    ]});
+    let out = ChatProvider::transform_request(&DatabricksProvider, &req, &deployment()).unwrap();
+    assert_eq!(
+        out["messages"],
+        json!([
+            {"role": "user", "content": "go"},
+            // Results keep their order; the first assistant keeps its other
+            // fields and carries only the first result's call.
+            {"role": "assistant", "content": "working", "tool_calls": [call_b]},
+            {"role": "tool", "tool_call_id": "call_b", "content": "result b"},
+            {"role": "assistant", "tool_calls": [call_a]},
+            {"role": "tool", "tool_call_id": "call_a", "content": "result a"},
+            {"role": "user", "content": "thanks"}
+        ])
+    );
+}
+
+#[test]
+fn request_leaves_misaligned_parallel_tool_history_untouched() {
+    // Fewer results than calls (e.g. the turn is still in flight): the
+    // split must not fire and no call may be dropped.
+    let req = json!({"messages": [
+        {"role": "assistant", "content": null, "tool_calls": [
+            {"id": "call_a", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+            {"id": "call_b", "type": "function", "function": {"name": "b", "arguments": "{}"}}
+        ]},
+        {"role": "tool", "tool_call_id": "call_a", "content": "result a"}
+    ]});
+    let out = ChatProvider::transform_request(&DatabricksProvider, &req, &deployment()).unwrap();
+    assert_eq!(out["messages"], req["messages"]);
+}
+
+#[test]
+fn request_skips_split_and_collapse_for_claude_models() {
+    let mut dep = deployment();
+    dep.oxllm_params.model = "databricks/claude-sonnet-4-5".to_string();
+    let req = json!({
+        "model": "claude-sonnet-4-5",
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "go"}]},
+            {"role": "assistant", "content": null, "tool_calls": [
+                {"id": "call_a", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                {"id": "call_b", "type": "function", "function": {"name": "b", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "call_a", "content": "result a"},
+            {"role": "tool", "tool_call_id": "call_b", "content": "result b"}
+        ]
+    });
+    let out = ChatProvider::transform_request(&DatabricksProvider, &req, &dep).unwrap();
+    assert_eq!(out["messages"], req["messages"]);
+}
+
+#[test]
 fn provider_id_and_supports() {
     let p = DatabricksProvider;
     assert_eq!(p.id(), "databricks");
