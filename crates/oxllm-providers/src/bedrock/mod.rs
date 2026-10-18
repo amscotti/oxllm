@@ -22,7 +22,8 @@ use std::collections::HashMap;
 use oxllm_core::Result;
 use oxllm_core::deployment::Deployment;
 use oxllm_core::provider::{
-    ChatProvider, EmbeddingProvider, Provider, ProviderId, ResolvedCredentials,
+    ChatProvider, EmbeddingProvider, PromptCacheWire, Provider, ProviderId,
+    ResolvedCredentials,
 };
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde_json::{Map, Value, json};
@@ -290,6 +291,27 @@ impl ChatProvider for BedrockProvider {
         resolved.oxllm_params.model =
             format!("bedrock/{}", Self::resolve_model(request, deployment));
         self.endpoint_url(&resolved)
+    }
+
+    fn prompt_cache_wire(
+        &self,
+        request: &Value,
+        deployment: &Deployment,
+    ) -> Option<PromptCacheWire> {
+        // Derive from the route this adapter actually selects (the same
+        // endpoint computation the send uses): Converse carries
+        // cachePoint blocks; the Anthropic InvokeModel surface carries
+        // cache_control blocks.
+        let url = self.endpoint_url_for_request(deployment, request);
+        let path = url.split('?').next().unwrap_or(&url);
+        if matches!(
+            path.rsplit('/').next(),
+            Some("converse" | "converse-stream")
+        ) {
+            return Some(PromptCacheWire::Converse);
+        }
+        Self::uses_anthropic_messages_api(request, deployment)
+            .then_some(PromptCacheWire::Anthropic)
     }
 
     fn apply_auth(

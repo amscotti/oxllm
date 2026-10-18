@@ -340,7 +340,23 @@ async fn reserve_router_scope(
             Err(router_budget_error(scope, id, spend, limit, ttl))
         }
         Ok(WindowedIncrResult::WindowChanged) => {
-            Err(router_budget_error(scope, id, estimate, limit, ttl))
+            // A stale window at reserve time is a transient rollover race,
+            // not an exhausted cap: classify it retryable (the key-level
+            // top-up path does the same) instead of metering/reporting a
+            // budget_exceeded rejection the client cannot act on.
+            tracing::warn!(
+                event = "budget_window_changed",
+                scope = scope.as_str(),
+                id = %id,
+                "router budget window changed during reservation; rejecting as retryable"
+            );
+            Err(RouterBudgetError {
+                api_error: crate::error::ApiError::rate_limited(format!(
+                    "{} budget window changed for {id}; retry the request",
+                    scope.as_str()
+                )),
+                window: ttl.unwrap_or(DEFAULT_ROUTER_BUDGET_TTL),
+            })
         }
         Err(e) => {
             // Fail closed: same posture as key-level BudgetHook. A cache

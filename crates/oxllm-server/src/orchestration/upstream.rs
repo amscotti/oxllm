@@ -439,29 +439,7 @@ pub(crate) async fn attempt_upstream_with_context(
         // that a cache breakpoint was actually sent on this attempt. Select
         // the envelope from adapter-owned routing, never editable version
         // fields in this body (including a forged anthropic_version: null).
-        let prompt_cache_wire = match provider.id() {
-            "anthropic" => Some(PromptCacheWire::Anthropic),
-            "azure_ai" if azure_anthropic => Some(PromptCacheWire::Anthropic),
-            "bedrock" if bedrock_converse => Some(PromptCacheWire::Converse),
-            "bedrock"
-                if oxllm_providers::bedrock::BedrockProvider::uses_anthropic_messages_api(
-                    request_body,
-                    deployment,
-                ) =>
-            {
-                Some(PromptCacheWire::Anthropic)
-            }
-            "vertex_ai"
-                if oxllm_providers::vertex_ai::VertexProvider::uses_anthropic_messages_api(
-                    request_body,
-                    deployment,
-                )
-                .unwrap_or(false) =>
-            {
-                Some(PromptCacheWire::Anthropic)
-            }
-            _ => None,
-        };
+        let prompt_cache_wire = chat.prompt_cache_wire(request_body, deployment);
         ctx.upstream_prompt_cache_pin_ttl = Some(
             prompt_cache_wire.map_or(PIN_TTL, |wire| pin_ttl_for_native_body(&transformed, wire)),
         );

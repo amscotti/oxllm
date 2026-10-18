@@ -42,7 +42,8 @@ use std::collections::HashMap;
 use oxllm_core::Result;
 use oxllm_core::deployment::Deployment;
 use oxllm_core::provider::{
-    ChatProvider, EmbeddingProvider, Provider, ProviderId, ResolvedCredentials,
+    ChatProvider, EmbeddingProvider, PromptCacheWire, Provider, ProviderId,
+    ResolvedCredentials,
 };
 use serde_json::{Value, json};
 
@@ -512,6 +513,16 @@ impl ChatProvider for VertexProvider {
         }
         // Gemini (OpenAI-compat) path: no per-stream state needed.
         self.transform_stream_chunk(chunk)
+    }
+
+    fn prompt_cache_wire(
+        &self,
+        request: &Value,
+        deployment: &Deployment,
+    ) -> Option<PromptCacheWire> {
+        Self::uses_anthropic_messages_api(request, deployment)
+            .unwrap_or(false)
+            .then_some(PromptCacheWire::Anthropic)
     }
 
     fn supported_params(&self) -> Option<Vec<&str>> {

@@ -13,7 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oxllm_core::Result;
 use oxllm_core::deployment::Deployment;
-use oxllm_core::provider::{ChatProvider, Provider, ProviderId, ResolvedCredentials};
+use oxllm_core::provider::{
+    ChatProvider, PromptCacheWire, Provider, ProviderId, ResolvedCredentials,
+};
 use serde_json::{Map, Value, json};
 
 mod user_run;
@@ -994,6 +996,14 @@ impl ChatProvider for AnthropicProvider {
             ));
         };
         transform_stream_chunk_impl(chunk, &mut s.meta, &mut s.tool_blocks, &s.reverse_map)
+    }
+
+    fn prompt_cache_wire(
+        &self,
+        _request: &Value,
+        _deployment: &Deployment,
+    ) -> Option<PromptCacheWire> {
+        Some(PromptCacheWire::Anthropic)
     }
 
     fn supported_params(&self) -> Option<Vec<&str>> {

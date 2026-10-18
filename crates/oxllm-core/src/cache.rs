@@ -177,6 +177,10 @@ pub trait Cache: Send + Sync {
     /// The backward-compatible default fails closed without touching storage:
     /// an arbitrary legacy Cache cannot prove atomic window ownership. Shipped
     /// counter stores override this; response-only stores need not do so.
+    /// Consequence for third-party `Cache` impls: without an override, every
+    /// budget-enforced request is rejected (there is deliberately no legacy
+    /// non-windowed fallback — degrading to `incr_if_below` would reintroduce
+    /// the cross-window refund/adjust races the receipt exists to prevent).
     async fn incr_if_below_in_window(
         &self,
         _key: &str,

@@ -136,12 +136,10 @@ pub(crate) const PIN_TTL: Duration = Duration::from_secs(300);
 /// whether a requested TTL can be forwarded; billing prices are not evidence.
 pub(crate) const ONE_HOUR_PIN_TTL: Duration = Duration::from_secs(3600);
 
-/// Native cache-breakpoint vocabulary chosen by the upstream adapter.
-#[derive(Clone, Copy)]
-pub(crate) enum PromptCacheWire {
-    Anthropic,
-    Converse,
-}
+/// Native cache-breakpoint vocabulary chosen by the upstream adapter
+/// (defined in core so adapters own the selection via
+/// [`ChatProvider::prompt_cache_wire`](oxllm_core::provider::ChatProvider::prompt_cache_wire)).
+pub(crate) use oxllm_core::PromptCacheWire;
 
 /// Observe only cache-breakpoint carriers in the fully shaped native body.
 ///

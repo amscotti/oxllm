@@ -52,6 +52,19 @@ pub trait Provider: Send + Sync {
     }
 }
 
+/// Which native prompt-cache breakpoint envelope a deployment's wire body
+/// uses, for host-side cache-pin lifetime decisions. Adapter-owned: the
+/// host must never infer this from provider-id strings or editable body
+/// fields (a forged `anthropic_version` must not select a wire).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptCacheWire {
+    /// Anthropic Messages `cache_control` blocks (native Anthropic and
+    /// partner hosts serving the same envelope).
+    Anthropic,
+    /// Bedrock Converse `cachePoint` blocks.
+    Converse,
+}
+
 /// Per-endpoint transform trait for chat completions.
 ///
 /// All methods are pure synchronous functions. Credential acquisition
@@ -130,6 +143,20 @@ pub trait ChatProvider: Send + Sync {
     /// unsupported params. Returns `None` if the provider does not publish a
     /// list (treat as "passthrough / unknown").
     fn supported_params(&self) -> Option<Vec<&str>> {
+        None
+    }
+
+    /// The prompt-cache breakpoint envelope this deployment's transformed
+    /// body will carry for `request`, or `None` when it has no native
+    /// breakpoint wire. Decided from adapter-owned routing (the same
+    /// predicates that pick the transform/endpoint), never from body
+    /// fields a caller can forge.
+    fn prompt_cache_wire(
+        &self,
+        request: &Value,
+        deployment: &Deployment,
+    ) -> Option<PromptCacheWire> {
+        let _ = (request, deployment);
         None
     }
 }

@@ -36,7 +36,7 @@ pub use hook::{
 pub use limits::{AllScopeLimits, ScopeLimits};
 pub use provider::{
     ChatProvider, EmbeddingProvider, EmbeddingRequest, EmbeddingRequestBatch, EmbeddingRequestPlan,
-    Provider, ProviderId, RealtimeProvider, RerankProvider, ResolvedCredentials,
+    PromptCacheWire, Provider, ProviderId, RealtimeProvider, RerankProvider, ResolvedCredentials,
 };
 pub use registry::ProviderRegistry;
 pub use router::{

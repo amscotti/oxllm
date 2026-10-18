@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use oxllm_core::provider::{
-    ChatProvider, EmbeddingProvider, EmbeddingRequestPlan, Provider, ProviderId,
-    ResolvedCredentials,
+    ChatProvider, EmbeddingProvider, EmbeddingRequestPlan, PromptCacheWire, Provider,
+    ProviderId, ResolvedCredentials,
 };
 use oxllm_core::{Deployment, Endpoint, Error, Result};
 use serde_json::{Value, json};
@@ -301,6 +301,16 @@ impl ChatProvider for AzureAiProvider {
         } else {
             COMPAT.transform_stream_chunk_stateful(chunk, state, request)
         }
+    }
+
+    fn prompt_cache_wire(
+        &self,
+        request: &Value,
+        deployment: &Deployment,
+    ) -> Option<PromptCacheWire> {
+        // Resolve wildcard deployments exactly like endpoint routing does.
+        let resolved = Self::resolved(request, deployment).unwrap_or_else(|_| deployment.clone());
+        Self::is_anthropic(&resolved).then_some(PromptCacheWire::Anthropic)
     }
 
     fn supported_params(&self) -> Option<Vec<&str>> {
