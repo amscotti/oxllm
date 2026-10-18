@@ -1509,10 +1509,19 @@ mod tests {
     #[test]
     fn implicit_search_families_are_scoped_to_search_priced_models() {
         // Positive: the families carrying catalog search rates.
-        assert!(model_searches_implicitly("perplexity", "perplexity/sonar-pro"));
-        assert!(model_searches_implicitly("groq", "groq/openai/gpt-oss-120b"));
+        assert!(model_searches_implicitly(
+            "perplexity",
+            "perplexity/sonar-pro"
+        ));
+        assert!(model_searches_implicitly(
+            "groq",
+            "groq/openai/gpt-oss-120b"
+        ));
         assert!(model_searches_implicitly("meta", "meta/muse-wonder-1.0"));
-        assert!(model_searches_implicitly("openai", "gpt-4o-mini-search-preview"));
+        assert!(model_searches_implicitly(
+            "openai",
+            "gpt-4o-mini-search-preview"
+        ));
         // Negative: same providers, models that do not search model-side
         // (provider-wide matching reserved a phantom fee for these).
         assert!(!model_searches_implicitly(

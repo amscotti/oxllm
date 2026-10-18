@@ -22,8 +22,7 @@ use std::collections::HashMap;
 use oxllm_core::Result;
 use oxllm_core::deployment::Deployment;
 use oxllm_core::provider::{
-    ChatProvider, EmbeddingProvider, PromptCacheWire, Provider, ProviderId,
-    ResolvedCredentials,
+    ChatProvider, EmbeddingProvider, PromptCacheWire, Provider, ProviderId, ResolvedCredentials,
 };
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde_json::{Map, Value, json};
@@ -310,8 +309,7 @@ impl ChatProvider for BedrockProvider {
         ) {
             return Some(PromptCacheWire::Converse);
         }
-        Self::uses_anthropic_messages_api(request, deployment)
-            .then_some(PromptCacheWire::Anthropic)
+        Self::uses_anthropic_messages_api(request, deployment).then_some(PromptCacheWire::Anthropic)
     }
 
     fn apply_auth(

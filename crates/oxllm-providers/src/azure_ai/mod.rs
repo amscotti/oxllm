@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use oxllm_core::provider::{
-    ChatProvider, EmbeddingProvider, EmbeddingRequestPlan, PromptCacheWire, Provider,
-    ProviderId, ResolvedCredentials,
+    ChatProvider, EmbeddingProvider, EmbeddingRequestPlan, PromptCacheWire, Provider, ProviderId,
+    ResolvedCredentials,
 };
 use oxllm_core::{Deployment, Endpoint, Error, Result};
 use serde_json::{Value, json};

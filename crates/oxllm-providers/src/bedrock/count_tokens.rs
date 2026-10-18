@@ -23,7 +23,9 @@ use oxllm_core::{Error, Result};
 use percent_encoding::utf8_percent_encode;
 use serde_json::{Value, json};
 
-use super::{BedrockProvider, MODEL_PATH_SEGMENT, converse, should_use_converse, strip_model_suffixes};
+use super::{
+    BedrockProvider, MODEL_PATH_SEGMENT, converse, should_use_converse, strip_model_suffixes,
+};
 
 /// Tokenizer label reported for counts served by this API (the reference
 /// reports `bedrock_api` for the runtime CountTokens counter).
@@ -82,11 +84,8 @@ fn resolve_count_model(deployment: &Deployment, requested_model: Option<&str>) -
 pub fn build_count_tokens_body(request: &Value, deployment: &Deployment) -> Result<Value> {
     let model = BedrockProvider::resolve_model(request, deployment);
     if should_use_converse(model, BedrockProvider::use_converse(deployment)) {
-        let converse_body = converse::transform_request_converse(
-            request,
-            model,
-            &deployment.oxllm_params.extra,
-        )?;
+        let converse_body =
+            converse::transform_request_converse(request, model, &deployment.oxllm_params.extra)?;
         let mut converse_input = serde_json::Map::new();
         for key in ["messages", "system", "toolConfig"] {
             if let Some(value) = converse_body.get(key) {
@@ -180,7 +179,10 @@ mod tests {
         let converse = &body["input"]["converse"];
         assert_eq!(converse["messages"][0]["role"], "user");
         assert_eq!(converse["messages"][0]["content"][0]["text"], "hello");
-        assert!(converse.get("system").is_some(), "system must count: {body}");
+        assert!(
+            converse.get("system").is_some(),
+            "system must count: {body}"
+        );
         assert!(
             converse.get("toolConfig").is_some(),
             "tools must count: {body}"
@@ -208,13 +210,22 @@ mod tests {
         )
         .unwrap();
         let direct = ChatProvider::transform_request(&BedrockProvider, &request, &dep).unwrap();
-        assert_eq!(decoded, direct, "invoke body must be the chat invoke payload");
+        assert_eq!(
+            decoded, direct,
+            "invoke body must be the chat invoke payload"
+        );
     }
 
     #[test]
     fn parse_response_reads_input_tokens() {
-        assert_eq!(parse_count_tokens_response(&json!({"inputTokens": 42})), Some(42));
-        assert_eq!(parse_count_tokens_response(&json!({"input_tokens": 42})), None);
+        assert_eq!(
+            parse_count_tokens_response(&json!({"inputTokens": 42})),
+            Some(42)
+        );
+        assert_eq!(
+            parse_count_tokens_response(&json!({"input_tokens": 42})),
+            None
+        );
         assert_eq!(parse_count_tokens_response(&json!({})), None);
     }
 }

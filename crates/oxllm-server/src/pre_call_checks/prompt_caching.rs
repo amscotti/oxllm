@@ -470,12 +470,10 @@ fn prompt_prefix(body: &Value) -> Option<(String, String)> {
     let messages = body.get("messages")?.as_array()?;
     let tools = body.get("tools");
     let last_marked = messages.iter().rposition(|m| message_has_cache_mark(m));
-    let system_marked = body
-        .get("system")
-        .is_some_and(|system| match system {
-            Value::Array(blocks) => blocks.iter().any(has_cache_mark),
-            other => has_cache_mark(other),
-        });
+    let system_marked = body.get("system").is_some_and(|system| match system {
+        Value::Array(blocks) => blocks.iter().any(has_cache_mark),
+        other => has_cache_mark(other),
+    });
     let tools_marked = tools.and_then(Value::as_array).is_some_and(|defs| {
         defs.iter().any(|def| {
             has_cache_mark(def)
@@ -545,10 +543,7 @@ fn prompt_prefix(body: &Value) -> Option<(String, String)> {
                 // The provider prefix ends at the marked block, not at
                 // the end of its message.
                 let mut truncated = message.clone();
-                if let Some(parts) = truncated
-                    .get_mut("content")
-                    .and_then(Value::as_array_mut)
-                {
+                if let Some(parts) = truncated.get_mut("content").and_then(Value::as_array_mut) {
                     if let Some(last_block) = parts.iter().rposition(has_cache_mark) {
                         parts.truncate(last_block + 1);
                     }
@@ -561,12 +556,7 @@ fn prompt_prefix(body: &Value) -> Option<(String, String)> {
                 );
                 components.push(serde_json::to_string(&truncated).ok()?);
             } else {
-                texts.push(
-                    message
-                        .get("content")
-                        .map(content_text)
-                        .unwrap_or_default(),
-                );
+                texts.push(message.get("content").map(content_text).unwrap_or_default());
                 components.push(serde_json::to_string(message).ok()?);
             }
         }
@@ -579,7 +569,11 @@ fn prompt_prefix(body: &Value) -> Option<(String, String)> {
         .join(" ");
     // A tools-only breakpoint has no message text; estimate from the
     // canonical form so the threshold gate still sees the prefix size.
-    let text = if text.is_empty() { canonical.clone() } else { text };
+    let text = if text.is_empty() {
+        canonical.clone()
+    } else {
+        text
+    };
     if text.is_empty() {
         return None;
     }

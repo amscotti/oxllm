@@ -453,7 +453,8 @@ fn request_preserves_refusal_and_audio_only_assistant_turns() {
             assistant.clone(),
             {"role": "user", "content": "again"}
         ]});
-        let out = ChatProvider::transform_request(&DatabricksProvider, &req, &deployment()).unwrap();
+        let out =
+            ChatProvider::transform_request(&DatabricksProvider, &req, &deployment()).unwrap();
         assert_eq!(
             out["messages"],
             json!([
@@ -504,8 +505,10 @@ fn request_moves_message_cache_control_into_string_content_block() {
 
 #[test]
 fn request_splits_parallel_tool_calls_for_non_claude_models() {
-    let call_a = json!({"id": "call_a", "type": "function", "function": {"name": "a", "arguments": "{}"}});
-    let call_b = json!({"id": "call_b", "type": "function", "function": {"name": "b", "arguments": "{}"}});
+    let call_a =
+        json!({"id": "call_a", "type": "function", "function": {"name": "a", "arguments": "{}"}});
+    let call_b =
+        json!({"id": "call_b", "type": "function", "function": {"name": "b", "arguments": "{}"}});
     let req = json!({"messages": [
         {"role": "user", "content": "go"},
         {"role": "assistant", "content": "working", "tool_calls": [call_a, call_b]},

@@ -564,8 +564,9 @@ router_settings:
             .mock_async(|when, then| {
                 when.method(httpmock::Method::POST)
                     .path("/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens");
-                then.status(403)
-                    .json_body(json!({"message": "The security token included in the request is invalid"}));
+                then.status(403).json_body(
+                    json!({"message": "The security token included in the request is invalid"}),
+                );
             })
             .await;
         let input = json!({"model":"counted","messages":[{"role":"user","content":"hello"}]});

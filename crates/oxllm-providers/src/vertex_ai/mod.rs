@@ -42,8 +42,7 @@ use std::collections::HashMap;
 use oxllm_core::Result;
 use oxllm_core::deployment::Deployment;
 use oxllm_core::provider::{
-    ChatProvider, EmbeddingProvider, PromptCacheWire, Provider, ProviderId,
-    ResolvedCredentials,
+    ChatProvider, EmbeddingProvider, PromptCacheWire, Provider, ProviderId, ResolvedCredentials,
 };
 use serde_json::{Value, json};
 

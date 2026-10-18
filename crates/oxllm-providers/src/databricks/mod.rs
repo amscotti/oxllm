@@ -230,7 +230,9 @@ fn split_parallel_tool_calls(messages: Vec<Value>) -> Vec<Value> {
             .collect();
         let aligned = results.len() == calls.len()
             && call_ids.iter().all(|id| id.is_some())
-            && result_ids.iter().all(|id| id.is_some() && call_ids.contains(id))
+            && result_ids
+                .iter()
+                .all(|id| id.is_some() && call_ids.contains(id))
             && {
                 let mut sorted_calls = call_ids.clone();
                 let mut sorted_results = result_ids.clone();
@@ -246,7 +248,11 @@ fn split_parallel_tool_calls(messages: Vec<Value>) -> Vec<Value> {
         for (position, result) in results.into_iter().enumerate() {
             let matched = result_ids[position]
                 .as_ref()
-                .and_then(|id| call_ids.iter().position(|call_id| call_id.as_ref() == Some(id)))
+                .and_then(|id| {
+                    call_ids
+                        .iter()
+                        .position(|call_id| call_id.as_ref() == Some(id))
+                })
                 .map(|index| calls[index].clone())
                 .expect("aligned ids guarantee a match");
             if position == 0 {
