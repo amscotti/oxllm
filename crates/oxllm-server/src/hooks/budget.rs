@@ -72,6 +72,32 @@ pub fn most_restrictive(a: Option<f64>, b: Option<f64>) -> Option<f64> {
 /// re-runs estimate after pick), the reservation is sized on the override.
 /// Unknown models (no override and no table entry) reserve a nominal `0.01`
 /// floor plus any known Model Router infrastructure fee.
+/// Model families that execute hosted searches model-side on (nearly)
+/// every call, with no client declaration to gate a search reservation
+/// on. Scoped to the families that actually carry catalog search rates —
+/// provider-wide matching reserved a phantom query fee for every model
+/// in the shard (routed third-party rows included), which could 429 a
+/// valid near-cap call at admission even though settlement corrects.
+fn model_searches_implicitly(provider: &str, pricing_model: &str) -> bool {
+    let model = pricing_model.to_ascii_lowercase();
+    // Search is the product: no declaration exists to look for.
+    if model.contains("search-preview") {
+        return true;
+    }
+    match provider {
+        // Sonar models are grounded by design; Perplexity's routed
+        // third-party rows (perplexity/anthropic/*, ...) are not.
+        "perplexity" => model.contains("sonar"),
+        // Groq's compound/browser systems run on the gpt-oss rows, the
+        // only Groq rows with a per-query search rate.
+        "groq" => model.contains("gpt-oss"),
+        // Meta's always-searching muse line (muse-spark rows carry no
+        // search rate and never reserve).
+        "meta" => model.contains("muse-wonder"),
+        _ => false,
+    }
+}
+
 pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
     if ctx.pre_call_pricing_is_free
         && ctx.deployment_pricing.is_none()
@@ -192,13 +218,11 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
                         + rates.cache_creation.max(rates.cache_creation_1h);
                     let output_side = rates.output.max(rates.reasoning) + rates.citation;
                     // Search/citation buckets are additive to ordinary token
-                    // spend, but only when a search will actually run. Two
-                    // families reserve unconditionally: providers whose
-                    // models search implicitly on every call (Perplexity
-                    // always; Groq's compound agents and Meta's muse models
-                    // execute hosted searches model-side without a tool
-                    // declaration), and OpenAI's `*-search-preview` models
-                    // (the search IS the product — no declaration needed).
+                    // spend, but only when a search will actually run. The
+                    // model families in `model_searches_implicitly` reserve
+                    // unconditionally (they execute hosted searches
+                    // model-side with no tool declaration to gate on, and
+                    // carry the catalog's per-query search rates).
                     // Everything else — Anthropic's hosted web_search tool,
                     // Gemini's grounding — searches only when declared: a
                     // hosted web_search* tool (an explicit `max_uses` cap,
@@ -219,10 +243,14 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
                         .request_body
                         .get("web_search_options")
                         .is_some_and(|value| !value.is_null());
-                    let always_searches = table.is_some_and(|p| {
-                        matches!(p.provider.as_str(), "perplexity" | "groq" | "meta")
-                            || pricing_model.contains("search-preview")
-                    });
+                    let always_searches = table
+                        .is_some_and(|p| model_searches_implicitly(&p.provider, pricing_model));
+                    // `max_uses` is client-controlled: an uncapped
+                    // u64::MAX would inflate the reservation to +inf and
+                    // poison the reserve/settle arithmetic. The cap sits
+                    // far above any provider's per-request search count,
+                    // and the settle delta still debits actuals.
+                    const MAX_RESERVED_SEARCH_USES: u64 = 1_000;
                     let search_uses = tools
                         .into_iter()
                         .flatten()
@@ -234,7 +262,7 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
                         .filter_map(|tool| tool.get("max_uses").and_then(serde_json::Value::as_u64))
                         .max()
                         .map_or(u64::from(declared_search || always_searches), |max_uses| {
-                            max_uses.max(1)
+                            max_uses.clamp(1, MAX_RESERVED_SEARCH_USES)
                         });
                     (
                         prompt_side,
@@ -1396,6 +1424,7 @@ mod tests {
                 serde_json::json!({"max_tokens":10}),
             ),
             ("perplexity/sonar", serde_json::json!({"max_tokens":10})),
+            ("meta/muse-wonder-1.0", serde_json::json!({"max_tokens":10})),
             (
                 "gpt-4o-mini-search-preview",
                 serde_json::json!({"max_tokens":10}),
@@ -1419,6 +1448,50 @@ mod tests {
                 "{model} must reserve a search fee: {estimate} vs {base}"
             );
         }
+    }
+
+    #[test]
+    fn implicit_search_families_are_scoped_to_search_priced_models() {
+        // Positive: the families carrying catalog search rates.
+        assert!(model_searches_implicitly("perplexity", "perplexity/sonar-pro"));
+        assert!(model_searches_implicitly("groq", "groq/openai/gpt-oss-120b"));
+        assert!(model_searches_implicitly("meta", "meta/muse-wonder-1.0"));
+        assert!(model_searches_implicitly("openai", "gpt-4o-mini-search-preview"));
+        // Negative: same providers, models that do not search model-side
+        // (provider-wide matching reserved a phantom fee for these).
+        assert!(!model_searches_implicitly(
+            "perplexity",
+            "perplexity/anthropic/claude-sonnet-4-5"
+        ));
+        assert!(!model_searches_implicitly(
+            "groq",
+            "groq/llama-3.3-70b-versatile"
+        ));
+        assert!(!model_searches_implicitly("meta", "meta/muse-spark-1.3"));
+        assert!(!model_searches_implicitly("anthropic", "claude-sonnet-4-5"));
+        // Family names under a different provider do not trigger it.
+        assert!(!model_searches_implicitly("openrouter", "perplexity/sonar"));
+    }
+
+    #[tokio::test]
+    async fn hostile_max_uses_cannot_inflate_the_search_reservation() {
+        let mut ctx = CallContext::for_test("anthropic/claude-sonnet-4-5");
+        let _ = ctx.token_estimate.set(10);
+        ctx.request_body = Arc::new(serde_json::json!({
+            "max_tokens": 10,
+            "tools": [{"type": "web_search_20250305", "max_uses": u64::MAX}]
+        }));
+        let estimate = estimate_max_request_cost(&ctx).await;
+        assert!(
+            estimate.is_finite(),
+            "reservation must stay finite, got {estimate}"
+        );
+        // Anthropic search is $0.01/query; the 1_000-use cap bounds the
+        // search component at $10 on top of a sub-cent token estimate.
+        assert!(
+            estimate < 10.01,
+            "search component must be capped, got {estimate}"
+        );
     }
 
     #[tokio::test]
