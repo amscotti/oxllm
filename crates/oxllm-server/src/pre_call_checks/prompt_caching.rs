@@ -475,12 +475,8 @@ fn prompt_prefix(body: &Value) -> Option<(String, String)> {
         other => has_cache_mark(other),
     });
     let tools_marked = tools.and_then(Value::as_array).is_some_and(|defs| {
-        defs.iter().any(|def| {
-            has_cache_mark(def)
-                || def
-                    .get("function")
-                    .is_some_and(has_cache_mark)
-        })
+        defs.iter()
+            .any(|def| has_cache_mark(def) || def.get("function").is_some_and(has_cache_mark))
     });
 
     if last_marked.is_none() && !system_marked && !tools_marked {

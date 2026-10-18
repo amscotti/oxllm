@@ -354,11 +354,22 @@ async fn exercise_rollover<Fut: std::future::Future<Output = ()>>(
         Ok(meter.finish(end))
     };
     await_settlement(guard.settle(outcome)).await;
-    if b_in_flight {
+    // Completion-time attribution: A's settlement must never *reduce* the
+    // successor counter (a refund into a window that never held A's
+    // reservation), but a positive actual is carried into the live window
+    // on top of B's outstanding reservation. The exact total is asserted
+    // below once A's ledger cost is read.
+    let mid_value = if b_in_flight {
+        let mid = cache.counter_value(&key).await.unwrap();
         assert!(
-            (cache.counter_value(&key).await.unwrap() - bound.as_secs_f64() * rate).abs() < 1e-12,
-            "A must not consume B's outstanding reservation"
+            mid >= bound.as_secs_f64() * rate - 1e-12,
+            "A must not consume B's outstanding reservation: {mid}"
         );
+        Some(mid)
+    } else {
+        None
+    };
+    if b_in_flight {
         crate::orchestration::budget::settle_router_spend(
             &fixture.state,
             deployment,
@@ -391,16 +402,28 @@ async fn exercise_rollover<Fut: std::future::Future<Output = ()>>(
         RolloverExit::PositiveAdjustment => assert_eq!(cost, 700.0 * rate),
         _ => assert!((70.0 * rate..71.0 * rate).contains(&cost)),
     }
+    if let Some(mid) = mid_value {
+        // B's reservation plus A's carried actual (zero for the
+        // setup-failure release, which never carries).
+        let expected_mid = bound.as_secs_f64() * rate + cost;
+        assert!(
+            (mid - expected_mid).abs() < 1e-12,
+            "mid-settlement successor counter {mid} != B reservation + carried A actual {expected_mid}"
+        );
+    }
     for (index, key) in fixture.spend_keys.iter().enumerate() {
         let expected = if index == expired_scope {
-            rate
+            // The expired incarnation (BASE + A's reservation) is gone;
+            // the successor holds B's settled spend plus A's actual,
+            // carried at completion time.
+            rate + cost
         } else {
             BASE + rate + cost
         };
         let after = cache.counter_value(key).await.unwrap();
         assert!(
             (after - expected).abs() < 1e-12,
-            "{key}: A's window settlement changed {expected} to {after}"
+            "{key}: expected window total {expected}, got {after}"
         );
     }
     assert_eq!(cache.counter_value("parallel:abc").await, Some(1.0));
