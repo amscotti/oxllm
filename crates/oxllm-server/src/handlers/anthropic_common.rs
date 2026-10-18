@@ -36,15 +36,22 @@ pub(crate) fn extract_request_model(body: &Bytes) -> Result<String, ApiError> {
 /// `rate_limit_error` / `overloaded_error`, surface `authentication_error` to
 /// the user). The `/v1/messages` conversion handler surfaces upstream errors
 /// through this mapping so an Anthropic SDK client sees the same retry
-/// semantics it would against `api.anthropic.com` directly. Unknown status
-/// codes fall back to the generic `api_error`.
+/// semantics it would against `api.anthropic.com` directly. The table mirrors
+/// Anthropic's documented error taxonomy (platform.claude.com/docs/en/api/errors);
+/// note the SDKs' generated `ErrorType` unions omit `request_too_large` and
+/// `conflict_error`, but the docs define the wire values, so they win.
+/// Unknown status codes fall back to the generic `api_error`.
 pub(crate) fn status_to_anthropic_error_type(status: StatusCode) -> &'static str {
     match status {
         StatusCode::BAD_REQUEST => "invalid_request_error",
         StatusCode::UNAUTHORIZED => "authentication_error",
+        StatusCode::PAYMENT_REQUIRED => "billing_error",
         StatusCode::FORBIDDEN => "permission_error",
         StatusCode::NOT_FOUND => "not_found_error",
+        StatusCode::CONFLICT => "conflict_error",
+        StatusCode::PAYLOAD_TOO_LARGE => "request_too_large",
         StatusCode::TOO_MANY_REQUESTS => "rate_limit_error",
+        StatusCode::GATEWAY_TIMEOUT => "timeout_error",
         // 529 "Overloaded" is Anthropic-specific and has no named variant in
         // the `http` crate, so match on the raw code.
         s if s.as_u16() == 529 => "overloaded_error",
@@ -235,6 +242,29 @@ mod tests {
         assert_eq!(
             status_to_anthropic_error_type(StatusCode::TOO_MANY_REQUESTS),
             "rate_limit_error"
+        );
+    }
+
+    #[test]
+    fn status_to_anthropic_error_type_maps_full_documented_taxonomy() {
+        // platform.claude.com/docs/en/api/errors. A 413 rendered as the
+        // generic api_error hides request_too_large from SDKs that switch
+        // on error.type; 504/402/409 likewise have canonical types.
+        assert_eq!(
+            status_to_anthropic_error_type(StatusCode::PAYMENT_REQUIRED),
+            "billing_error"
+        );
+        assert_eq!(
+            status_to_anthropic_error_type(StatusCode::CONFLICT),
+            "conflict_error"
+        );
+        assert_eq!(
+            status_to_anthropic_error_type(StatusCode::PAYLOAD_TOO_LARGE),
+            "request_too_large"
+        );
+        assert_eq!(
+            status_to_anthropic_error_type(StatusCode::GATEWAY_TIMEOUT),
+            "timeout_error"
         );
     }
 

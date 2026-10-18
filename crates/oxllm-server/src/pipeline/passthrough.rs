@@ -1457,7 +1457,12 @@ pub(crate) fn meter_native_stream(
                                     Some("rate_limit_error") => 429,
                                     Some("overloaded_error") => 529,
                                     Some("authentication_error") => 401,
+                                    Some("billing_error") => 402,
                                     Some("permission_error") => 403,
+                                    Some("not_found_error") => 404,
+                                    Some("conflict_error") => 409,
+                                    Some("request_too_large") => 413,
+                                    Some("timeout_error") => 504,
                                     Some("invalid_request_error" | "cyber_policy") => 400,
                                     _ => 500,
                                 }
