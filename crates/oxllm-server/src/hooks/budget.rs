@@ -40,6 +40,14 @@ pub const BUDGET_EXCEEDED_TOTAL: &str = "oxllm_budget_exceeded_total";
 /// recording pre-call estimates instead of actual costs.
 pub const BUDGET_SETTLE_FAILED_TOTAL: &str = "oxllm_budget_settle_failed_total";
 
+/// Settlements whose admission window expired or was replaced mid-request,
+/// so the full actual was carried into the live successor window instead
+/// of adjusting the original window. A rising rate means budget windows
+/// are short relative to request durations (long realtime sessions are
+/// the usual source); attribution stays exact, but operators should see
+/// how much spend lands in a later window than it was admitted in.
+pub const BUDGET_SETTLE_CARRIED_TOTAL: &str = "oxllm_budget_settle_carried_total";
+
 /// Count a budget rejection and return the reject action. Centralized so
 /// every `pre_call` rejection site is metered identically.
 fn reject_over_budget(scope: &'static str, err: Error) -> HookAction {
@@ -361,6 +369,29 @@ impl BudgetHook {
             .unwrap_or_else(|| self.budget_ttl(ctx))
     }
 
+    /// TTL to stamp when a settle carry has to (re)create `key`'s counter:
+    /// the same per-scope duration `pre_call` reserved with, recovered from
+    /// the spend-key prefix (window receipts record identity, not TTL).
+    /// Only used when no live counter exists — `incr` never extends an
+    /// existing window.
+    fn window_ttl_for_key(&self, ctx: &CallContext, key: &str) -> Duration {
+        if key.starts_with("spend:team:") {
+            self.team_budget_ttl(ctx)
+        } else if key.starts_with("spend:org:") {
+            self.org_budget_ttl(ctx)
+        } else if key.starts_with("spend:project:") {
+            self.project_budget_ttl(ctx)
+        } else if key.starts_with("spend:user:") {
+            self.user_budget_ttl(ctx)
+        } else if key.starts_with("spend:customer:") {
+            self.customer_budget_ttl(ctx)
+        } else if key.starts_with("spend:model:") {
+            self.budget_duration
+        } else {
+            self.budget_ttl(ctx)
+        }
+    }
+
     fn model_budget(&self, model: &str) -> Option<f64> {
         self.model_max_budget.as_ref()?.get(model).copied()
     }
@@ -597,9 +628,34 @@ impl BudgetHook {
         }
         if let Some(windows) = &ctx.budget_windows {
             let delta = actual - estimate;
-            if delta != 0.0 {
-                for (key, window) in windows {
-                    if let Err(error) = self.cache.incr_in_window(key, delta, window).await {
+            for (key, window) in windows {
+                match self.cache.incr_in_window(key, delta, window).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        // The admission window expired/was replaced while
+                        // the request ran. Carry the FULL actual into the
+                        // live successor counter (completion-time
+                        // attribution, matching the durable ledger):
+                        // dropping it would let long requests settle
+                        // unbounded spend past every window rollover,
+                        // carrying only the delta would under-attribute,
+                        // and carrying a negative delta would mint
+                        // headroom. Plain `incr` preserves the successor
+                        // window's identity in both shipped stores.
+                        if actual > 0.0 {
+                            ::metrics::counter!(BUDGET_SETTLE_CARRIED_TOTAL).increment(1);
+                            if let Err(error) = self
+                                .cache
+                                .incr(key, actual, Some(self.window_ttl_for_key(ctx, key)))
+                                .await
+                            {
+                                tracing::warn!(%error, key = %key, "budget settle carry failed");
+                                ::metrics::counter!(BUDGET_SETTLE_FAILED_TOTAL, "op" => "carry")
+                                    .increment(1);
+                            }
+                        }
+                    }
+                    Err(error) => {
                         tracing::warn!(%error, "budget window adjust failed");
                         ::metrics::counter!(BUDGET_SETTLE_FAILED_TOTAL, "op" => "adjust")
                             .increment(1);
@@ -2303,6 +2359,39 @@ mod tests {
         // replacement request's counter was not debited or rolled back.
         assert_eq!(ctx.budget_estimate, Some(base));
         assert_eq!(cache.counter_value("spend:abc").await, Some(0.01));
+    }
+
+    #[tokio::test]
+    async fn settle_after_window_rollover_carries_full_actual_into_successor() {
+        // Completion-time attribution: the admission window expires and a
+        // successor incarnation (already holding another request's 0.01)
+        // replaces it while this request runs. Settlement must add the
+        // FULL actual on top of the successor's spend — dropping it was
+        // the rollover enforcement hole, and adding only the delta would
+        // under-attribute by the expired reservation.
+        let cache = Arc::new(InMemoryCache::default());
+        let hook = BudgetHook::with_duration(cache.clone(), Some(100.0), Duration::from_secs(60));
+        let mut ctx = make_ctx();
+        ctx.request_body = std::sync::Arc::new(serde_json::json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100
+        }));
+        hook.pre_call(&mut ctx).await.expect("ok");
+        assert!(ctx.budget_estimate.unwrap() < 2.5);
+
+        cache.expire_counter_for_test("spend:abc").await;
+        cache
+            .incr_if_below("spend:abc", 0.01, 100.0, Some(Duration::from_secs(60)))
+            .await
+            .unwrap();
+
+        Hook::settle_budget(&hook, &ctx, 2.5).await;
+        let value = cache.counter_value("spend:abc").await.unwrap();
+        assert!(
+            (value - 2.51).abs() < 1e-9,
+            "successor window must hold its own spend plus the carried actual, got {value}"
+        );
     }
 
     /// LOW (C31): `top_up_for_deployment_pricing` must pass each scope its OWN

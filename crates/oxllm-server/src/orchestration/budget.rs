@@ -16,7 +16,9 @@ use futures_util::{StreamExt, stream};
 use oxllm_core::router::deployment_key;
 use oxllm_core::{Cache, CallContext, CounterWindow, WindowedIncrResult};
 
-use crate::hooks::budget::{BUDGET_EXCEEDED_TOTAL, estimate_max_request_cost};
+use crate::hooks::budget::{
+    BUDGET_EXCEEDED_TOTAL, BUDGET_SETTLE_CARRIED_TOTAL, estimate_max_request_cost,
+};
 use crate::hooks::spend_keys::{deployment_spend_key, provider_spend_key};
 use crate::scheduler::parse_budget_duration;
 
@@ -569,7 +571,8 @@ pub async fn settle_router_spend(
         if let Err(e) = settle_counter(
             &state.cache,
             &key,
-            cost - reserved,
+            cost,
+            reserved,
             ttl,
             reservation.window_for(&key),
         )
@@ -586,7 +589,8 @@ pub async fn settle_router_spend(
         if let Err(e) = settle_counter(
             &state.cache,
             &key,
-            cost - reserved,
+            cost,
+            reserved,
             ttl,
             reservation.window_for(&key),
         )
@@ -597,18 +601,45 @@ pub async fn settle_router_spend(
     }
 }
 
-/// Apply a settle delta (`actual − reserved`) in its original admission window.
-/// Both signs are skipped if that window expired/replaced; the durable actual
-/// ledger is independent. None is only for unreserved/legacy synthetic calls.
+/// Settle `actual` against the admission reservation in its original window.
+///
+/// If that window expired or was replaced mid-request, the FULL actual is
+/// carried into the live (successor) counter instead of being dropped:
+/// spend is attributed at completion time, the same point the durable
+/// ledger records it. Dropping it left an enforcement hole — a long
+/// request admitted with a small estimate in window W could settle an
+/// arbitrarily large actual after W rolled over and the live counter saw
+/// nothing, repeatably. Carrying only the delta would under-attribute by
+/// the (already-expired) reserved portion, and carrying a negative delta
+/// would mint headroom; the full actual is the only sign-safe amount.
+/// Plain `incr` preserves the successor window's identity in both shipped
+/// stores, so in-flight receipts for that window stay valid. `window:
+/// None` is only for unreserved/legacy synthetic calls, which settle by
+/// delta against whatever counter is live.
 async fn settle_counter(
     cache: &Arc<dyn Cache>,
     key: &str,
-    delta: f64,
+    actual: f64,
+    reserved: f64,
     ttl: Option<Duration>,
     window: Option<&CounterWindow>,
 ) -> Result<(), oxllm_core::Error> {
+    let delta = actual - reserved;
     if let Some(window) = window {
-        return cache.incr_in_window(key, delta, window).await.map(|_| ());
+        if cache.incr_in_window(key, delta, window).await? {
+            return Ok(());
+        }
+        if actual > 0.0 {
+            tracing::warn!(
+                key = %key,
+                actual,
+                reserved,
+                "budget admission window expired before settlement; carrying actual spend into the live window"
+            );
+            ::metrics::counter!(BUDGET_SETTLE_CARRIED_TOTAL).increment(1);
+            cache.incr(key, actual, ttl).await.map(|_| ())?;
+        }
+        return Ok(());
     }
     if delta > 0.0 {
         cache.incr(key, delta, ttl).await.map(|_| ())
@@ -1217,7 +1248,9 @@ mod tests {
     }
 
     /// Same hazard on the settle path: `cost − reserved < 0` landing on an
-    /// expired counter must not create negative credit.
+    /// expired counter must not create negative credit. Under completion-
+    /// time attribution the settle carries the FULL actual (0.1, positive)
+    /// into the successor window — never the −0.4 delta.
     #[tokio::test]
     async fn router_budget_negative_settle_after_window_expiry_mints_no_residue() {
         let state = router_budget_state(None);
@@ -1229,13 +1262,48 @@ mod tests {
             .expect("reserved");
         tokio::time::sleep(Duration::from_millis(10)).await;
         settle_router_spend(&state, &dep, DEP_KEY, Some(0.1), &reservation).await;
+        let value = state
+            .cache
+            .counter_value("spend:dep:gpt-4o:openai/gpt-4o")
+            .await;
         assert!(
-            state
-                .cache
-                .counter_value("spend:dep:gpt-4o:openai/gpt-4o")
+            matches!(value, Some(v) if (v - 0.1).abs() < 1e-9),
+            "successor window must hold exactly the carried actual (0.1), got {value:?}"
+        );
+    }
+
+    /// The rollover enforcement hole: a request admitted with a small
+    /// estimate that settles a large actual after its window expired must
+    /// still debit the live counter in full, or window-straddling spend
+    /// escapes the cap repeatably.
+    #[tokio::test]
+    async fn router_budget_settle_after_window_expiry_carries_full_actual() {
+        let state = router_budget_state(None);
+        let dep = deployment_with_budget(Some(10.0), Some("100ms"));
+        let mut ctx = make_ctx();
+        ctx.budget_estimate = Some(0.5);
+        let reservation = reserve_router_budgets(&state, &dep, DEP_KEY, &ctx)
+            .await
+            .expect("reserved");
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        settle_router_spend(&state, &dep, DEP_KEY, Some(3.25), &reservation).await;
+        let value = state
+            .cache
+            .counter_value("spend:dep:gpt-4o:openai/gpt-4o")
+            .await;
+        assert!(
+            matches!(value, Some(v) if (v - 3.25).abs() < 1e-9),
+            "successor window must hold the full carried actual (3.25), got {value:?}"
+        );
+        // And the carried spend really enforces: the counter is live in a
+        // fresh window, so a reservation that would exceed the cap on top
+        // of it is refused.
+        ctx.budget_estimate = Some(7.0);
+        assert!(
+            reserve_router_budgets(&state, &dep, DEP_KEY, &ctx)
                 .await
-                .is_none(),
-            "negative settle after window expiry must not mint a negative residue counter"
+                .is_err(),
+            "carried spend must count against the successor window's cap"
         );
     }
 

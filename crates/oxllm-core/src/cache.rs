@@ -195,9 +195,13 @@ pub trait Cache: Send + Sync {
     /// false without writing when the window expired, was reset/recreated, or
     /// cannot be proven; never create a replacement counter on this path.
     ///
-    /// Budget accounting uses an admission-window policy: once the admitted
-    /// window ends, both positive adjustments and refunds are discarded, not
-    /// transferred into another request's window. The durable actual-cost
+    /// Budget settlement attributes spend at completion time: when this
+    /// returns `false` for a settlement, the caller carries the FULL actual
+    /// into the live successor counter with plain [`Cache::incr`] (which
+    /// shipped stores apply without rotating the successor's window
+    /// identity). Refunds/releases, by contrast, are discarded once their
+    /// window ends — carrying a negative adjustment would mint headroom in
+    /// a window that never held the reservation. The durable actual-cost
     /// ledger remains independent and is recorded once.
     async fn incr_in_window(
         &self,

@@ -391,9 +391,13 @@ settles to the actual cost (`actual − estimate`) and `post_failure`
 through `Cache::incr_in_window`, which applies only while the *original*
 admission window is still live. A receipt can never adjust or refund a
 replacement counter: once a budget window expires and a later request recreates
-it, both positive adjustments and refunds are discarded rather than debited to
-the wrong window (the durable spend ledger is independent and still records
-the actual cost). Top-ups after deployment selection reserve in the same
+it, refunds are discarded rather than minting headroom in the wrong window.
+Settlements, however, attribute spend at completion time — when the admission
+window is gone, the **full actual** is carried into the live successor counter
+(metered as `oxllm_budget_settle_carried_total`), so a long request that
+straddles a rollover cannot settle unbounded spend unseen by any window. The
+durable spend ledger is independent and records the actual cost once either
+way. Top-ups after deployment selection reserve in the same
 window or reject. The estimate is computed once per request and stashed on
 `CallContext.budget_estimate` alongside the receipts in
 `CallContext.budget_windows`; `CallContext.token_estimate` (a `OnceLock`)
