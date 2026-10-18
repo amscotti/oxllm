@@ -114,7 +114,6 @@ pub(crate) async fn count_at_provider(
     request: &serde_json::Value,
     model: &str,
 ) -> Result<Option<(u64, &'static str)>, ApiError> {
-    use crate::handlers::anthropic_common::sanitise_forwarded_error_message;
     use oxllm_core::provider::ChatProvider;
     use serde_json::{Value, json};
     crate::orchestration::request_controls::validate(request)?;
@@ -126,6 +125,9 @@ pub(crate) async fn count_at_provider(
     else {
         return Ok(None);
     };
+    if deployment.provider_slug() == "bedrock" {
+        return count_at_bedrock(state, auth, request, model).await;
+    }
     let tokenizer = match deployment.provider_slug() {
         "vertex_ai" if deployment.oxllm_params.model.contains("claude") => {
             "vertex_ai_partner_models"
@@ -145,24 +147,8 @@ pub(crate) async fn count_at_provider(
         .map_or(deployment.oxllm_params.model.as_str(), |(_, model)| model)
         .to_string();
     let mut input = request.clone();
-    // The reference's hosted counters treat an EMPTY messages array like no
-    // messages (`if not messages: return None`) — counting falls back to the
-    // local estimate instead of offering the provider a zero-message body it
-    // must reject. A prompt is wrapped into a user turn only when TRUTHY,
-    // matching `bool(prompt)`.
-    let has_empty_messages = input
-        .get("messages")
-        .and_then(Value::as_array)
-        .is_some_and(|messages| messages.is_empty());
-    if input.get("messages").and_then(Value::as_array).is_none() || has_empty_messages {
-        let Some(prompt) = input
-            .get("prompt")
-            .and_then(Value::as_str)
-            .filter(|prompt| !prompt.is_empty())
-        else {
-            return Ok(None);
-        };
-        input["messages"] = json!([{"role":"user","content":prompt}]);
+    if !ensure_count_messages(&mut input) {
+        return Ok(None);
     }
     let mut native = oxllm_providers::anthropic::AnthropicProvider
         .transform_request(&input, &native_deployment)
@@ -184,6 +170,57 @@ pub(crate) async fn count_at_provider(
     if let Some(object) = native.as_object_mut() {
         crate::orchestration::request_controls::copy(request, object);
     }
+    let reply = forward_count_tokens(state, auth, model, native).await?;
+    let tokens = reply
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            ApiError::internal("provider token-count response is missing input_tokens")
+        })?;
+    Ok(Some((tokens, tokenizer)))
+}
+
+/// Guarantee a non-empty `messages` array for hosted counting. The
+/// reference's hosted counters treat an EMPTY messages array like no
+/// messages (`if not messages: return None`) — counting falls back to the
+/// local estimate instead of offering the provider a zero-message body it
+/// must reject. A prompt is wrapped into a user turn only when TRUTHY,
+/// matching `bool(prompt)`. Returns `false` when neither is available.
+#[cfg(feature = "platform-apis")]
+fn ensure_count_messages(input: &mut serde_json::Value) -> bool {
+    use serde_json::{Value, json};
+    let has_empty_messages = input
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| messages.is_empty());
+    if input.get("messages").and_then(Value::as_array).is_none() || has_empty_messages {
+        let Some(prompt) = input
+            .get("prompt")
+            .and_then(Value::as_str)
+            .filter(|prompt| !prompt.is_empty())
+            .map(str::to_string)
+        else {
+            return false;
+        };
+        input["messages"] = json!([{"role":"user","content":prompt}]);
+    }
+    true
+}
+
+/// Forward a prepared count body through the hooked passthrough pipeline
+/// and return the parsed provider reply. Provider errors surface with
+/// their own (bounded, sanitized) detail and status, never a silent
+/// local fallback — a caller who asked for endpoint counting needs to
+/// know the endpoint failed.
+#[cfg(feature = "platform-apis")]
+async fn forward_count_tokens(
+    state: &crate::state::AppState,
+    auth: &AuthUser,
+    model: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, ApiError> {
+    use crate::handlers::anthropic_common::sanitise_forwarded_error_message;
+    use serde_json::Value;
     let response = forward_with_mode(
         state,
         auth,
@@ -194,7 +231,7 @@ pub(crate) async fn count_at_provider(
             axum::http::Method::POST,
             Some(model),
             None,
-            Bytes::from(native.to_string()),
+            Bytes::from(body.to_string()),
             Some("application/json"),
         ),
     )
@@ -235,15 +272,42 @@ pub(crate) async fn count_at_provider(
     )
     .await
     .map_err(|_| ApiError::internal("provider token-count response could not be read"))?;
-    let reply: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| ApiError::internal("invalid provider token-count response"))?;
-    let tokens = reply
-        .get("input_tokens")
-        .and_then(Value::as_u64)
+    serde_json::from_slice(&bytes)
+        .map_err(|_| ApiError::internal("invalid provider token-count response"))
+}
+
+/// Bedrock hosted counting via the runtime CountTokens API. The body
+/// forwarded here stays chat-shaped; the passthrough pipeline rewrites it
+/// to the CountTokens Converse/InvokeModel input and routes it to
+/// `/model/{id}/count-tokens` with SigV4 (see
+/// `oxllm_providers::bedrock::count_tokens`). Failures surface like the
+/// Anthropic counters' — a bad credential must not masquerade as a
+/// successful local estimate.
+#[cfg(feature = "platform-apis")]
+async fn count_at_bedrock(
+    state: &crate::state::AppState,
+    auth: &AuthUser,
+    request: &serde_json::Value,
+    model: &str,
+) -> Result<Option<(u64, &'static str)>, ApiError> {
+    use serde_json::json;
+    let mut input = request.clone();
+    if !ensure_count_messages(&mut input) {
+        return Ok(None);
+    }
+    input["model"] = json!(model);
+    if let Some(object) = input.as_object_mut() {
+        crate::orchestration::request_controls::copy(request, object);
+    }
+    let reply = forward_count_tokens(state, auth, model, input).await?;
+    let tokens = oxllm_providers::bedrock::count_tokens::parse_count_tokens_response(&reply)
         .ok_or_else(|| {
-            ApiError::internal("provider token-count response is missing input_tokens")
+            ApiError::internal("provider token-count response is missing inputTokens")
         })?;
-    Ok(Some((tokens, tokenizer)))
+    Ok(Some((
+        tokens,
+        oxllm_providers::bedrock::count_tokens::TOKENIZER_TYPE,
+    )))
 }
 
 #[cfg(test)]
@@ -436,6 +500,85 @@ router_settings:
                 mock.assert_hits_async(1).await;
             }
         }
+    }
+
+    #[cfg(feature = "platform-apis")]
+    fn bedrock_state(api_base: &str) -> SharedState {
+        let config = crate::config::parse_config_str(&format!(
+            r#"
+model_list:
+  - model_name: counted
+    oxllm_params:
+      model: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      api_base: {api_base}
+      aws_access_key_id: AKIATESTKEY
+      aws_secret_access_key: synthetic-secret
+      aws_region: us-east-1
+      use_converse_api: true
+general_settings:
+  allow_private_api_base: true
+router_settings:
+  num_retries: 0
+"#,
+        ))
+        .unwrap();
+        let state =
+            crate::state::AppState::with_registry(config, oxllm_providers::default_registry())
+                .unwrap();
+        std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(state))
+    }
+
+    #[cfg(feature = "platform-apis")]
+    #[tokio::test]
+    async fn utility_count_tokens_uses_bedrock_count_tokens_api() {
+        let upstream = MockServer::start_async().await;
+        let state = bedrock_state(&upstream.url(""));
+        let mock = upstream
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens")
+                    .header_exists("authorization")
+                    .json_body_partial(
+                        r#"{"input":{"converse":{"messages":[{"role":"user","content":[{"text":"hello"}]}]}}}"#,
+                    );
+                then.status(200).json_body(json!({"inputTokens": 42}));
+            })
+            .await;
+        let input = json!({"model":"counted","messages":[{"role":"user","content":"hello"}]});
+        let counted = count_at_provider(&state.load_full(), &AuthUser::open(), &input, "counted")
+            .await
+            .unwrap();
+        assert_eq!(counted, Some((42, "bedrock_api")));
+        mock.assert_hits_async(1).await;
+    }
+
+    #[cfg(feature = "platform-apis")]
+    #[tokio::test]
+    async fn utility_count_tokens_bedrock_error_surfaces_instead_of_falling_back() {
+        // The bug this wiring fixes: a Bedrock deployment used to skip
+        // hosted counting entirely, so bad credentials silently produced a
+        // successful local estimate.
+        let upstream = MockServer::start_async().await;
+        let state = bedrock_state(&upstream.url(""));
+        let mock = upstream
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens");
+                then.status(403)
+                    .json_body(json!({"message": "The security token included in the request is invalid"}));
+            })
+            .await;
+        let input = json!({"model":"counted","messages":[{"role":"user","content":"hello"}]});
+        let error = count_at_provider(&state.load_full(), &AuthUser::open(), &input, "counted")
+            .await
+            .expect_err("bedrock 403 must surface");
+        assert_eq!(error.status.as_u16(), 403);
+        assert!(
+            error.message.contains("security token"),
+            "provider detail preserved: {}",
+            error.message
+        );
+        mock.assert_hits_async(1).await;
     }
 
     #[cfg(feature = "platform-apis")]

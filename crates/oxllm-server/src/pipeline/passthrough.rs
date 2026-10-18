@@ -97,7 +97,15 @@ pub(crate) fn provider_auth_headers(
             }
         }
     }
-    if headers.is_empty() {
+    if headers.is_empty()
+        && !matches!(
+            creds,
+            oxllm_core::provider::ResolvedCredentials::AwsSigV4 { .. }
+        )
+    {
+        // SigV4 deployments (Bedrock) intentionally emit no headers here:
+        // the signature covers the serialized body and is added by the
+        // send path, mirroring the chat pipeline.
         let key = creds
             .best_effort_bearer()
             .ok_or_else(|| ApiError::internal("no bearer credential available for passthrough"))?;
@@ -597,7 +605,19 @@ async fn hooked_raw(
         req.body
     };
 
-    let body_to_send = if endpoint_path(upstream_path) == "messages/count_tokens" {
+    let body_to_send = if endpoint_path(upstream_path) == "messages/count_tokens"
+        && deployment.provider_slug() == "bedrock"
+    {
+        // Bedrock counting is its own wire API (CountTokens), not the
+        // Anthropic messages shape: build the Converse/InvokeModel count
+        // body from the (model-rewritten) chat-shaped input.
+        let input: Value = serde_json::from_slice(&body_to_send)
+            .map_err(|_| ApiError::bad_request("invalid token-counting body"))?;
+        let count_body =
+            oxllm_providers::bedrock::count_tokens::build_count_tokens_body(&input, &deployment)
+                .map_err(ApiError::from)?;
+        Bytes::from(count_body.to_string())
+    } else if endpoint_path(upstream_path) == "messages/count_tokens" {
         let input: Value = serde_json::from_slice(&body_to_send)
             .map_err(|_| ApiError::bad_request("invalid token-counting body"))?;
         let model = resolve_raw_model(&deployment, input.get("model").and_then(Value::as_str))?;
@@ -951,6 +971,7 @@ pub(crate) fn validate_raw_endpoint(
     let slug = deployment.provider_slug();
     let partner_count = path == "messages/count_tokens"
         && (slug == "vertex_ai"
+            || slug == "bedrock"
             || (slug == "azure_ai"
                 && oxllm_providers::azure_ai::AzureAiProvider::is_anthropic(deployment)));
     if (path == "messages" || path.starts_with("messages/"))
@@ -1299,6 +1320,57 @@ pub(crate) async fn send_upstream_tracked(
     if let Some(ctx) = ctx.as_deref_mut() {
         ctx.upstream_start_time = Some(std::time::Instant::now());
     }
+    // AWS SigV4 must sign the fully-materialized body (Bedrock's
+    // apply_auth intentionally stays empty); mirror the chat pipeline's
+    // signing pass so passthrough routes can reach SigV4 deployments at
+    // all (the Bedrock CountTokens utility counter is the first user).
+    let headers = if let oxllm_core::provider::ResolvedCredentials::AwsSigV4 {
+        access_key,
+        secret_key,
+        session_token,
+        region,
+    } = &creds
+    {
+        let mut header_pairs: Vec<(String, String)> = headers
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_ascii_lowercase(), value.to_string()))
+            })
+            .collect();
+        crate::bedrock_sigv4::sign_request(
+            method.as_str(),
+            &url,
+            &mut header_pairs,
+            &body,
+            access_key,
+            secret_key,
+            region,
+            "bedrock",
+            session_token.as_deref(),
+        )
+        .map_err(|e| {
+            tracing::error!(
+                error.kind = "config",
+                detail = %e,
+                "SigV4 request signing failed"
+            );
+            ApiError::internal("upstream request signing failed")
+        })?;
+        let mut signed = reqwest::header::HeaderMap::new();
+        for (key, value) in header_pairs {
+            let name = reqwest::header::HeaderName::from_bytes(key.as_bytes())
+                .map_err(|_| ApiError::internal("invalid auth header name"))?;
+            let value = reqwest::header::HeaderValue::from_str(&value)
+                .map_err(|_| ApiError::internal("invalid API key characters"))?;
+            signed.insert(name, value);
+        }
+        signed
+    } else {
+        headers
+    };
     let send = crate::pipeline::execute_upstream_json(
         state,
         deployment,
@@ -1863,6 +1935,13 @@ pub(crate) fn build_native_upstream_url(
             "azure_ai" => Some(
                 oxllm_providers::azure_ai::AzureAiProvider::count_tokens_url(deployment)
                     .map_err(ApiError::from)?,
+            ),
+            "bedrock" => Some(
+                oxllm_providers::bedrock::count_tokens::count_tokens_url(
+                    deployment,
+                    requested_model,
+                )
+                .map_err(ApiError::from)?,
             ),
             _ => None,
         };

@@ -61,6 +61,7 @@ const QUERY_VALUE: &AsciiSet = &CONTROLS
     .add(b'%');
 
 pub mod converse;
+pub mod count_tokens;
 mod embed;
 pub mod realtime;
 

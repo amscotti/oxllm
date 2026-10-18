@@ -598,7 +598,10 @@ The stable Anthropic counting API does not need a token-counting beta header;
 explicit caller/OAuth feature betas are preserved.
 
 `POST /utils/token_counter` remains local by default. `call_endpoint: true`
-uses a supported Claude counting deployment; provider failures surface with the
+uses a supported hosted counting deployment (Claude counting hosts, or the
+AWS Bedrock CountTokens API for `bedrock/` deployments — Converse input for
+Converse-routed deployments, InvokeModel input otherwise, reporting
+tokenizer type `bedrock_api`); provider failures surface with the
 provider's status and message instead of silently answering with a local
 estimate, and an unsupported provider still falls back to local estimation.
 `disable_token_counter: true` prohibits local
