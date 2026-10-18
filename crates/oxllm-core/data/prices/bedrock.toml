@@ -133,26 +133,18 @@ prompt_cache_min_tokens = 2048
 ["anthropic.claude-3-5-sonnet-20240620-v1:0"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
-max_input_tokens = 1000000
+max_input_tokens = 200000
 max_output_tokens = 4096
 cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
-input_cost_per_token_above_200k_tokens = 6.000000e-6
-output_cost_per_token_above_200k_tokens = 3.000000e-5
-cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
-cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 
 ["anthropic.claude-3-5-sonnet-20241022-v2:0"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
-max_input_tokens = 1000000
+max_input_tokens = 200000
 max_output_tokens = 8192
 cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
-input_cost_per_token_above_200k_tokens = 6.000000e-6
-output_cost_per_token_above_200k_tokens = 3.000000e-5
-cache_read_input_token_cost_above_200k_tokens = 6.000000e-7
-cache_creation_input_token_cost_above_200k_tokens = 7.500000e-6
 
 ["anthropic.claude-3-7-sonnet-20240620-v1:0"]
 input_cost_per_token = 3.600000e-6
