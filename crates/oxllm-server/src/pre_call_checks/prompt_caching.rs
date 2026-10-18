@@ -10,11 +10,14 @@
 //! which is harmless and occasionally helpful (e.g. it keeps a conversation's
 //! follow-ups on a single warm backend).
 //!
-//! - Pre-call: hash the system prompt (or first user message) **and** the
-//!   request's `tools` array with SHA-256 → look up
+//! - Pre-call: hash the cacheable prompt prefix with SHA-256 → look up
 //!   `pcache:{api_key_hash}:{hash}` in the shared cache → when a mapping
 //!   exists and the pinned deployment is available, prefer it over the
-//!   router's pick.
+//!   router's pick. For requests carrying `cache_control` breakpoints the
+//!   prefix is everything the provider caches (tools, system, and all
+//!   messages through the last marked block); unmarked requests keep the
+//!   legacy first system/user message + tools prefix (see
+//!   [`prompt_prefix`]).
 //! - Post-call: write `pcache:{api_key_hash}:{hash}` → deployment id with a
 //!   300s floor TTL, raised to 1h only when the serving attempt's final native
 //!   outbound body carries a genuine `ttl: "1h"` breakpoint, recorded in
@@ -293,8 +296,9 @@ impl PromptCachingCheck {
     }
 
     /// Compute the SHA-256 (truncated to 128 bits) of the cacheable prompt
-    /// prefix (the system prompt when present, otherwise the first user
-    /// message) concatenated with the request's `tools` array, plus the
+    /// prefix (see [`prompt_prefix`]: the full marked prefix when the
+    /// request carries `cache_control` breakpoints, otherwise the system
+    /// prompt or first user message, plus `tools` either way), plus the
     /// estimated token count of the prefix text. Returns `None` when the
     /// request carries no usable prefix (no messages, or an empty prefix).
     ///
@@ -423,36 +427,163 @@ fn cache_key(api_key_hash: &str, hash: u128) -> String {
     format!("pcache:{api_key_hash}:{hash:032x}")
 }
 
-/// Extract the cacheable prompt prefix: the system prompt when present,
-/// otherwise the first user message, plus the request's `tools` array when
-/// present. Returns the canonical string used for hashing (the serialized
-/// message JSON concatenated with the serialized `tools` array, so multipart
-/// content, roles, and tool definitions are captured exactly) and the visible
-/// text used for token estimation.
+/// Whether a JSON node carries a `cache_control` breakpoint object.
+fn has_cache_mark(value: &Value) -> bool {
+    value
+        .get("cache_control")
+        .is_some_and(|control| control.is_object())
+}
+
+/// Whether a message carries a breakpoint, at message level or on any of
+/// its content blocks.
+fn message_has_cache_mark(message: &Value) -> bool {
+    has_cache_mark(message)
+        || message
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|parts| parts.iter().any(has_cache_mark))
+}
+
+/// Extract the cacheable prompt prefix. Returns the canonical string used
+/// for hashing (serialized JSON components joined by a separator that
+/// cannot appear in JSON, so multipart content, roles, and tool
+/// definitions are captured exactly) and the visible text used for token
+/// estimation.
 ///
-/// `tools` is folded into the canonical string (with a separator that cannot
-/// appear in JSON) so that two requests sharing a system prompt but differing
-/// in their tool definitions produce distinct pins. Anthropic's provider-side
-/// cache key covers tool definitions, so this keeps the pin aligned with
-/// cache warmth (the reference cache key also includes `tools`).
+/// **Marked requests** (any `cache_control` breakpoint in tools, the
+/// top-level `system`, or message content): the prefix is everything the
+/// provider actually caches — `tools`, then `system`, then every message
+/// up to and including the last marked block (the final message's content
+/// is truncated at that block). Keying only the first message here was a
+/// collision bug: two conversations sharing a system prompt but carrying
+/// breakpoints on different later turns have different cached prefixes,
+/// yet shared one pin, so the second pinned to a deployment where its
+/// prefix was cold (and concentrated unrelated conversations onto a
+/// single deployment).
+///
+/// **Unmarked requests** keep the legacy sticky-routing prefix — the
+/// system prompt when present, otherwise the first user message, plus
+/// `tools` — byte-identical to the historical canonical form so existing
+/// pins stay valid. `tools` is folded in on both paths: Anthropic's
+/// provider-side cache key covers tool definitions, so this keeps the
+/// pin aligned with cache warmth (the reference cache key also includes
+/// `tools`).
 fn prompt_prefix(body: &Value) -> Option<(String, String)> {
     let messages = body.get("messages")?.as_array()?;
-    let find = |role: &str| {
-        messages
-            .iter()
-            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some(role))
+    let tools = body.get("tools");
+    let last_marked = messages.iter().rposition(|m| message_has_cache_mark(m));
+    let system_marked = body
+        .get("system")
+        .is_some_and(|system| match system {
+            Value::Array(blocks) => blocks.iter().any(has_cache_mark),
+            other => has_cache_mark(other),
+        });
+    let tools_marked = tools.and_then(Value::as_array).is_some_and(|defs| {
+        defs.iter().any(|def| {
+            has_cache_mark(def)
+                || def
+                    .get("function")
+                    .is_some_and(|function| has_cache_mark(function))
+        })
+    });
+
+    if last_marked.is_none() && !system_marked && !tools_marked {
+        // Legacy sticky-routing path (see the module-level divergence
+        // note): first system message, else first user message.
+        let find = |role: &str| {
+            messages
+                .iter()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some(role))
+        };
+        let msg = find("system").or_else(|| find("user"))?;
+        let text = content_text(msg.get("content")?);
+        if text.is_empty() {
+            return None;
+        }
+        let mut canonical = serde_json::to_string(msg).ok()?;
+        if let Some(tools) = tools {
+            if let Ok(tools_json) = serde_json::to_string(tools) {
+                canonical.push('\u{0}');
+                canonical.push_str(&tools_json);
+            }
+        }
+        return Some((canonical, text));
+    }
+
+    // Marked path: hash the full cached prefix in provider order
+    // (tools → system → messages up to the last breakpoint).
+    let mut components: Vec<String> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+    if let Some(tools) = tools {
+        components.push(serde_json::to_string(tools).ok()?);
+    }
+    if let Some(system) = body.get("system") {
+        components.push(serde_json::to_string(system).ok()?);
+        texts.push(content_text(system));
+    }
+    // With no marked message (breakpoints only on tools/system), the
+    // cached head is tools + system: include the leading system-role
+    // messages converters hoist into `system`, so distinct system prompts
+    // keep distinct pins and the estimate sees the system text.
+    let prefix_messages: &[Value] = match last_marked {
+        Some(cutoff) => &messages[..=cutoff],
+        None => {
+            let end = messages
+                .iter()
+                .position(|m| {
+                    !matches!(
+                        m.get("role").and_then(Value::as_str),
+                        Some("system" | "developer")
+                    )
+                })
+                .unwrap_or(messages.len());
+            &messages[..end]
+        }
     };
-    let msg = find("system").or_else(|| find("user"))?;
-    let text = content_text(msg.get("content")?);
+    {
+        let cutoff = last_marked.unwrap_or(usize::MAX);
+        for (index, message) in prefix_messages.iter().enumerate() {
+            if index == cutoff {
+                // The provider prefix ends at the marked block, not at
+                // the end of its message.
+                let mut truncated = message.clone();
+                if let Some(parts) = truncated
+                    .get_mut("content")
+                    .and_then(Value::as_array_mut)
+                {
+                    if let Some(last_block) = parts.iter().rposition(has_cache_mark) {
+                        parts.truncate(last_block + 1);
+                    }
+                }
+                texts.push(
+                    truncated
+                        .get("content")
+                        .map(content_text)
+                        .unwrap_or_default(),
+                );
+                components.push(serde_json::to_string(&truncated).ok()?);
+            } else {
+                texts.push(
+                    message
+                        .get("content")
+                        .map(content_text)
+                        .unwrap_or_default(),
+                );
+                components.push(serde_json::to_string(message).ok()?);
+            }
+        }
+    }
+    let canonical = components.join("\u{0}");
+    let text = texts
+        .into_iter()
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    // A tools-only breakpoint has no message text; estimate from the
+    // canonical form so the threshold gate still sees the prefix size.
+    let text = if text.is_empty() { canonical.clone() } else { text };
     if text.is_empty() {
         return None;
-    }
-    let mut canonical = serde_json::to_string(msg).ok()?;
-    if let Some(tools) = body.get("tools") {
-        if let Ok(tools_json) = serde_json::to_string(tools) {
-            canonical.push('\u{0}');
-            canonical.push_str(&tools_json);
-        }
     }
     Some((canonical, text))
 }
@@ -573,6 +704,58 @@ mod tests {
             c.prompt_hash(&body, "gpt-4o").map(|(h, _)| h),
             first_only.map(|(h, _)| h),
             "hash must cover only the first user message"
+        );
+    }
+
+    #[test]
+    fn prompt_hash_marked_prefix_covers_everything_through_last_breakpoint() {
+        let c = check();
+        let marked = |tail: &str, extra_block: &str, marked_text: &str| {
+            json!({
+                "model": "gpt-4o",
+                "system": [{"type": "text", "text": "shared system"}],
+                "messages": [
+                    {"role": "user", "content": "first question"},
+                    {"role": "assistant", "content": "first answer"},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": marked_text, "cache_control": {"type": "ephemeral"}},
+                        {"type": "text", "text": extra_block}
+                    ]},
+                    {"role": "user", "content": tail}
+                ]
+            })
+        };
+        let base = c.prompt_hash(&marked("tail one", "after a", "marked"), "gpt-4o");
+        // Content after the last breakpoint — later turns and later blocks
+        // in the marked message — is outside the cached prefix.
+        let same_prefix = c.prompt_hash(&marked("tail two", "after b", "marked"), "gpt-4o");
+        assert_eq!(
+            base.map(|(h, _)| h),
+            same_prefix.map(|(h, _)| h),
+            "post-breakpoint content must not change the pin key"
+        );
+        // A different marked turn is a different cached prefix, even with
+        // an identical system prompt and first turn (the old first-message
+        // key collided these onto one deployment).
+        let other_prefix = c.prompt_hash(&marked("tail one", "after a", "different"), "gpt-4o");
+        assert_ne!(
+            base.map(|(h, _)| h),
+            other_prefix.map(|(h, _)| h),
+            "different marked prefixes must not share a pin"
+        );
+        // An earlier turn inside the prefix also distinguishes it.
+        let mut earlier_differs = marked("tail one", "after a", "marked");
+        earlier_differs["messages"][1]["content"] = json!("changed answer");
+        assert_ne!(
+            base.map(|(h, _)| h),
+            c.prompt_hash(&earlier_differs, "gpt-4o").map(|(h, _)| h)
+        );
+        // The token estimate spans the whole prefix, not one message.
+        let (_, tokens) = base.expect("marked prefix present");
+        let system_only_tokens = estimate_tokens("shared system", "gpt-4o");
+        assert!(
+            tokens >= system_only_tokens + 4,
+            "estimate {tokens} must cover system + prefix turns"
         );
     }
 
