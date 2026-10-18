@@ -191,13 +191,39 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
                     let prompt_side = rates.input.max(rates.cache_read).max(rates.audio)
                         + rates.cache_creation.max(rates.cache_creation_1h);
                     let output_side = rates.output.max(rates.reasoning) + rates.citation;
-                    // Search/citation buckets are additive to ordinary token spend.
-                    // Use an explicit hosted-tool maximum when supplied; otherwise
-                    // reserve at least one query for a search-priced model.
-                    let search_uses = ctx
+                    // Search/citation buckets are additive to ordinary token
+                    // spend, but only when a search will actually run. Two
+                    // families reserve unconditionally: providers whose
+                    // models search implicitly on every call (Perplexity
+                    // always; Groq's compound agents and Meta's muse models
+                    // execute hosted searches model-side without a tool
+                    // declaration), and OpenAI's `*-search-preview` models
+                    // (the search IS the product — no declaration needed).
+                    // Everything else — Anthropic's hosted web_search tool,
+                    // Gemini's grounding — searches only when declared: a
+                    // hosted web_search* tool (an explicit `max_uses` cap,
+                    // else one query) or OpenAI-style `web_search_options`.
+                    // A surprise search on a gated model still debits via the
+                    // settle delta, so the reservation stays a soft cap.
+                    let tools = ctx
                         .request_body
                         .get("tools")
-                        .and_then(serde_json::Value::as_array)
+                        .and_then(serde_json::Value::as_array);
+                    let declared_search = tools.is_some_and(|tools| {
+                        tools.iter().any(|tool| {
+                            tool.get("type")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|kind| kind.starts_with("web_search"))
+                        })
+                    }) || ctx
+                        .request_body
+                        .get("web_search_options")
+                        .is_some_and(|value| !value.is_null());
+                    let always_searches = table.is_some_and(|p| {
+                        matches!(p.provider.as_str(), "perplexity" | "groq" | "meta")
+                            || pricing_model.contains("search-preview")
+                    });
+                    let search_uses = tools
                         .into_iter()
                         .flatten()
                         .filter(|tool| {
@@ -207,8 +233,9 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
                         })
                         .filter_map(|tool| tool.get("max_uses").and_then(serde_json::Value::as_u64))
                         .max()
-                        .unwrap_or(1)
-                        .max(1);
+                        .map_or(u64::from(declared_search || always_searches), |max_uses| {
+                            max_uses.max(1)
+                        });
                     (
                         prompt_side,
                         output_side,
@@ -1319,6 +1346,79 @@ mod tests {
             hook.pre_call(&mut ctx).await.unwrap(),
             HookAction::Reject(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn search_reserves_follow_declaration_and_always_on_families() {
+        // Declaration-gated cards (Anthropic's hosted web_search tool) reserve
+        // only when search is requested: a plain no-tool call carries no
+        // query fee. Always-on families keep their unconditional one-query
+        // floor — Groq's compound agents search model-side with no
+        // declaration (pinned end-to-end by the executed browser.actions
+        // billing e2e), and OpenAI's *-search-preview models search on every
+        // call by design.
+        let mut plain = CallContext::for_test("anthropic/claude-sonnet-4-5");
+        let _ = plain.token_estimate.set(10);
+        plain.request_body = Arc::new(serde_json::json!({"max_tokens":10}));
+        let plain_estimate = estimate_max_request_cost(&plain).await;
+        // Same model with a declared hosted search: the reservation must
+        // exceed the plain one by at least one full query fee — proving the
+        // no-tool estimate carries no search component. (The estimate's
+        // token side legitimately uses worst-case cache/reasoning rates, so
+        // an absolute calculate_cost comparison is not meaningful here.)
+        plain.request_body =
+            Arc::new(serde_json::json!({"max_tokens":10, "web_search_options": {}}));
+        let declared_estimate = estimate_max_request_cost(&plain).await;
+        assert!(
+            declared_estimate - plain_estimate >= 0.01 - 1e-12,
+            "no-tool reservation must not carry a search fee: plain={plain_estimate} declared={declared_estimate}"
+        );
+
+        for (model, body) in [
+            // Declared hosted search with an explicit cap reserves the cap.
+            (
+                "anthropic/claude-sonnet-4-5",
+                serde_json::json!({"max_tokens":10, "tools":[{"type":"web_search_20250305","max_uses":3}]}),
+            ),
+            // Declared without a cap: one query.
+            (
+                "anthropic/claude-sonnet-4-5",
+                serde_json::json!({"max_tokens":10, "tools":[{"type":"web_search"}]}),
+            ),
+            // OpenAI-style tool-less opt-in requests hosted search.
+            (
+                "anthropic/claude-sonnet-4-5",
+                serde_json::json!({"max_tokens":10, "web_search_options":{}}),
+            ),
+            // Always-on families reserve with no declaration at all.
+            (
+                "groq/openai/gpt-oss-120b",
+                serde_json::json!({"max_tokens":10}),
+            ),
+            ("perplexity/sonar", serde_json::json!({"max_tokens":10})),
+            (
+                "gpt-4o-mini-search-preview",
+                serde_json::json!({"max_tokens":10}),
+            ),
+        ] {
+            let mut ctx = CallContext::for_test(model);
+            let _ = ctx.token_estimate.set(10);
+            ctx.request_body = Arc::new(body);
+            let estimate = estimate_max_request_cost(&ctx).await;
+            let base = oxllm_core::calculate_cost(
+                model,
+                &UsageSummary {
+                    prompt_tokens: 10,
+                    completion_tokens: 10,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert!(
+                estimate > base + 1e-12,
+                "{model} must reserve a search fee: {estimate} vs {base}"
+            );
+        }
     }
 
     #[tokio::test]
