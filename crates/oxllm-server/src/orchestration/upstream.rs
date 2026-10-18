@@ -21,7 +21,7 @@ use super::outcomes::{
 };
 use crate::bedrock_sigv4::sign_request as sign_bedrock_request;
 use crate::error::ApiError;
-use crate::pre_call_checks::prompt_caching::{PIN_TTL, PromptCacheWire, pin_ttl_for_native_body};
+use crate::pre_call_checks::prompt_caching::{PIN_TTL, pin_ttl_for_native_body};
 use crate::security::MAX_ERROR_BODY_BYTES;
 use crate::state::AppState;
 

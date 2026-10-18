@@ -469,7 +469,7 @@ fn message_has_cache_mark(message: &Value) -> bool {
 fn prompt_prefix(body: &Value) -> Option<(String, String)> {
     let messages = body.get("messages")?.as_array()?;
     let tools = body.get("tools");
-    let last_marked = messages.iter().rposition(|m| message_has_cache_mark(m));
+    let last_marked = messages.iter().rposition(message_has_cache_mark);
     let system_marked = body.get("system").is_some_and(|system| match system {
         Value::Array(blocks) => blocks.iter().any(has_cache_mark),
         other => has_cache_mark(other),
@@ -479,7 +479,7 @@ fn prompt_prefix(body: &Value) -> Option<(String, String)> {
             has_cache_mark(def)
                 || def
                     .get("function")
-                    .is_some_and(|function| has_cache_mark(function))
+                    .is_some_and(has_cache_mark)
         })
     });
 
