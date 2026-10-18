@@ -192,6 +192,69 @@ fn sonnet_55_batch_cost_covers_every_published_bucket() {
 }
 
 #[test]
+fn backfilled_batch_keys_bill_published_half_rates_end_to_end() {
+    // Shard `_batches` keys backfilled from the reference catalog
+    // (scripts/backfill_tiers.py --service-only) must change the billed
+    // amount, not just parse: Anthropic and Vertex both publish batch at
+    // exactly half the standard buckets, audio included.
+    let anthropic_usage = UsageSummary {
+        prompt_tokens: 1_000,
+        completion_tokens: 100,
+        ..Default::default()
+    };
+    let standard = calculate_cost_for_service_tier(
+        "claude-sonnet-4-5",
+        &anthropic_usage,
+        None,
+        "anthropic",
+        None,
+    )
+    .expect("standard sonnet cost");
+    let batch = calculate_cost_for_service_tier(
+        "claude-sonnet-4-5",
+        &anthropic_usage,
+        None,
+        "anthropic",
+        Some("batches"),
+    )
+    .expect("batch sonnet cost");
+    assert!(
+        (standard - (1_000.0 * 3e-6 + 100.0 * 1.5e-5)).abs() < 1e-12,
+        "standard {standard}"
+    );
+    assert!(
+        (batch - (1_000.0 * 1.5e-6 + 100.0 * 7.5e-6)).abs() < 1e-12,
+        "batch {batch}"
+    );
+
+    // Vertex audio batch (5e-7) must come from the inserted
+    // `input_cost_per_audio_token_batches` key while token buckets use the
+    // complete batches set — a partial batches entry inheriting standard
+    // token rates would bill standard, not half. gemini-2.0-flash has no
+    // flex pricing, so its batches entry stands alone (flex-priced Google
+    // models keep resolving batch through flex instead).
+    let vertex_usage = UsageSummary {
+        prompt_tokens: 1_000,
+        completion_tokens: 100,
+        audio_input_tokens: Some(200),
+        ..Default::default()
+    };
+    let batch = calculate_cost_for_service_tier(
+        "vertex_ai/gemini-2.0-flash",
+        &vertex_usage,
+        None,
+        "vertex_ai",
+        Some("batches"),
+    )
+    .expect("batch vertex cost");
+    let expected = 800.0 * 7.5e-8 + 200.0 * 5e-7 + 100.0 * 3e-7;
+    assert!(
+        (batch - expected).abs() < 1e-12,
+        "vertex batch {batch}, expected {expected}"
+    );
+}
+
+#[test]
 fn haiku_55_batch_cost_uses_provider_specific_context_and_cache_prices() {
     // LiteLLM f824d11a22: only Anthropic publishes >100k batch rates; Vertex
     // publishes flat batch rates. Both retain standard 1h write context prices.

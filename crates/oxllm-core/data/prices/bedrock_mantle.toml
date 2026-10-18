@@ -133,6 +133,8 @@ cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 1.250000e-6
 cache_creation_input_token_cost_above_1hr = 2.000000e-6
 prompt_cache_min_tokens = 4096
+input_cost_per_token_batches = 5.000000e-7
+output_cost_per_token_batches = 2.500000e-6
 ["bedrock_mantle/anthropic.claude-haiku-5-5"]
 input_cost_per_token = 1.100000e-7
 output_cost_per_token = 5.500000e-7

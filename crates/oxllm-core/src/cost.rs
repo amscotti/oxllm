@@ -1447,16 +1447,47 @@ mod tests {
 
     #[test]
     fn perplexity_sonar_bills_search_queries() {
+        // Perplexity prices search per request by context size
+        // (low/medium/high); the flat shard rate is the low price the
+        // provider publishes ($5 per 1k requests) and the rate the
+        // reference bills at — the previous 8e-3 took the medium rung
+        // and overcharged every search by $0.003.
         let mut u = usage(100, 50);
         u.web_search_requests = Some(3);
         let cost = calculate_cost("perplexity/sonar", &u).expect("sonar priced");
         let token_cost = 100.0 * 1e-6 + 50.0 * 1e-6;
-        let search_cost = 3.0 * 0.008;
+        let search_cost = 3.0 * 0.005;
         assert!(
             (cost - (token_cost + search_cost)).abs() < 1e-9,
             "got {cost}, expected {}",
             token_cost + search_cost
         );
+    }
+
+    #[test]
+    fn perplexity_sonar_family_bills_published_low_search_rates() {
+        for (model, input, output, per_query) in [
+            ("perplexity/sonar", 1e-6, 1e-6, 0.005),
+            ("perplexity/sonar-reasoning", 1e-6, 5e-6, 0.005),
+            ("perplexity/sonar-pro", 3e-6, 1.5e-5, 0.006),
+            ("perplexity/sonar-reasoning-pro", 2e-6, 8e-6, 0.006),
+            ("perplexity/sonar-deep-research", 2e-6, 8e-6, 0.005),
+        ] {
+            let mut u = usage(100, 50);
+            u.web_search_requests = Some(2);
+            let cost = calculate_cost(model, &u).expect("sonar family priced");
+            let base = calculate_cost(model, &usage(100, 50)).expect("sonar family priced");
+            assert!(
+                ((cost - base) - 2.0 * per_query).abs() < 1e-12,
+                "{model}: search delta {} != {}",
+                cost - base,
+                2.0 * per_query
+            );
+            assert!(
+                (base - (100.0 * input + 50.0 * output)).abs() < 1e-9,
+                "{model}: token base {base}"
+            );
+        }
     }
 
     #[test]

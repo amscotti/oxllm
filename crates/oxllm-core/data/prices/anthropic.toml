@@ -65,6 +65,10 @@ cache_creation_input_token_cost = 1.250000e-5
 cache_creation_input_token_cost_above_1hr = 2.000000e-5
 prompt_cache_min_tokens = 512
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 6.250000e-6
+cache_read_input_token_cost_batches = 5.000000e-7
+input_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_batches = 2.500000e-5
 
 [claude-haiku-4-5]
 input_cost_per_token = 1.000000e-6
@@ -75,6 +79,10 @@ cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 1.250000e-6
 cache_creation_input_token_cost_above_1hr = 2.000000e-6
 prompt_cache_min_tokens = 4096
+cache_creation_input_token_cost_batches = 6.250000e-7
+cache_read_input_token_cost_batches = 5.000000e-8
+input_cost_per_token_batches = 5.000000e-7
+output_cost_per_token_batches = 2.500000e-6
 
 [claude-haiku-4-5-20251001]
 input_cost_per_token = 1.000000e-6
@@ -85,6 +93,10 @@ cache_read_input_token_cost = 1.000000e-7
 cache_creation_input_token_cost = 1.250000e-6
 cache_creation_input_token_cost_above_1hr = 2.000000e-6
 prompt_cache_min_tokens = 4096
+cache_creation_input_token_cost_batches = 6.250000e-7
+cache_read_input_token_cost_batches = 5.000000e-8
+input_cost_per_token_batches = 5.000000e-7
+output_cost_per_token_batches = 2.500000e-6
 
 [claude-opus-4-1]
 input_cost_per_token = 1.500000e-5
@@ -126,6 +138,10 @@ cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 4096
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 3.125000e-6
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 [claude-opus-4-5-20251101]
 input_cost_per_token = 5.000000e-6
@@ -137,6 +153,10 @@ cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 4096
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 3.125000e-6
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 [claude-opus-4-6]
 input_cost_per_token = 5.000000e-6
@@ -148,6 +168,10 @@ cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 4096
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 3.125000e-6
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 [claude-opus-4-6-20260205]
 input_cost_per_token = 5.000000e-6
@@ -159,6 +183,10 @@ cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 4096
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 3.125000e-6
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 [claude-opus-4-7]
 input_cost_per_token = 5.000000e-6
@@ -170,6 +198,10 @@ cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 2048
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 3.125000e-6
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 [claude-opus-4-7-20260416]
 input_cost_per_token = 5.000000e-6
@@ -181,6 +213,10 @@ cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 2048
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 3.125000e-6
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 [claude-opus-4-8]
 input_cost_per_token = 5.000000e-6
@@ -192,6 +228,10 @@ cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 1024
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 3.125000e-6
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 ["claude-opus-5"]
 input_cost_per_token = 5.000000e-6
@@ -203,6 +243,10 @@ cache_creation_input_token_cost = 6.250000e-6
 cache_creation_input_token_cost_above_1hr = 1.000000e-5
 prompt_cache_min_tokens = 512
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 3.125000e-6
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 [claude-sonnet-4-20250514]
 input_cost_per_token = 3.000000e-6
@@ -228,6 +272,10 @@ cache_creation_input_token_cost = 3.750000e-6
 cache_creation_input_token_cost_above_1hr = 6.000000e-6
 prompt_cache_min_tokens = 1024
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 1.875000e-6
+cache_read_input_token_cost_batches = 1.500000e-7
+input_cost_per_token_batches = 1.500000e-6
+output_cost_per_token_batches = 7.500000e-6
 
 ["claude-sonnet-4-5-20250929"]
 input_cost_per_token = 3.000000e-6
@@ -239,6 +287,10 @@ cache_creation_input_token_cost = 3.750000e-6
 cache_creation_input_token_cost_above_1hr = 6.000000e-6
 prompt_cache_min_tokens = 1024
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 1.875000e-6
+cache_read_input_token_cost_batches = 1.500000e-7
+input_cost_per_token_batches = 1.500000e-6
+output_cost_per_token_batches = 7.500000e-6
 
 ["claude-sonnet-4-6"]
 input_cost_per_token = 3.000000e-6
@@ -250,6 +302,10 @@ cache_creation_input_token_cost = 3.750000e-6
 cache_creation_input_token_cost_above_1hr = 6.000000e-6
 prompt_cache_min_tokens = 1024
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 1.875000e-6
+cache_read_input_token_cost_batches = 1.500000e-7
+input_cost_per_token_batches = 1.500000e-6
+output_cost_per_token_batches = 7.500000e-6
 
 [claude-sonnet-5]
 input_cost_per_token = 2.000000e-6
@@ -261,6 +317,10 @@ cache_creation_input_token_cost = 2.500000e-6
 cache_creation_input_token_cost_above_1hr = 4.000000e-6
 prompt_cache_min_tokens = 1024
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 1.250000e-6
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 5.000000e-6
 ["claude-fable-5-1"]
 input_cost_per_token = 1.000000e-5
 output_cost_per_token = 5.000000e-5
@@ -271,6 +331,10 @@ cache_creation_input_token_cost = 1.250000e-5
 cache_creation_input_token_cost_above_1hr = 2.000000e-5
 prompt_cache_min_tokens = 512
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 6.250000e-6
+cache_read_input_token_cost_batches = 1.250000e-7
+input_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_batches = 2.500000e-5
 
 ["claude-mythos-5"]
 input_cost_per_token = 1.000000e-5
@@ -282,6 +346,10 @@ cache_creation_input_token_cost = 1.250000e-5
 cache_creation_input_token_cost_above_1hr = 2.000000e-5
 prompt_cache_min_tokens = 512
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 6.250000e-6
+cache_read_input_token_cost_batches = 5.000000e-7
+input_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_batches = 2.500000e-5
 
 ["claude-mythos-5-1"]
 input_cost_per_token = 1.000000e-5
@@ -293,6 +361,10 @@ cache_creation_input_token_cost = 1.250000e-5
 cache_creation_input_token_cost_above_1hr = 2.000000e-5
 prompt_cache_min_tokens = 512
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 6.250000e-6
+cache_read_input_token_cost_batches = 1.250000e-7
+input_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_batches = 2.500000e-5
 
 ["claude-mythos-preview"]
 input_cost_per_token = 1.000000e-5
@@ -315,6 +387,10 @@ cache_creation_input_token_cost = 5.000000e-6
 cache_creation_input_token_cost_above_1hr = 8.000000e-6
 prompt_cache_min_tokens = 512
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 2.500000e-6
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_batches = 2.000000e-6
+output_cost_per_token_batches = 1.000000e-5
 
 ["claude-sonnet-5-5"]
 input_cost_per_token = 2.000000e-6

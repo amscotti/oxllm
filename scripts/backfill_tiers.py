@@ -1,12 +1,28 @@
 #!/usr/bin/env python3
-"""Backfill context-tier keys in oxllm price shards from a local catalog.
+"""Backfill context-tier and service-tier keys in oxllm price shards.
 
 Reads a JSON price map, finds every model row shipped in an
 oxllm shard that is missing TIER_BASE_FIELDS tier keys, and inserts them
 verbatim (glued to the end of the row block). Also writes a pinned JSON
 snapshot of the tier keys for the CI parity test in cost.rs.
 
-Run: python3 scripts/backfill_tiers.py <path-to-model-prices.json>
+With --service-only, backfills just the service-tier suffixed keys
+(`_batches`, `_flex`, `_priority`, ...) that cost/service_tiers.rs
+consumes, and leaves context tiers and the snapshot untouched. A key is
+inserted only when the row's base input rate matches the catalog (so a
+renamed/repriced row is never silently tiered from a different model),
+when the key normalizes to a consumed base field (mirroring
+`price_field` in service_tiers.rs), and when the curated
+service_tiers.toml overlay does not already price that (tier, field).
+For gemini/vertex_ai models already flex-priced (shard `_flex` keys or
+the overlay), `_batches` keys are skipped as a whole tier: batch
+resolution falls back to flex there (Google publishes identical
+Flex/Batch prices, and the curated flex entries carry long-context
+rates the catalog omits), while a flat catalog batches entry would
+shadow that fallback and lose the long-context buckets. Google models
+with no flex coverage get the complete batches set.
+
+Run: python3 scripts/backfill_tiers.py [--service-only] <path-to-model-prices.json>
 """
 
 import glob
@@ -23,6 +39,12 @@ TIER_BASE_FIELDS = (
     "cache_creation_input_token_cost_above_1hr",
 )
 SERVICE_SUFFIXES = ("_priority", "_flex", "_fast", "_ultrafast", "_balanced", "_batches")
+SERVICE_TIERS = tuple(s[1:] for s in SERVICE_SUFFIXES)
+# Bases service_tiers.rs `price_field` consumes (TIER_BASE_FIELDS + these two).
+SERVICE_BASE_FIELDS = TIER_BASE_FIELDS + (
+    "input_cost_per_audio_token",
+    "output_cost_per_reasoning_token",
+)
 
 
 def fmt(v: float) -> str:
@@ -63,12 +85,87 @@ def std_tier_entries(v):
     return out
 
 
+def normalized_price_key(key, tier):
+    """Mirror service_tiers.rs: strip `_{tier}` suffix, or rewrite
+    `_{tier}_above_` to `_above_`; valid only for consumed base fields
+    (including their `_above_<N>k_tokens` threshold forms)."""
+    suffix = f"_{tier}"
+    if key.endswith(suffix):
+        normalized = key[: -len(suffix)]
+    elif f"{suffix}_above_" in key:
+        normalized = key.replace(f"{suffix}_above_", "_above_")
+    else:
+        return None
+    if normalized in SERVICE_BASE_FIELDS:
+        return normalized
+    if "_above_" in normalized:
+        base = normalized.rsplit("_above_", 1)[0]
+        if base in SERVICE_BASE_FIELDS and parse_threshold(normalized) is not None:
+            return normalized
+    return None
+
+
+def overlay_coverage(shard_dir):
+    """(model, tier, normalized field) priced by service_tiers.toml."""
+    covered = set()
+    path = os.path.join(shard_dir, "service_tiers.toml")
+    with open(path, "rb") as f:
+        overlay = tomllib.load(f)
+    for name, vals in overlay.items():
+        names = [name, *vals.get("aliases", [])]
+        for tier in SERVICE_TIERS:
+            body = vals.get(tier)
+            if isinstance(body, dict):
+                for n in names:
+                    for field in body:
+                        covered.add((n, tier, field))
+    return covered
+
+
+def service_tier_entries(slug, model, catalog_row, shard_row, covered):
+    """Catalog service-tier keys to insert for one shard row, as
+    (key, value) sorted by key. Empty unless base input rates agree."""
+    shard_in = shard_row.get("input_cost_per_token")
+    cat_in = catalog_row.get("input_cost_per_token")
+    if not isinstance(shard_in, (int, float)) or not isinstance(cat_in, (int, float)):
+        return []
+    if abs(float(shard_in) - float(cat_in)) > 1e-15:
+        return []
+    google_flex_priced = slug in {"gemini", "vertex_ai"} and (
+        any(normalized_price_key(k, "flex") == "input_cost_per_token" for k in shard_row)
+        or (model, "flex", "input_cost_per_token") in covered
+    )
+    out = []
+    for key, val in catalog_row.items():
+        if not isinstance(val, (int, float)) or key in shard_row:
+            continue
+        hit = None
+        for tier in SERVICE_TIERS:
+            normalized = normalized_price_key(key, tier)
+            if normalized is not None:
+                hit = (tier, normalized)
+                break
+        if hit is None:
+            continue
+        tier, normalized = hit
+        if (model, tier, normalized) in covered:
+            continue
+        if tier == "batches" and google_flex_priced:
+            continue
+        out.append((key, val))
+    out.sort()
+    return out
+
+
 def main():
-    catalog_path = sys.argv[1]
+    args = [a for a in sys.argv[1:] if a != "--service-only"]
+    service_only = len(args) != len(sys.argv[1:])
+    catalog_path = args[0]
     with open(catalog_path) as f:
         catalog = json.load(f)
 
     shard_dir = "crates/oxllm-core/data/prices"
+    covered = overlay_coverage(shard_dir)
     snapshot = {}
 
     for path in sorted(glob.glob(os.path.join(shard_dir, "*.toml"))):
@@ -83,8 +180,11 @@ def main():
         for model in table:
             if model not in catalog:
                 continue
-            entries = std_tier_entries(catalog[model])
-            if not entries:
+            entries = [] if service_only else std_tier_entries(catalog[model])
+            svc_entries = service_tier_entries(
+                slug, model, catalog[model], table[model], covered
+            )
+            if not entries and not svc_entries:
                 continue
             existing = set(k for k in table[model] if "_above_" in k)
             to_add = [(k, t, v) for (k, t, v) in entries if k not in existing]
@@ -108,8 +208,11 @@ def main():
                 if lines[i].strip():
                     last_content = i
             new_lines = [f"{k} = {fmt(v)}" for (k, t, v) in to_add]
+            new_lines += [f"{k} = {fmt(v)}" for (k, v) in svc_entries]
             if new_lines:
                 inserts.setdefault(last_content + 1, []).extend(new_lines)
+            if service_only:
+                continue
             snapshot.setdefault(model, {})
             for k, t, v in entries:
                 snapshot[model][k] = v
@@ -131,6 +234,9 @@ def main():
             f.write(text)
         print(f"patched {slug}: {sum(len(v) for v in inserts.values())} tier lines")
 
+    if service_only:
+        print("service-only run: snapshot untouched")
+        return
     snap_path = os.path.join(shard_dir, "context_tiers_snapshot.json")
     with open(snap_path, "w") as f:
         json.dump(snapshot, f, indent=2, sort_keys=True)

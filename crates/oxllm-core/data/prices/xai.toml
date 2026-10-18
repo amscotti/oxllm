@@ -230,6 +230,12 @@ max_output_tokens = 1000000
 cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
 input_cost_per_token_above_200k_tokens = 2.5000000000e-6
 output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.20-0309-reasoning"]
 input_cost_per_token = 1.2500000000e-6
@@ -240,6 +246,12 @@ max_output_tokens = 1000000
 cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
 input_cost_per_token_above_200k_tokens = 2.5000000000e-6
 output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.20-beta-0309-non-reasoning"]
 input_cost_per_token = 1.2500000000e-6
@@ -270,6 +282,12 @@ max_output_tokens = 1000000
 cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
 input_cost_per_token_above_200k_tokens = 2.5000000000e-6
 output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.20-multi-agent-beta-0309"]
 input_cost_per_token = 1.2500000000e-6
@@ -290,6 +308,12 @@ max_output_tokens = 1000000
 cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
 input_cost_per_token_above_200k_tokens = 2.5000000000e-6
 output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.3-latest"]
 input_cost_per_token = 1.2500000000e-6
@@ -300,6 +324,12 @@ max_output_tokens = 1000000
 cache_read_input_token_cost_above_200k_tokens = 4.0000000000e-7
 input_cost_per_token_above_200k_tokens = 2.5000000000e-6
 output_cost_per_token_above_200k_tokens = 5.0000000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.5"]
 input_cost_per_token = 2.0000000000e-6
@@ -382,6 +412,12 @@ cache_read_input_token_cost = 2.000000e-7
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
 output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.20-0309"]
 input_cost_per_token = 1.250000e-6
@@ -392,6 +428,12 @@ cache_read_input_token_cost = 2.000000e-7
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
 output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.20-beta"]
 input_cost_per_token = 1.250000e-6
@@ -532,6 +574,12 @@ cache_read_input_token_cost = 2.000000e-7
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
 output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.20-non-reasoning-gv2"]
 input_cost_per_token = 1.250000e-6
@@ -552,6 +600,12 @@ cache_read_input_token_cost = 2.000000e-7
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
 output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.20-reasoning"]
 input_cost_per_token = 1.250000e-6
@@ -562,6 +616,12 @@ cache_read_input_token_cost = 2.000000e-7
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
 output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.20-reasoning-gv2"]
 input_cost_per_token = 1.250000e-6
@@ -582,6 +642,12 @@ cache_read_input_token_cost = 2.000000e-7
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
 output_cost_per_token_above_200k_tokens = 5.000000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-4.7"]
 input_cost_per_token = 2.000000e-6
@@ -624,6 +690,12 @@ cache_read_input_token_cost = 2.000000e-7
 output_cost_per_token_above_200k_tokens = 5.000000e-6
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-imagine-video-1.5-lite"]
 input_cost_per_token = 0.0
@@ -674,6 +746,12 @@ cache_read_input_token_cost = 2.000000e-7
 output_cost_per_token_above_200k_tokens = 5.000000e-6
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
+cache_read_input_token_cost_above_200k_tokens_batches = 3.200000e-7
+cache_read_input_token_cost_batches = 1.600000e-7
+input_cost_per_token_above_200k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_200k_tokens_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["xai/grok-voice-latest"]
 mode = "realtime"

@@ -32,6 +32,8 @@ output_cost_per_token = 1.100000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.375000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/eu/gpt-4o-2024-11-20"]
 input_cost_per_token = 2.750000e-6
@@ -40,6 +42,8 @@ max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.375000e-6
 cache_creation_input_token_cost = 1.380000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/eu/gpt-4o-mini-2024-07-18"]
 input_cost_per_token = 1.650000e-7
@@ -47,6 +51,7 @@ output_cost_per_token = 6.600000e-7
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 8.300000e-8
+input_cost_per_token_batches = 8.300000e-8
 
 ["azure/eu/gpt-4o-mini-realtime-preview-2024-12-17"]
 input_cost_per_token = 6.600000e-7
@@ -79,6 +84,9 @@ output_cost_per_token = 1.100000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.375000e-7
+cache_read_input_token_cost_batches = 6.875000e-8
+input_cost_per_token_batches = 6.875000e-7
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/eu/gpt-5-mini-2025-08-07"]
 input_cost_per_token = 2.750000e-7
@@ -86,6 +94,9 @@ output_cost_per_token = 2.200000e-6
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.750000e-8
+cache_read_input_token_cost_batches = 1.375000e-8
+input_cost_per_token_batches = 1.375000e-7
+output_cost_per_token_batches = 1.100000e-6
 
 ["azure/eu/gpt-5-nano-2025-08-07"]
 input_cost_per_token = 5.500000e-8
@@ -93,6 +104,9 @@ output_cost_per_token = 4.400000e-7
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 5.500000e-9
+cache_read_input_token_cost_batches = 2.750000e-9
+input_cost_per_token_batches = 2.750000e-8
+output_cost_per_token_batches = 2.200000e-7
 
 ["azure/eu/gpt-5.1"]
 input_cost_per_token = 1.375000e-6
@@ -100,6 +114,9 @@ output_cost_per_token = 1.100000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.375000e-7
+cache_read_input_token_cost_batches = 6.875000e-8
+input_cost_per_token_batches = 6.875000e-7
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/eu/gpt-5.1-chat"]
 input_cost_per_token = 1.375000e-6
@@ -131,6 +148,12 @@ cache_read_input_token_cost = 2.750000e-7
 cache_read_input_token_cost_above_272k_tokens = 5.500000e-7
 input_cost_per_token_above_272k_tokens = 5.500000e-6
 output_cost_per_token_above_272k_tokens = 2.475000e-5
+cache_read_input_token_cost_above_272k_tokens_batches = 2.750000e-7
+cache_read_input_token_cost_batches = 1.430000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.750000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.237500e-5
+output_cost_per_token_batches = 8.250000e-6
 
 ["azure/eu/gpt-5.4-2026-03-05"]
 input_cost_per_token = 2.750000e-6
@@ -141,6 +164,12 @@ cache_read_input_token_cost = 2.750000e-7
 cache_read_input_token_cost_above_272k_tokens = 5.500000e-7
 input_cost_per_token_above_272k_tokens = 5.500000e-6
 output_cost_per_token_above_272k_tokens = 2.475000e-5
+cache_read_input_token_cost_above_272k_tokens_batches = 2.750000e-7
+cache_read_input_token_cost_batches = 1.430000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.750000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.237500e-5
+output_cost_per_token_batches = 8.250000e-6
 
 ["azure/eu/gpt-5.5"]
 input_cost_per_token = 5.500000e-6
@@ -152,6 +181,12 @@ input_cost_per_token_above_272k_tokens = 1.100000e-5
 output_cost_per_token_above_272k_tokens = 4.950000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.100000e-6
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.500000e-7
+cache_read_input_token_cost_batches = 2.750000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.500000e-6
+input_cost_per_token_batches = 2.750000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.475000e-5
+output_cost_per_token_batches = 1.650000e-5
 
 ["azure/eu/gpt-5.5-2026-04-23"]
 input_cost_per_token = 5.500000e-6
@@ -163,6 +198,12 @@ input_cost_per_token_above_272k_tokens = 1.100000e-5
 output_cost_per_token_above_272k_tokens = 4.950000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.100000e-6
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.500000e-7
+cache_read_input_token_cost_batches = 2.750000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.500000e-6
+input_cost_per_token_batches = 2.750000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.475000e-5
+output_cost_per_token_batches = 1.650000e-5
 
 ["azure/eu/gpt-5.6"]
 input_cost_per_token = 4.400000e-6
@@ -222,6 +263,8 @@ output_cost_per_token = 6.600000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 8.250000e-6
+input_cost_per_token_batches = 8.250000e-6
+output_cost_per_token_batches = 3.300000e-5
 
 ["azure/eu/o1-mini-2024-09-12"]
 input_cost_per_token = 1.210000e-6
@@ -229,6 +272,8 @@ output_cost_per_token = 4.840000e-6
 max_input_tokens = 128000
 max_output_tokens = 65536
 cache_read_input_token_cost = 6.050000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
 
 ["azure/eu/o1-preview-2024-09-12"]
 input_cost_per_token = 1.650000e-5
@@ -243,6 +288,8 @@ output_cost_per_token = 4.840000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 6.050000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
 
 ["azure/global-standard/gpt-4o-2024-08-06"]
 input_cost_per_token = 2.500000e-6
@@ -250,6 +297,8 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.250000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/global-standard/gpt-4o-2024-11-20"]
 input_cost_per_token = 2.500000e-6
@@ -257,6 +306,8 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.250000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/global-standard/gpt-4o-mini"]
 input_cost_per_token = 1.500000e-7
@@ -270,6 +321,8 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.250000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/global/gpt-4o-2024-11-20"]
 input_cost_per_token = 2.500000e-6
@@ -277,6 +330,8 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.250000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/global/gpt-5.1"]
 input_cost_per_token = 1.250000e-6
@@ -284,6 +339,9 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/global/gpt-5.1-chat"]
 input_cost_per_token = 1.250000e-6
@@ -423,6 +481,8 @@ output_cost_per_token = 8.000000e-6
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-7
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 4.000000e-6
 
 ["azure/gpt-4.1-2025-04-14"]
 input_cost_per_token = 2.000000e-6
@@ -430,6 +490,8 @@ output_cost_per_token = 8.000000e-6
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-7
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 4.000000e-6
 
 ["azure/gpt-4.1-mini"]
 input_cost_per_token = 4.000000e-7
@@ -437,6 +499,8 @@ output_cost_per_token = 1.600000e-6
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.000000e-7
+input_cost_per_token_batches = 2.000000e-7
+output_cost_per_token_batches = 8.000000e-7
 
 ["azure/gpt-4.1-mini-2025-04-14"]
 input_cost_per_token = 4.000000e-7
@@ -444,6 +508,8 @@ output_cost_per_token = 1.600000e-6
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.000000e-7
+input_cost_per_token_batches = 2.000000e-7
+output_cost_per_token_batches = 8.000000e-7
 
 ["azure/gpt-4.1-nano"]
 input_cost_per_token = 1.000000e-7
@@ -451,6 +517,8 @@ output_cost_per_token = 4.000000e-7
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 2.500000e-8
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 2.000000e-7
 
 ["azure/gpt-4.1-nano-2025-04-14"]
 input_cost_per_token = 1.000000e-7
@@ -458,6 +526,8 @@ output_cost_per_token = 4.000000e-7
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 2.500000e-8
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 2.000000e-7
 
 ["azure/gpt-4.5-preview"]
 input_cost_per_token = 7.500000e-5
@@ -465,6 +535,8 @@ output_cost_per_token = 0.00015
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 3.750000e-5
+input_cost_per_token_batches = 3.750000e-5
+output_cost_per_token_batches = 7.500000e-5
 
 ["azure/gpt-4o"]
 input_cost_per_token = 2.500000e-6
@@ -478,6 +550,8 @@ input_cost_per_token = 5.000000e-6
 output_cost_per_token = 1.500000e-5
 max_input_tokens = 128000
 max_output_tokens = 4096
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 7.500000e-6
 
 ["azure/gpt-4o-2024-08-06"]
 input_cost_per_token = 2.500000e-6
@@ -485,6 +559,8 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.250000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/gpt-4o-2024-11-20"]
 input_cost_per_token = 2.500000e-6
@@ -492,6 +568,8 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.250000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/gpt-4o-audio-preview-2024-12-17"]
 input_cost_per_token = 2.500000e-6
@@ -513,6 +591,8 @@ output_cost_per_token = 6.000000e-7
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 7.500000e-8
+input_cost_per_token_batches = 7.500000e-8
+output_cost_per_token_batches = 3.000000e-7
 
 ["azure/gpt-4o-mini-audio-preview-2024-12-17"]
 input_cost_per_token = 1.500000e-7
@@ -577,6 +657,9 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/gpt-5-2025-08-07"]
 input_cost_per_token = 1.250000e-6
@@ -584,6 +667,9 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/gpt-5-chat"]
 input_cost_per_token = 1.250000e-6
@@ -612,6 +698,9 @@ output_cost_per_token = 2.000000e-6
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.500000e-8
+cache_read_input_token_cost_batches = 1.250000e-8
+input_cost_per_token_batches = 1.250000e-7
+output_cost_per_token_batches = 1.000000e-6
 
 ["azure/gpt-5-mini-2025-08-07"]
 input_cost_per_token = 2.500000e-7
@@ -619,6 +708,9 @@ output_cost_per_token = 2.000000e-6
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.500000e-8
+cache_read_input_token_cost_batches = 1.250000e-8
+input_cost_per_token_batches = 1.250000e-7
+output_cost_per_token_batches = 1.000000e-6
 
 ["azure/gpt-5-nano"]
 input_cost_per_token = 5.000000e-8
@@ -626,6 +718,9 @@ output_cost_per_token = 4.000000e-7
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 5.000000e-9
+cache_read_input_token_cost_batches = 2.500000e-9
+input_cost_per_token_batches = 2.500000e-8
+output_cost_per_token_batches = 2.000000e-7
 
 ["azure/gpt-5-nano-2025-08-07"]
 input_cost_per_token = 5.000000e-8
@@ -633,12 +728,17 @@ output_cost_per_token = 4.000000e-7
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 5.000000e-9
+cache_read_input_token_cost_batches = 2.500000e-9
+input_cost_per_token_batches = 2.500000e-8
+output_cost_per_token_batches = 2.000000e-7
 
 ["azure/gpt-5-pro"]
 input_cost_per_token = 1.500000e-5
 output_cost_per_token = 0.00012
 max_input_tokens = 272000
 max_output_tokens = 128000
+input_cost_per_token_batches = 7.500000e-6
+output_cost_per_token_batches = 6.000000e-5
 
 ["azure/gpt-5.1"]
 input_cost_per_token = 1.250000e-6
@@ -646,6 +746,9 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/gpt-5.1-2025-11-13"]
 input_cost_per_token = 1.250000e-6
@@ -653,6 +756,9 @@ output_cost_per_token = 1.000000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/gpt-5.1-chat"]
 input_cost_per_token = 1.250000e-6
@@ -709,6 +815,9 @@ output_cost_per_token = 1.400000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.750000e-7
+cache_read_input_token_cost_batches = 8.750000e-8
+input_cost_per_token_batches = 8.750000e-7
+output_cost_per_token_batches = 7.000000e-6
 
 ["azure/gpt-5.2-2025-12-11"]
 input_cost_per_token = 1.750000e-6
@@ -716,6 +825,9 @@ output_cost_per_token = 1.400000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.750000e-7
+cache_read_input_token_cost_batches = 8.750000e-8
+input_cost_per_token_batches = 8.750000e-7
+output_cost_per_token_batches = 7.000000e-6
 
 ["azure/gpt-5.2-chat"]
 input_cost_per_token = 1.750000e-6
@@ -744,6 +856,8 @@ output_cost_per_token = 0.000168
 max_input_tokens = 272000
 max_output_tokens = 128000
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 1.050000e-5
+output_cost_per_token_batches = 8.400000e-5
 
 ["azure/gpt-5.2-pro-2025-12-11"]
 input_cost_per_token = 2.100000e-5
@@ -751,6 +865,8 @@ output_cost_per_token = 0.000168
 max_input_tokens = 272000
 max_output_tokens = 128000
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 1.050000e-5
+output_cost_per_token_batches = 8.400000e-5
 
 ["azure/gpt-5.3-chat"]
 input_cost_per_token = 1.750000e-6
@@ -775,6 +891,12 @@ cache_read_input_token_cost = 2.500000e-7
 input_cost_per_token_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 2.250000e-5
 cache_read_input_token_cost_above_272k_tokens = 5.000000e-7
+cache_read_input_token_cost_above_272k_tokens_batches = 2.500000e-7
+cache_read_input_token_cost_batches = 1.300000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.500000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.125000e-5
+output_cost_per_token_batches = 7.500000e-6
 
 ["azure/gpt-5.4-2026-03-05"]
 input_cost_per_token = 2.500000e-6
@@ -785,6 +907,12 @@ cache_read_input_token_cost = 2.500000e-7
 input_cost_per_token_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 2.250000e-5
 cache_read_input_token_cost_above_272k_tokens = 5.000000e-7
+cache_read_input_token_cost_above_272k_tokens_batches = 2.500000e-7
+cache_read_input_token_cost_batches = 1.300000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.500000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.125000e-5
+output_cost_per_token_batches = 7.500000e-6
 
 ["azure/gpt-5.4-mini"]
 input_cost_per_token = 7.500000e-7
@@ -793,6 +921,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 7.500000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 3.750000e-8
+input_cost_per_token_batches = 3.750000e-7
+output_cost_per_token_batches = 2.250000e-6
 
 ["azure/gpt-5.4-mini-2026-03-17"]
 input_cost_per_token = 7.500000e-7
@@ -801,6 +932,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 7.500000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 3.750000e-8
+input_cost_per_token_batches = 3.750000e-7
+output_cost_per_token_batches = 2.250000e-6
 
 ["azure/gpt-5.4-nano"]
 input_cost_per_token = 2.000000e-7
@@ -809,6 +943,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.000000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 1.000000e-8
+input_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_batches = 6.250000e-7
 
 ["azure/gpt-5.4-nano-2026-03-17"]
 input_cost_per_token = 2.000000e-7
@@ -817,6 +954,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.000000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 1.000000e-8
+input_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_batches = 6.250000e-7
 
 ["azure/gpt-5.4-pro"]
 input_cost_per_token = 3.000000e-5
@@ -828,6 +968,10 @@ input_cost_per_token_above_272k_tokens = 6.000000e-5
 output_cost_per_token_above_272k_tokens = 2.700000e-4
 cache_read_input_token_cost_above_272k_tokens = 6.000000e-6
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_above_272k_tokens_batches = 3.000000e-5
+input_cost_per_token_batches = 1.500000e-5
+output_cost_per_token_above_272k_tokens_batches = 1.350000e-4
+output_cost_per_token_batches = 9.000000e-5
 
 ["azure/gpt-5.4-pro-2026-03-05"]
 input_cost_per_token = 3.000000e-5
@@ -839,6 +983,10 @@ input_cost_per_token_above_272k_tokens = 6.000000e-5
 output_cost_per_token_above_272k_tokens = 2.700000e-4
 cache_read_input_token_cost_above_272k_tokens = 6.000000e-6
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_above_272k_tokens_batches = 3.000000e-5
+input_cost_per_token_batches = 1.500000e-5
+output_cost_per_token_above_272k_tokens_batches = 1.350000e-4
+output_cost_per_token_batches = 9.000000e-5
 
 ["azure/gpt-5.5"]
 input_cost_per_token = 5.000000e-6
@@ -850,6 +998,12 @@ input_cost_per_token_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 4.500000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.000000e-6
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.000000e-7
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.000000e-6
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.250000e-5
+output_cost_per_token_batches = 1.500000e-5
 
 ["azure/gpt-5.5-2026-04-23"]
 input_cost_per_token = 5.000000e-6
@@ -861,6 +1015,12 @@ input_cost_per_token_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 4.500000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.000000e-6
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.000000e-7
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.000000e-6
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.250000e-5
+output_cost_per_token_batches = 1.500000e-5
 
 ["azure/gpt-5.5-pro"]
 input_cost_per_token = 3.000000e-5
@@ -1017,6 +1177,8 @@ output_cost_per_token = 6.000000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 7.500000e-6
+input_cost_per_token_batches = 7.500000e-6
+output_cost_per_token_batches = 3.000000e-5
 
 ["azure/o1-mini"]
 input_cost_per_token = 1.100000e-6
@@ -1024,6 +1186,8 @@ output_cost_per_token = 4.400000e-6
 max_input_tokens = 128000
 max_output_tokens = 65536
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.200000e-6
 
 ["azure/o1-mini-2024-09-12"]
 input_cost_per_token = 1.100000e-6
@@ -1031,6 +1195,8 @@ output_cost_per_token = 4.400000e-6
 max_input_tokens = 128000
 max_output_tokens = 65536
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.200000e-6
 
 ["azure/o1-preview"]
 input_cost_per_token = 1.500000e-5
@@ -1059,6 +1225,8 @@ output_cost_per_token = 8.000000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 5.000000e-7
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 4.000000e-6
 
 ["azure/o3-deep-research"]
 input_cost_per_token = 1.000000e-5
@@ -1081,18 +1249,24 @@ output_cost_per_token = 4.400000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.200000e-6
 
 ["azure/o3-pro"]
 input_cost_per_token = 2.000000e-5
 output_cost_per_token = 8.000000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
+input_cost_per_token_batches = 1.000000e-5
+output_cost_per_token_batches = 4.000000e-5
 
 ["azure/o3-pro-2025-06-10"]
 input_cost_per_token = 2.000000e-5
 output_cost_per_token = 8.000000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
+input_cost_per_token_batches = 1.000000e-5
+output_cost_per_token_batches = 4.000000e-5
 
 ["azure/o4-mini"]
 input_cost_per_token = 1.100000e-6
@@ -1107,6 +1281,8 @@ output_cost_per_token = 4.400000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 2.750000e-7
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.200000e-6
 
 ["azure/text-embedding-3-large"]
 input_cost_per_token = 1.430000e-7
@@ -1129,6 +1305,8 @@ output_cost_per_token = 8.800000e-6
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 1.100000e-6
+output_cost_per_token_batches = 4.400000e-6
 
 ["azure/us/gpt-4.1-mini-2025-04-14"]
 input_cost_per_token = 4.400000e-7
@@ -1136,6 +1314,8 @@ output_cost_per_token = 1.760000e-6
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.100000e-7
+input_cost_per_token_batches = 2.200000e-7
+output_cost_per_token_batches = 8.800000e-7
 
 ["azure/us/gpt-4.1-nano-2025-04-14"]
 input_cost_per_token = 1.100000e-7
@@ -1143,6 +1323,8 @@ output_cost_per_token = 4.400000e-7
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 2.800000e-8
+input_cost_per_token_batches = 5.500000e-8
+output_cost_per_token_batches = 2.200000e-7
 
 ["azure/us/gpt-4o-2024-08-06"]
 input_cost_per_token = 2.750000e-6
@@ -1150,6 +1332,8 @@ output_cost_per_token = 1.100000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.375000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/us/gpt-4o-2024-11-20"]
 input_cost_per_token = 2.750000e-6
@@ -1158,6 +1342,8 @@ max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.375000e-6
 cache_creation_input_token_cost = 1.380000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/us/gpt-4o-mini-2024-07-18"]
 input_cost_per_token = 1.650000e-7
@@ -1165,6 +1351,7 @@ output_cost_per_token = 6.600000e-7
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 8.300000e-8
+input_cost_per_token_batches = 8.300000e-8
 
 ["azure/us/gpt-4o-mini-realtime-preview-2024-12-17"]
 input_cost_per_token = 6.600000e-7
@@ -1197,6 +1384,9 @@ output_cost_per_token = 1.100000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.375000e-7
+cache_read_input_token_cost_batches = 6.875000e-8
+input_cost_per_token_batches = 6.875000e-7
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/us/gpt-5-mini-2025-08-07"]
 input_cost_per_token = 2.750000e-7
@@ -1204,6 +1394,9 @@ output_cost_per_token = 2.200000e-6
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.750000e-8
+cache_read_input_token_cost_batches = 1.375000e-8
+input_cost_per_token_batches = 1.375000e-7
+output_cost_per_token_batches = 1.100000e-6
 
 ["azure/us/gpt-5-nano-2025-08-07"]
 input_cost_per_token = 5.500000e-8
@@ -1211,6 +1404,9 @@ output_cost_per_token = 4.400000e-7
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 5.500000e-9
+cache_read_input_token_cost_batches = 2.750000e-9
+input_cost_per_token_batches = 2.750000e-8
+output_cost_per_token_batches = 2.200000e-7
 
 ["azure/us/gpt-5.1"]
 input_cost_per_token = 1.375000e-6
@@ -1218,6 +1414,9 @@ output_cost_per_token = 1.100000e-5
 max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.375000e-7
+cache_read_input_token_cost_batches = 6.875000e-8
+input_cost_per_token_batches = 6.875000e-7
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/us/gpt-5.1-chat"]
 input_cost_per_token = 1.375000e-6
@@ -1249,6 +1448,12 @@ cache_read_input_token_cost = 2.750000e-7
 cache_read_input_token_cost_above_272k_tokens = 5.500000e-7
 input_cost_per_token_above_272k_tokens = 5.500000e-6
 output_cost_per_token_above_272k_tokens = 2.475000e-5
+cache_read_input_token_cost_above_272k_tokens_batches = 2.750000e-7
+cache_read_input_token_cost_batches = 1.430000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.750000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.237500e-5
+output_cost_per_token_batches = 8.250000e-6
 
 ["azure/us/gpt-5.4-2026-03-05"]
 input_cost_per_token = 2.750000e-6
@@ -1259,6 +1464,12 @@ cache_read_input_token_cost = 2.750000e-7
 cache_read_input_token_cost_above_272k_tokens = 5.500000e-7
 input_cost_per_token_above_272k_tokens = 5.500000e-6
 output_cost_per_token_above_272k_tokens = 2.475000e-5
+cache_read_input_token_cost_above_272k_tokens_batches = 2.750000e-7
+cache_read_input_token_cost_batches = 1.430000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.750000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.237500e-5
+output_cost_per_token_batches = 8.250000e-6
 
 ["azure/us/gpt-5.5"]
 input_cost_per_token = 5.500000e-6
@@ -1270,6 +1481,12 @@ input_cost_per_token_above_272k_tokens = 1.100000e-5
 output_cost_per_token_above_272k_tokens = 4.950000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.100000e-6
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.500000e-7
+cache_read_input_token_cost_batches = 2.750000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.500000e-6
+input_cost_per_token_batches = 2.750000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.475000e-5
+output_cost_per_token_batches = 1.650000e-5
 
 ["azure/us/gpt-5.5-2026-04-23"]
 input_cost_per_token = 5.500000e-6
@@ -1281,6 +1498,12 @@ input_cost_per_token_above_272k_tokens = 1.100000e-5
 output_cost_per_token_above_272k_tokens = 4.950000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.100000e-6
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.500000e-7
+cache_read_input_token_cost_batches = 2.750000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.500000e-6
+input_cost_per_token_batches = 2.750000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.475000e-5
+output_cost_per_token_batches = 1.650000e-5
 
 ["azure/us/gpt-5.6"]
 input_cost_per_token = 4.400000e-6
@@ -1340,6 +1563,8 @@ output_cost_per_token = 6.600000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 8.250000e-6
+input_cost_per_token_batches = 8.250000e-6
+output_cost_per_token_batches = 3.300000e-5
 
 ["azure/us/o1-mini-2024-09-12"]
 input_cost_per_token = 1.210000e-6
@@ -1347,6 +1572,8 @@ output_cost_per_token = 4.840000e-6
 max_input_tokens = 128000
 max_output_tokens = 65536
 cache_read_input_token_cost = 6.050000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
 
 ["azure/us/o1-preview-2024-09-12"]
 input_cost_per_token = 1.650000e-5
@@ -1361,6 +1588,8 @@ output_cost_per_token = 8.800000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 1.100000e-6
+output_cost_per_token_batches = 4.400000e-6
 
 ["azure/us/o3-mini-2025-01-31"]
 input_cost_per_token = 1.210000e-6
@@ -1368,6 +1597,8 @@ output_cost_per_token = 4.840000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 6.050000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
 
 ["azure/us/o4-mini-2025-04-16"]
 input_cost_per_token = 1.210000e-6
@@ -1375,6 +1606,8 @@ output_cost_per_token = 4.840000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 3.030000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
 
 ["azure_ai/Cohere-embed-v3-english"]
 input_cost_per_token = 1.000000e-7
@@ -1990,6 +2223,8 @@ input_cost_per_token = 4.000000e-7
 output_cost_per_token = 4.000000e-7
 max_input_tokens = 16384
 max_output_tokens = 4096
+input_cost_per_token_batches = 2.000000e-7
+output_cost_per_token_batches = 2.000000e-7
 
 [chatgpt-4o-latest]
 input_cost_per_token = 5.000000e-6
@@ -2015,24 +2250,32 @@ input_cost_per_token = 2.000000e-6
 output_cost_per_token = 2.000000e-6
 max_input_tokens = 16384
 max_output_tokens = 4096
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 1.000000e-6
 
 ["ft:babbage-002"]
 input_cost_per_token = 1.600000e-6
 output_cost_per_token = 1.600000e-6
 max_input_tokens = 16384
 max_output_tokens = 4096
+input_cost_per_token_batches = 8.000000e-7
+output_cost_per_token_batches = 9.000000e-7
 
 ["ft:davinci-002"]
 input_cost_per_token = 1.200000e-5
 output_cost_per_token = 1.200000e-5
 max_input_tokens = 16384
 max_output_tokens = 4096
+input_cost_per_token_batches = 6.000000e-6
+output_cost_per_token_batches = 6.000000e-6
 
 ["ft:gpt-3.5-turbo"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 6.000000e-6
 max_input_tokens = 16385
 max_output_tokens = 4096
+input_cost_per_token_batches = 1.500000e-6
+output_cost_per_token_batches = 3.000000e-6
 
 ["ft:gpt-3.5-turbo-0125"]
 input_cost_per_token = 3.000000e-6
@@ -2064,6 +2307,9 @@ output_cost_per_token = 1.200000e-5
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 7.500000e-7
+cache_read_input_token_cost_batches = 5.000000e-7
+input_cost_per_token_batches = 1.500000e-6
+output_cost_per_token_batches = 6.000000e-6
 
 ["ft:gpt-4.1-mini-2025-04-14"]
 input_cost_per_token = 8.000000e-7
@@ -2071,6 +2317,9 @@ output_cost_per_token = 3.200000e-6
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_batches = 4.000000e-7
+output_cost_per_token_batches = 1.600000e-6
 
 ["ft:gpt-4.1-nano-2025-04-14"]
 input_cost_per_token = 2.000000e-7
@@ -2078,6 +2327,9 @@ output_cost_per_token = 8.000000e-7
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-8
+cache_read_input_token_cost_batches = 2.500000e-8
+input_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_batches = 4.000000e-7
 
 ["ft:gpt-4o-2024-08-06"]
 input_cost_per_token = 3.750000e-6
@@ -2085,6 +2337,9 @@ output_cost_per_token = 1.500000e-5
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.875000e-6
+cache_read_input_token_cost_batches = 9.000000e-7
+input_cost_per_token_batches = 2.225000e-6
+output_cost_per_token_batches = 1.250000e-5
 
 ["ft:gpt-4o-2024-11-20"]
 input_cost_per_token = 3.750000e-6
@@ -2099,6 +2354,9 @@ output_cost_per_token = 1.200000e-6
 max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.500000e-7
+cache_read_input_token_cost_batches = 7.500000e-8
+input_cost_per_token_batches = 1.500000e-7
+output_cost_per_token_batches = 6.000000e-7
 
 ["ft:o4-mini-2025-04-16"]
 input_cost_per_token = 4.000000e-6
@@ -2106,6 +2364,9 @@ output_cost_per_token = 1.600000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 1.000000e-6
+cache_read_input_token_cost_batches = 5.000000e-7
+input_cost_per_token_batches = 2.000000e-6
+output_cost_per_token_batches = 8.000000e-6
 
 ["gpt-3.5-turbo"]
 input_cost_per_token = 5.000000e-7
@@ -2118,12 +2379,16 @@ input_cost_per_token = 5.000000e-7
 output_cost_per_token = 1.500000e-6
 max_input_tokens = 16385
 max_output_tokens = 4096
+input_cost_per_token_batches = 2.500000e-7
+output_cost_per_token_batches = 7.500000e-7
 
 ["gpt-3.5-turbo-1106"]
 input_cost_per_token = 1.000000e-6
 output_cost_per_token = 2.000000e-6
 max_input_tokens = 16385
 max_output_tokens = 4096
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 2.000000e-6
 
 ["gpt-3.5-turbo-16k"]
 input_cost_per_token = 3.000000e-6
@@ -2166,6 +2431,8 @@ input_cost_per_token = 3.000000e-5
 output_cost_per_token = 6.000000e-5
 max_input_tokens = 8192
 max_output_tokens = 4096
+input_cost_per_token_batches = 1.500000e-5
+output_cost_per_token_batches = 3.000000e-5
 
 [gpt-4-1106-preview]
 input_cost_per_token = 1.000000e-5
@@ -2184,6 +2451,8 @@ input_cost_per_token = 1.000000e-5
 output_cost_per_token = 3.000000e-5
 max_input_tokens = 128000
 max_output_tokens = 4096
+input_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_batches = 1.500000e-5
 
 [gpt-4-turbo-preview]
 input_cost_per_token = 1.000000e-5
@@ -2198,6 +2467,8 @@ max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-7
 search_queries_cost_per_query = 2.500000e-02
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 4.000000e-6
 
 ["gpt-4.1-2025-04-14"]
 input_cost_per_token = 2.000000e-6
@@ -2206,6 +2477,8 @@ max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-7
 search_queries_cost_per_query = 2.500000e-02
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 4.000000e-6
 
 ["gpt-4.1-mini"]
 input_cost_per_token = 4.000000e-7
@@ -2214,6 +2487,8 @@ max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.000000e-7
 search_queries_cost_per_query = 2.500000e-02
+input_cost_per_token_batches = 2.000000e-7
+output_cost_per_token_batches = 8.000000e-7
 
 ["gpt-4.1-mini-2025-04-14"]
 input_cost_per_token = 4.000000e-7
@@ -2222,6 +2497,8 @@ max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 1.000000e-7
 search_queries_cost_per_query = 2.500000e-02
+input_cost_per_token_batches = 2.000000e-7
+output_cost_per_token_batches = 8.000000e-7
 
 ["gpt-4.1-nano"]
 input_cost_per_token = 1.000000e-7
@@ -2229,6 +2506,8 @@ output_cost_per_token = 4.000000e-7
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 2.500000e-8
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 2.000000e-7
 
 ["gpt-4.1-nano-2025-04-14"]
 input_cost_per_token = 1.000000e-7
@@ -2236,6 +2515,8 @@ output_cost_per_token = 4.000000e-7
 max_input_tokens = 1047576
 max_output_tokens = 32768
 cache_read_input_token_cost = 2.500000e-8
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 2.000000e-7
 
 [gpt-4o]
 input_cost_per_token = 2.500000e-6
@@ -2338,6 +2619,8 @@ max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 7.500000e-8
 search_queries_cost_per_query = 2.500000e-02
+input_cost_per_token_batches = 7.500000e-8
+output_cost_per_token_batches = 3.000000e-7
 
 [gpt-4o-mini-search-preview-2025-03-11]
 input_cost_per_token = 1.500000e-7
@@ -2346,6 +2629,8 @@ max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 7.500000e-8
 search_queries_cost_per_query = 2.500000e-02
+input_cost_per_token_batches = 7.500000e-8
+output_cost_per_token_batches = 3.000000e-7
 
 [gpt-4o-mini-transcribe]
 input_cost_per_token = 1.250000e-6
@@ -2411,6 +2696,8 @@ max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.250000e-6
 search_queries_cost_per_query = 2.500000e-02
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 [gpt-4o-search-preview-2025-03-11]
 input_cost_per_token = 2.500000e-6
@@ -2419,6 +2706,8 @@ max_input_tokens = 128000
 max_output_tokens = 16384
 cache_read_input_token_cost = 1.250000e-6
 search_queries_cost_per_query = 2.500000e-02
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 [gpt-4o-transcribe]
 input_cost_per_token = 2.500000e-6
@@ -2441,6 +2730,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 [gpt-5-2025-08-07]
 input_cost_per_token = 1.250000e-6
@@ -2449,6 +2741,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 [gpt-5-chat]
 input_cost_per_token = 1.250000e-6
@@ -2478,6 +2773,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.500000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 1.250000e-8
+input_cost_per_token_batches = 1.250000e-7
+output_cost_per_token_batches = 1.000000e-6
 
 [gpt-5-mini-2025-08-07]
 input_cost_per_token = 2.500000e-7
@@ -2486,6 +2784,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.500000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 1.250000e-8
+input_cost_per_token_batches = 1.250000e-7
+output_cost_per_token_batches = 1.000000e-6
 
 [gpt-5-nano]
 input_cost_per_token = 5.000000e-8
@@ -2494,6 +2795,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 5.000000e-9
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 2.500000e-9
+input_cost_per_token_batches = 2.500000e-8
+output_cost_per_token_batches = 2.000000e-7
 
 [gpt-5-nano-2025-08-07]
 input_cost_per_token = 5.000000e-8
@@ -2502,6 +2806,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 5.000000e-9
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 2.500000e-9
+input_cost_per_token_batches = 2.500000e-8
+output_cost_per_token_batches = 2.000000e-7
 
 [gpt-5-pro]
 input_cost_per_token = 1.500000e-5
@@ -2509,6 +2816,8 @@ output_cost_per_token = 0.00012
 max_input_tokens = 400000
 max_output_tokens = 272000
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 7.500000e-6
+output_cost_per_token_batches = 6.000000e-5
 
 [gpt-5-pro-2025-10-06]
 input_cost_per_token = 1.500000e-5
@@ -2516,6 +2825,8 @@ output_cost_per_token = 0.00012
 max_input_tokens = 400000
 max_output_tokens = 272000
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 7.500000e-6
+output_cost_per_token_batches = 6.000000e-5
 
 [gpt-5-search-api]
 input_cost_per_token = 1.250000e-6
@@ -2540,6 +2851,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 ["gpt-5.1-2025-11-13"]
 input_cost_per_token = 1.250000e-6
@@ -2548,6 +2862,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.250000e-7
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 6.250000e-8
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
 
 ["gpt-5.1-chat-latest"]
 input_cost_per_token = 1.250000e-6
@@ -2584,6 +2901,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.750000e-7
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 8.750000e-8
+input_cost_per_token_batches = 8.750000e-7
+output_cost_per_token_batches = 7.000000e-6
 
 ["gpt-5.2-2025-12-11"]
 input_cost_per_token = 1.750000e-6
@@ -2592,6 +2912,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.750000e-7
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 8.750000e-8
+input_cost_per_token_batches = 8.750000e-7
+output_cost_per_token_batches = 7.000000e-6
 
 ["gpt-5.2-chat-latest"]
 input_cost_per_token = 1.750000e-6
@@ -2613,6 +2936,8 @@ output_cost_per_token = 0.000168
 max_input_tokens = 272000
 max_output_tokens = 128000
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 1.050000e-5
+output_cost_per_token_batches = 8.400000e-5
 
 ["gpt-5.2-pro-2025-12-11"]
 input_cost_per_token = 2.100000e-5
@@ -2620,6 +2945,8 @@ output_cost_per_token = 0.000168
 max_input_tokens = 272000
 max_output_tokens = 128000
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 1.050000e-5
+output_cost_per_token_batches = 8.400000e-5
 
 ["gpt-5.3-chat-latest"]
 input_cost_per_token = 1.750000e-6
@@ -2645,6 +2972,12 @@ cache_read_input_token_cost = 2.500000e-7
 input_cost_per_token_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 2.250000e-5
 cache_read_input_token_cost_above_272k_tokens = 5.000000e-7
+cache_read_input_token_cost_above_272k_tokens_batches = 2.500000e-7
+cache_read_input_token_cost_batches = 1.300000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.500000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.125000e-5
+output_cost_per_token_batches = 7.500000e-6
 
 ["gpt-5.4-2026-03-05"]
 input_cost_per_token = 2.500000e-6
@@ -2655,6 +2988,12 @@ cache_read_input_token_cost = 2.500000e-7
 input_cost_per_token_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 2.250000e-5
 cache_read_input_token_cost_above_272k_tokens = 5.000000e-7
+cache_read_input_token_cost_above_272k_tokens_batches = 2.500000e-7
+cache_read_input_token_cost_batches = 1.300000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.500000e-6
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.125000e-5
+output_cost_per_token_batches = 7.500000e-6
 
 ["gpt-5.4-mini"]
 input_cost_per_token = 7.500000e-7
@@ -2663,6 +3002,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 7.500000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 3.750000e-8
+input_cost_per_token_batches = 3.750000e-7
+output_cost_per_token_batches = 2.250000e-6
 
 ["gpt-5.4-mini-2026-03-17"]
 input_cost_per_token = 7.500000e-7
@@ -2671,6 +3013,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 7.500000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 3.750000e-8
+input_cost_per_token_batches = 3.750000e-7
+output_cost_per_token_batches = 2.250000e-6
 
 ["gpt-5.4-nano"]
 input_cost_per_token = 2.000000e-7
@@ -2679,6 +3024,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.000000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 1.000000e-8
+input_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_batches = 6.250000e-7
 
 ["gpt-5.4-nano-2026-03-17"]
 input_cost_per_token = 2.000000e-7
@@ -2687,6 +3035,9 @@ max_input_tokens = 272000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.000000e-8
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_batches = 1.000000e-8
+input_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_batches = 6.250000e-7
 
 ["gpt-5.4-pro"]
 input_cost_per_token = 3.000000e-5
@@ -2696,6 +3047,10 @@ max_output_tokens = 128000
 input_cost_per_token_above_272k_tokens = 6.000000e-5
 output_cost_per_token_above_272k_tokens = 2.700000e-4
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_above_272k_tokens_batches = 3.000000e-5
+input_cost_per_token_batches = 1.500000e-5
+output_cost_per_token_above_272k_tokens_batches = 1.350000e-4
+output_cost_per_token_batches = 9.000000e-5
 
 ["gpt-5.4-pro-2026-03-05"]
 input_cost_per_token = 3.000000e-5
@@ -2705,6 +3060,10 @@ max_output_tokens = 128000
 input_cost_per_token_above_272k_tokens = 6.000000e-5
 output_cost_per_token_above_272k_tokens = 2.700000e-4
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_above_272k_tokens_batches = 3.000000e-5
+input_cost_per_token_batches = 1.500000e-5
+output_cost_per_token_above_272k_tokens_batches = 1.350000e-4
+output_cost_per_token_batches = 9.000000e-5
 
 ["gpt-5.5"]
 input_cost_per_token = 5.000000e-6
@@ -2716,6 +3075,12 @@ input_cost_per_token_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 4.500000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.000000e-6
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.000000e-7
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.000000e-6
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.250000e-5
+output_cost_per_token_batches = 1.500000e-5
 
 ["gpt-5.5-2026-04-23"]
 input_cost_per_token = 5.000000e-6
@@ -2727,6 +3092,12 @@ input_cost_per_token_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 4.500000e-5
 cache_read_input_token_cost_above_272k_tokens = 1.000000e-6
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.000000e-7
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.000000e-6
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.250000e-5
+output_cost_per_token_batches = 1.500000e-5
 
 ["gpt-5.5-pro"]
 input_cost_per_token = 3.000000e-5
@@ -2736,6 +3107,10 @@ max_output_tokens = 128000
 input_cost_per_token_above_272k_tokens = 6.000000e-5
 output_cost_per_token_above_272k_tokens = 2.700000e-4
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_above_272k_tokens_batches = 3.000000e-5
+input_cost_per_token_batches = 1.500000e-5
+output_cost_per_token_above_272k_tokens_batches = 1.350000e-4
+output_cost_per_token_batches = 9.000000e-5
 
 ["gpt-5.5-pro-2026-04-23"]
 input_cost_per_token = 3.000000e-5
@@ -2745,6 +3120,10 @@ max_output_tokens = 128000
 input_cost_per_token_above_272k_tokens = 6.000000e-5
 output_cost_per_token_above_272k_tokens = 2.700000e-4
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_above_272k_tokens_batches = 3.000000e-5
+input_cost_per_token_batches = 1.500000e-5
+output_cost_per_token_above_272k_tokens_batches = 1.350000e-4
+output_cost_per_token_batches = 9.000000e-5
 
 ["gpt-5.6"]
 input_cost_per_token = 4.000000e-6
@@ -2759,6 +3138,14 @@ cache_creation_input_token_cost_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 3.000000e-5
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 5.000000e-6
+cache_creation_input_token_cost_batches = 2.500000e-6
+cache_read_input_token_cost_above_272k_tokens_batches = 4.000000e-7
+cache_read_input_token_cost_batches = 2.000000e-7
+input_cost_per_token_above_272k_tokens_batches = 4.000000e-6
+input_cost_per_token_batches = 2.000000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.500000e-5
+output_cost_per_token_batches = 1.000000e-5
 
 ["gpt-5.6-luna"]
 input_cost_per_token = 2.000000e-7
@@ -2773,6 +3160,14 @@ cache_creation_input_token_cost_above_272k_tokens = 5.000000e-7
 output_cost_per_token_above_272k_tokens = 1.800000e-6
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 2.500000e-7
+cache_creation_input_token_cost_batches = 1.250000e-7
+cache_read_input_token_cost_above_272k_tokens_batches = 2.000000e-8
+cache_read_input_token_cost_batches = 1.000000e-8
+input_cost_per_token_above_272k_tokens_batches = 2.000000e-7
+input_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_above_272k_tokens_batches = 9.000000e-7
+output_cost_per_token_batches = 6.000000e-7
 
 ["gpt-5.6-sol"]
 input_cost_per_token = 4.000000e-6
@@ -2787,6 +3182,14 @@ cache_creation_input_token_cost_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 3.000000e-5
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 5.000000e-6
+cache_creation_input_token_cost_batches = 2.500000e-6
+cache_read_input_token_cost_above_272k_tokens_batches = 4.000000e-7
+cache_read_input_token_cost_batches = 2.000000e-7
+input_cost_per_token_above_272k_tokens_batches = 4.000000e-6
+input_cost_per_token_batches = 2.000000e-6
+output_cost_per_token_above_272k_tokens_batches = 1.500000e-5
+output_cost_per_token_batches = 1.000000e-5
 
 ["gpt-5.6-terra"]
 input_cost_per_token = 2.000000e-6
@@ -2801,6 +3204,14 @@ cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 1.800000e-5
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 2.500000e-6
+cache_creation_input_token_cost_batches = 1.250000e-6
+cache_read_input_token_cost_above_272k_tokens_batches = 2.000000e-7
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_272k_tokens_batches = 9.000000e-6
+output_cost_per_token_batches = 6.000000e-6
 
 [gpt-audio]
 input_cost_per_token = 2.500000e-6
@@ -2848,16 +3259,24 @@ input_cost_per_audio_token = 1.000000e-5
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 1.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_token_cost_batches = 6.300000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["gpt-image-1.5-2025-12-16"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 1.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_token_cost_batches = 6.300000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["gpt-image-2"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 3.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_token_cost_batches = 6.250000e-7
+input_cost_per_token_batches = 2.500000e-6
 
 ["gpt-image-2-2026-04-21"]
 input_cost_per_token = 5.000000e-6
@@ -2942,6 +3361,8 @@ output_cost_per_token = 6.000000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 7.500000e-6
+input_cost_per_token_batches = 7.500000e-6
+output_cost_per_token_batches = 3.000000e-5
 
 [o1-2024-12-17]
 input_cost_per_token = 1.500000e-5
@@ -2949,18 +3370,24 @@ output_cost_per_token = 6.000000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 7.500000e-6
+input_cost_per_token_batches = 7.500000e-6
+output_cost_per_token_batches = 3.000000e-5
 
 [o1-pro]
 input_cost_per_token = 0.00015
 output_cost_per_token = 0.0006
 max_input_tokens = 200000
 max_output_tokens = 100000
+input_cost_per_token_batches = 7.500000e-5
+output_cost_per_token_batches = 3.000000e-4
 
 [o1-pro-2025-03-19]
 input_cost_per_token = 0.00015
 output_cost_per_token = 0.0006
 max_input_tokens = 200000
 max_output_tokens = 100000
+input_cost_per_token_batches = 7.500000e-5
+output_cost_per_token_batches = 3.000000e-4
 
 [o3]
 input_cost_per_token = 2.000000e-6
@@ -2969,6 +3396,8 @@ max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 5.000000e-7
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 4.000000e-6
 
 [o3-2025-04-16]
 input_cost_per_token = 2.000000e-6
@@ -2977,6 +3406,8 @@ max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 5.000000e-7
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_batches = 4.000000e-6
 
 [o3-deep-research]
 input_cost_per_token = 1.000000e-5
@@ -2998,6 +3429,8 @@ output_cost_per_token = 4.400000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.200000e-6
 
 [o3-mini-2025-01-31]
 input_cost_per_token = 1.100000e-6
@@ -3005,6 +3438,8 @@ output_cost_per_token = 4.400000e-6
 max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.200000e-6
 
 [o3-pro]
 input_cost_per_token = 2.000000e-5
@@ -3012,6 +3447,8 @@ output_cost_per_token = 8.000000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 1.000000e-5
+output_cost_per_token_batches = 4.000000e-5
 
 [o3-pro-2025-06-10]
 input_cost_per_token = 2.000000e-5
@@ -3019,6 +3456,8 @@ output_cost_per_token = 8.000000e-5
 max_input_tokens = 200000
 max_output_tokens = 100000
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 1.000000e-5
+output_cost_per_token_batches = 4.000000e-5
 
 [o4-mini]
 input_cost_per_token = 1.100000e-6
@@ -3027,6 +3466,8 @@ max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 2.750000e-7
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.200000e-6
 
 [o4-mini-2025-04-16]
 input_cost_per_token = 1.100000e-6
@@ -3035,6 +3476,8 @@ max_input_tokens = 200000
 max_output_tokens = 100000
 cache_read_input_token_cost = 2.750000e-7
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.200000e-6
 
 [o4-mini-deep-research]
 input_cost_per_token = 2.000000e-6
@@ -3066,11 +3509,15 @@ max_output_tokens = 0
 input_cost_per_token = 1.300000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 8191
+input_cost_per_token_batches = 6.500000e-8
+output_cost_per_token_batches = 0.000000e+0
 
 [text-embedding-3-small]
 input_cost_per_token = 2.000000e-8
 output_cost_per_token = 0.0
 max_input_tokens = 8191
+input_cost_per_token_batches = 1.000000e-8
+output_cost_per_token_batches = 0.000000e+0
 
 [text-embedding-ada-002]
 input_cost_per_token = 1.000000e-7
@@ -3081,6 +3528,8 @@ max_input_tokens = 8191
 input_cost_per_token = 1.000000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 8191
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 0.000000e+0
 
 [text-moderation-007]
 input_cost_per_token = 0.0
@@ -3101,16 +3550,23 @@ max_input_tokens = 32768
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 1.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_token_cost_batches = 6.300000e-7
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["gpt-image-1"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 4.000000e-5
 cache_read_input_token_cost = 1.250000e-6
+cache_read_input_token_cost_batches = 6.300000e-7
+input_cost_per_token_batches = 2.500000e-6
 
 ["gpt-image-1-mini"]
 input_cost_per_token = 2.000000e-6
 output_cost_per_token = 8.000000e-6
 cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_batches = 1.000000e-6
 
 ["azure/chat-latest"]
 input_cost_per_token = 5.000000e-6
@@ -3133,27 +3589,38 @@ output_cost_per_token = 1.320000e-5
 input_cost_per_token = 2.200000e-6
 output_cost_per_token = 8.800000e-6
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 1.100000e-6
+output_cost_per_token_batches = 4.400000e-6
 
 ["azure/eu/gpt-4.1-mini"]
 input_cost_per_token = 4.400000e-7
 output_cost_per_token = 1.760000e-6
 cache_read_input_token_cost = 1.100000e-7
+input_cost_per_token_batches = 2.200000e-7
+output_cost_per_token_batches = 8.800000e-7
 
 ["azure/eu/gpt-4.1-nano"]
 input_cost_per_token = 1.100000e-7
 output_cost_per_token = 4.400000e-7
 cache_read_input_token_cost = 2.800000e-8
+input_cost_per_token_batches = 5.500000e-8
+output_cost_per_token_batches = 2.200000e-7
 
 ["azure/eu/gpt-4o-2024-05-13"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 1.650000e-5
 max_input_tokens = 128000
 max_output_tokens = 4096
+input_cost_per_token_batches = 2.750000e-6
+output_cost_per_token_batches = 8.250000e-6
 
 ["azure/eu/gpt-5"]
 input_cost_per_token = 1.375000e-6
 output_cost_per_token = 1.100000e-5
 cache_read_input_token_cost = 1.375000e-7
+cache_read_input_token_cost_batches = 6.875000e-8
+input_cost_per_token_batches = 6.875000e-7
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/eu/gpt-5-codex"]
 input_cost_per_token = 1.375000e-6
@@ -3165,16 +3632,24 @@ mode = "responses"
 input_cost_per_token = 2.750000e-7
 output_cost_per_token = 2.200000e-6
 cache_read_input_token_cost = 2.750000e-8
+cache_read_input_token_cost_batches = 1.375000e-8
+input_cost_per_token_batches = 1.375000e-7
+output_cost_per_token_batches = 1.100000e-6
 
 ["azure/eu/gpt-5-nano"]
 input_cost_per_token = 5.500000e-8
 output_cost_per_token = 4.400000e-7
 cache_read_input_token_cost = 5.500000e-9
+cache_read_input_token_cost_batches = 2.750000e-9
+input_cost_per_token_batches = 2.750000e-8
+output_cost_per_token_batches = 2.200000e-7
 
 ["azure/eu/gpt-5-pro"]
 input_cost_per_token = 1.650000e-5
 output_cost_per_token = 1.320000e-4
 mode = "responses"
+input_cost_per_token_batches = 8.250000e-6
+output_cost_per_token_batches = 6.600000e-5
 
 ["azure/eu/gpt-5.1-codex-max"]
 input_cost_per_token = 1.375000e-6
@@ -3186,6 +3661,9 @@ mode = "responses"
 input_cost_per_token = 1.925000e-6
 output_cost_per_token = 1.540000e-5
 cache_read_input_token_cost = 1.925000e-7
+cache_read_input_token_cost_batches = 9.625000e-8
+input_cost_per_token_batches = 9.625000e-7
+output_cost_per_token_batches = 7.700000e-6
 
 ["azure/eu/gpt-5.2-chat"]
 input_cost_per_token = 1.925000e-6
@@ -3204,6 +3682,8 @@ mode = "responses"
 input_cost_per_token = 2.310000e-5
 output_cost_per_token = 1.848000e-4
 mode = "responses"
+input_cost_per_token_batches = 1.155000e-5
+output_cost_per_token_batches = 9.240000e-5
 
 ["azure/eu/gpt-5.3-chat"]
 input_cost_per_token = 1.925000e-6
@@ -3222,11 +3702,17 @@ mode = "responses"
 input_cost_per_token = 8.250000e-7
 output_cost_per_token = 4.950000e-6
 cache_read_input_token_cost = 8.250000e-8
+cache_read_input_token_cost_batches = 4.125000e-8
+input_cost_per_token_batches = 4.125000e-7
+output_cost_per_token_batches = 2.475000e-6
 
 ["azure/eu/gpt-5.4-nano"]
 input_cost_per_token = 2.200000e-7
 output_cost_per_token = 1.375000e-6
 cache_read_input_token_cost = 2.200000e-8
+cache_read_input_token_cost_batches = 1.100000e-8
+input_cost_per_token_batches = 1.100000e-7
+output_cost_per_token_batches = 6.875000e-7
 
 ["azure/eu/gpt-5.4-pro"]
 input_cost_per_token = 3.300000e-5
@@ -3234,6 +3720,10 @@ output_cost_per_token = 1.980000e-4
 input_cost_per_token_above_272k_tokens = 6.600000e-5
 output_cost_per_token_above_272k_tokens = 2.970000e-4
 mode = "responses"
+input_cost_per_token_above_272k_tokens_batches = 3.300000e-5
+input_cost_per_token_batches = 1.650000e-5
+output_cost_per_token_above_272k_tokens_batches = 1.485000e-4
+output_cost_per_token_batches = 9.900000e-5
 
 ["azure/eu/gpt-5.5-2026-04-24"]
 input_cost_per_token = 5.500000e-6
@@ -3245,6 +3735,12 @@ cache_read_input_token_cost_above_272k_tokens = 1.100000e-6
 input_cost_per_token_above_272k_tokens = 1.100000e-5
 output_cost_per_token_above_272k_tokens = 4.950000e-5
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.500000e-7
+cache_read_input_token_cost_batches = 2.750000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.500000e-6
+input_cost_per_token_batches = 2.750000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.475000e-5
+output_cost_per_token_batches = 1.650000e-5
 
 ["azure/eu/gpt-6-astra"]
 input_cost_per_token = 1.200000e-5
@@ -3288,6 +3784,8 @@ search_queries_cost_per_query = 1.000000e-02
 input_cost_per_token = 1.210000e-6
 output_cost_per_token = 4.840000e-6
 cache_read_input_token_cost = 6.050000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
 
 ["azure/eu/o1-preview"]
 input_cost_per_token = 1.650000e-5
@@ -3302,6 +3800,8 @@ output_cost_per_token = 8.800000e-6
 cache_read_input_token_cost = 5.500000e-7
 max_input_tokens = 200000
 max_output_tokens = 100000
+input_cost_per_token_batches = 1.100000e-6
+output_cost_per_token_batches = 4.400000e-6
 
 ["azure/eu/o3-deep-research"]
 input_cost_per_token = 1.100000e-5
@@ -3314,6 +3814,8 @@ output_cost_per_token = 4.840000e-6
 cache_read_input_token_cost = 3.030000e-7
 max_input_tokens = 200000
 max_output_tokens = 100000
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
 
 ["azure/eu/text-embedding-3-large"]
 input_cost_per_token = 1.430000e-7
@@ -3337,6 +3839,12 @@ cache_read_input_token_cost_above_272k_tokens = 1.000000e-6
 input_cost_per_token_above_272k_tokens = 1.000000e-5
 output_cost_per_token_above_272k_tokens = 4.500000e-5
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.000000e-7
+cache_read_input_token_cost_batches = 2.500000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.000000e-6
+input_cost_per_token_batches = 2.500000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.250000e-5
+output_cost_per_token_batches = 1.500000e-5
 
 ["azure/gpt-5.6-luna-2026-07-09"]
 input_cost_per_token = 2.000000e-7
@@ -3602,27 +4110,38 @@ output_cost_per_token = 1.320000e-5
 input_cost_per_token = 2.200000e-6
 output_cost_per_token = 8.800000e-6
 cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 1.100000e-6
+output_cost_per_token_batches = 4.400000e-6
 
 ["azure/us/gpt-4.1-mini"]
 input_cost_per_token = 4.400000e-7
 output_cost_per_token = 1.760000e-6
 cache_read_input_token_cost = 1.100000e-7
+input_cost_per_token_batches = 2.200000e-7
+output_cost_per_token_batches = 8.800000e-7
 
 ["azure/us/gpt-4.1-nano"]
 input_cost_per_token = 1.100000e-7
 output_cost_per_token = 4.400000e-7
 cache_read_input_token_cost = 2.800000e-8
+input_cost_per_token_batches = 5.500000e-8
+output_cost_per_token_batches = 2.200000e-7
 
 ["azure/us/gpt-4o-2024-05-13"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 1.650000e-5
 max_input_tokens = 128000
 max_output_tokens = 4096
+input_cost_per_token_batches = 2.750000e-6
+output_cost_per_token_batches = 8.250000e-6
 
 ["azure/us/gpt-5"]
 input_cost_per_token = 1.375000e-6
 output_cost_per_token = 1.100000e-5
 cache_read_input_token_cost = 1.375000e-7
+cache_read_input_token_cost_batches = 6.875000e-8
+input_cost_per_token_batches = 6.875000e-7
+output_cost_per_token_batches = 5.500000e-6
 
 ["azure/us/gpt-5-codex"]
 input_cost_per_token = 1.375000e-6
@@ -3634,16 +4153,24 @@ mode = "responses"
 input_cost_per_token = 2.750000e-7
 output_cost_per_token = 2.200000e-6
 cache_read_input_token_cost = 2.750000e-8
+cache_read_input_token_cost_batches = 1.375000e-8
+input_cost_per_token_batches = 1.375000e-7
+output_cost_per_token_batches = 1.100000e-6
 
 ["azure/us/gpt-5-nano"]
 input_cost_per_token = 5.500000e-8
 output_cost_per_token = 4.400000e-7
 cache_read_input_token_cost = 5.500000e-9
+cache_read_input_token_cost_batches = 2.750000e-9
+input_cost_per_token_batches = 2.750000e-8
+output_cost_per_token_batches = 2.200000e-7
 
 ["azure/us/gpt-5-pro"]
 input_cost_per_token = 1.650000e-5
 output_cost_per_token = 1.320000e-4
 mode = "responses"
+input_cost_per_token_batches = 8.250000e-6
+output_cost_per_token_batches = 6.600000e-5
 
 ["azure/us/gpt-5.1-codex-max"]
 input_cost_per_token = 1.375000e-6
@@ -3655,6 +4182,9 @@ mode = "responses"
 input_cost_per_token = 1.925000e-6
 output_cost_per_token = 1.540000e-5
 cache_read_input_token_cost = 1.925000e-7
+cache_read_input_token_cost_batches = 9.625000e-8
+input_cost_per_token_batches = 9.625000e-7
+output_cost_per_token_batches = 7.700000e-6
 
 ["azure/us/gpt-5.2-chat"]
 input_cost_per_token = 1.925000e-6
@@ -3673,6 +4203,8 @@ mode = "responses"
 input_cost_per_token = 2.310000e-5
 output_cost_per_token = 1.848000e-4
 mode = "responses"
+input_cost_per_token_batches = 1.155000e-5
+output_cost_per_token_batches = 9.240000e-5
 
 ["azure/us/gpt-5.3-chat"]
 input_cost_per_token = 1.925000e-6
@@ -3691,11 +4223,17 @@ mode = "responses"
 input_cost_per_token = 8.250000e-7
 output_cost_per_token = 4.950000e-6
 cache_read_input_token_cost = 8.250000e-8
+cache_read_input_token_cost_batches = 4.125000e-8
+input_cost_per_token_batches = 4.125000e-7
+output_cost_per_token_batches = 2.475000e-6
 
 ["azure/us/gpt-5.4-nano"]
 input_cost_per_token = 2.200000e-7
 output_cost_per_token = 1.375000e-6
 cache_read_input_token_cost = 2.200000e-8
+cache_read_input_token_cost_batches = 1.100000e-8
+input_cost_per_token_batches = 1.100000e-7
+output_cost_per_token_batches = 6.875000e-7
 
 ["azure/us/gpt-5.4-pro"]
 input_cost_per_token = 3.300000e-5
@@ -3703,6 +4241,10 @@ output_cost_per_token = 1.980000e-4
 input_cost_per_token_above_272k_tokens = 6.600000e-5
 output_cost_per_token_above_272k_tokens = 2.970000e-4
 mode = "responses"
+input_cost_per_token_above_272k_tokens_batches = 3.300000e-5
+input_cost_per_token_batches = 1.650000e-5
+output_cost_per_token_above_272k_tokens_batches = 1.485000e-4
+output_cost_per_token_batches = 9.900000e-5
 
 ["azure/us/gpt-5.5-2026-04-24"]
 input_cost_per_token = 5.500000e-6
@@ -3714,6 +4256,12 @@ cache_read_input_token_cost_above_272k_tokens = 1.100000e-6
 input_cost_per_token_above_272k_tokens = 1.100000e-5
 output_cost_per_token_above_272k_tokens = 4.950000e-5
 search_queries_cost_per_query = 1.000000e-02
+cache_read_input_token_cost_above_272k_tokens_batches = 5.500000e-7
+cache_read_input_token_cost_batches = 2.750000e-7
+input_cost_per_token_above_272k_tokens_batches = 5.500000e-6
+input_cost_per_token_batches = 2.750000e-6
+output_cost_per_token_above_272k_tokens_batches = 2.475000e-5
+output_cost_per_token_batches = 1.650000e-5
 
 ["azure/us/gpt-6-astra"]
 input_cost_per_token = 1.100000e-5
@@ -3773,6 +4321,8 @@ cache_read_input_token_cost = 5.500000e-7
 input_cost_per_token = 1.210000e-6
 output_cost_per_token = 4.840000e-6
 cache_read_input_token_cost = 6.050000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
 
 ["azure/us/o1-preview"]
 input_cost_per_token = 1.650000e-5
@@ -4231,6 +4781,14 @@ cache_creation_input_token_cost_above_272k_tokens = 2.500000e-5
 output_cost_per_token_above_272k_tokens = 7.500000e-5
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 1.250000e-5
+cache_creation_input_token_cost_batches = 6.250000e-6
+cache_read_input_token_cost_above_272k_tokens_batches = 1.000000e-6
+cache_read_input_token_cost_batches = 5.000000e-7
+input_cost_per_token_above_272k_tokens_batches = 1.000000e-5
+input_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_above_272k_tokens_batches = 3.750000e-5
+output_cost_per_token_batches = 2.500000e-5
 
 ["gpt-6-luna"]
 input_cost_per_token = 1.000000e-7
@@ -4245,6 +4803,14 @@ cache_creation_input_token_cost_above_272k_tokens = 2.500000e-7
 output_cost_per_token_above_272k_tokens = 7.500000e-7
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 1.250000e-7
+cache_creation_input_token_cost_batches = 6.250000e-8
+cache_read_input_token_cost_above_272k_tokens_batches = 1.000000e-8
+cache_read_input_token_cost_batches = 5.000000e-9
+input_cost_per_token_above_272k_tokens_batches = 1.000000e-7
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_above_272k_tokens_batches = 3.750000e-7
+output_cost_per_token_batches = 2.500000e-7
 
 ["gpt-6-sol"]
 input_cost_per_token = 2.000000e-6
@@ -4259,6 +4825,14 @@ cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 output_cost_per_token_above_272k_tokens = 1.500000e-5
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 2.500000e-6
+cache_creation_input_token_cost_batches = 1.250000e-6
+cache_read_input_token_cost_above_272k_tokens_batches = 2.000000e-7
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_272k_tokens_batches = 7.500000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["gpt-image-2.5-flare"]
 input_cost_per_token = 5.000000e-6
@@ -4497,6 +5071,14 @@ cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
 source = "https://developers.openai.com/api/docs/pricing"
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 2.500000e-6
+cache_creation_input_token_cost_batches = 1.250000e-6
+cache_read_input_token_cost_above_272k_tokens_batches = 1.000000e-7
+cache_read_input_token_cost_batches = 5.000000e-8
+input_cost_per_token_above_272k_tokens_batches = 2.000000e-6
+input_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_above_272k_tokens_batches = 7.500000e-6
+output_cost_per_token_batches = 5.000000e-6
 
 ["azure/apac/gpt-6.1-sol"]
 input_cost_per_token = 2.400000e-6
