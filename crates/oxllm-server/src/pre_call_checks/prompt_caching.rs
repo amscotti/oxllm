@@ -17,7 +17,7 @@
 //!   prefix is everything the provider caches (tools, system, and all
 //!   messages through the last marked block); unmarked requests keep the
 //!   legacy first system/user message + tools prefix (see
-//!   [`prompt_prefix`]).
+//!   `prompt_prefix`, private to this module).
 //! - Post-call: write `pcache:{api_key_hash}:{hash}` → deployment id with a
 //!   300s floor TTL, raised to 1h only when the serving attempt's final native
 //!   outbound body carries a genuine `ttl: "1h"` breakpoint, recorded in
@@ -294,7 +294,7 @@ impl PromptCachingCheck {
     }
 
     /// Compute the SHA-256 (truncated to 128 bits) of the cacheable prompt
-    /// prefix (see [`prompt_prefix`]: the full marked prefix when the
+    /// prefix (see `prompt_prefix`, private to this module: the full marked prefix when the
     /// request carries `cache_control` breakpoints, otherwise the system
     /// prompt or first user message, plus `tools` either way), plus the
     /// estimated token count of the prefix text. Returns `None` when the
