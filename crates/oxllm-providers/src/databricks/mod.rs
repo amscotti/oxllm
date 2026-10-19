@@ -149,7 +149,9 @@ fn is_empty_text_block(block: &Value) -> bool {
 
 /// Databricks rejects empty text blocks; drop them from array content.
 /// When nothing survives, the `content` key is removed entirely
-/// (reference `_sanitize_empty_content` list arm).
+/// (reference `_sanitize_empty_content` list arm). String content and
+/// already-empty arrays are preserved as-is: the pinned test contract
+/// keeps `""`/`[]` beside tool calls and on non-assistant roles.
 fn filter_empty_text_blocks(message: &mut Value) {
     let Some(obj) = message.as_object_mut() else {
         return;

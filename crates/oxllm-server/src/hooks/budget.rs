@@ -40,12 +40,15 @@ pub const BUDGET_EXCEEDED_TOTAL: &str = "oxllm_budget_exceeded_total";
 /// recording pre-call estimates instead of actual costs.
 pub const BUDGET_SETTLE_FAILED_TOTAL: &str = "oxllm_budget_settle_failed_total";
 
-/// Settlements whose admission window expired or was replaced mid-request,
-/// so the full actual was carried into the live successor window instead
-/// of adjusting the original window. A rising rate means budget windows
-/// are short relative to request durations (long realtime sessions are
-/// the usual source); attribution stays exact, but operators should see
-/// how much spend lands in a later window than it was admitted in.
+/// Per-counter settlements whose admission window expired or was replaced
+/// mid-request, so the full actual was carried into the live successor
+/// window instead of adjusting the original window. Counted per scope
+/// counter carried (one request settling N scopes increments N times),
+/// matching the per-counter granularity of the settle loops. A rising
+/// rate means budget windows are short relative to request durations
+/// (long realtime sessions are the usual source); attribution stays
+/// exact, but operators should see how much spend lands in a later
+/// window than it was admitted in.
 pub const BUDGET_SETTLE_CARRIED_TOTAL: &str = "oxllm_budget_settle_carried_total";
 
 /// Count a budget rejection and return the reject action. Centralized so
@@ -259,7 +262,7 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
                     // far above any provider's per-request search count,
                     // and the settle delta still debits actuals.
                     const MAX_RESERVED_SEARCH_USES: u64 = 1_000;
-                    let search_uses = tools
+                    let search_tools: Vec<&serde_json::Value> = tools
                         .into_iter()
                         .flatten()
                         .filter(|tool| {
@@ -267,11 +270,28 @@ pub(crate) async fn estimate_max_request_cost(ctx: &CallContext) -> f64 {
                                 .and_then(serde_json::Value::as_str)
                                 .is_some_and(|kind| kind.starts_with("web_search"))
                         })
-                        .filter_map(|tool| tool.get("max_uses").and_then(serde_json::Value::as_u64))
-                        .max()
-                        .map_or(u64::from(declared_search || always_searches), |max_uses| {
-                            max_uses.clamp(1, MAX_RESERVED_SEARCH_USES)
-                        });
+                        .collect();
+                    // Per-tool caps sum (two tools capped at 5 can run 10
+                    // searches); a tool without a usable numeric cap
+                    // counts one query, and an explicit 0 stays 0 (the
+                    // tool cannot search). Non-integer numerics (3.0)
+                    // count; non-numerics degrade to the 1-query default.
+                    let search_uses = if search_tools.is_empty() {
+                        u64::from(declared_search || always_searches)
+                    } else {
+                        search_tools
+                            .iter()
+                            .map(|tool| match tool.get("max_uses") {
+                                Some(value) => value
+                                    .as_f64()
+                                    .filter(|v| v.is_finite() && *v >= 0.0)
+                                    .map_or(1, |v| v as u64),
+                                None => 1,
+                            })
+                            .fold(0u64, |acc, uses| {
+                                acc.saturating_add(uses).min(MAX_RESERVED_SEARCH_USES)
+                            })
+                    };
                     (
                         prompt_side,
                         output_side,
@@ -1560,6 +1580,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_reserve_sums_per_tool_caps_and_honors_zero_and_float() {
+        // Per-tool max_uses caps are independent budgets: two tools
+        // capped at 2 and 3 can run five searches. An explicit 0 means
+        // the tool cannot search (no fee), and a float cap (2.0) still
+        // counts instead of degrading to the 1-query default. The base
+        // is the no-tool estimate for the same context; Anthropic
+        // search prices at $0.01/query.
+        let estimate_for = |tools: serde_json::Value| async move {
+            let mut ctx = CallContext::for_test("anthropic/claude-sonnet-4-5");
+            let _ = ctx.token_estimate.set(10);
+            ctx.request_body = Arc::new(serde_json::json!({
+                "max_tokens": 10,
+                "tools": tools
+            }));
+            estimate_max_request_cost(&ctx).await
+        };
+        let base = estimate_for(serde_json::json!([])).await;
+        let two_tools = estimate_for(serde_json::json!([
+            {"type": "web_search_20250305", "max_uses": 2},
+            {"type": "web_search_20250305", "max_uses": 3}
+        ]))
+        .await;
+        assert!(
+            (two_tools - base - 5.0 * 0.01).abs() < 1e-9,
+            "two capped tools must sum: {two_tools} vs base {base}"
+        );
+        let zero = estimate_for(serde_json::json!([
+            {"type": "web_search_20250305", "max_uses": 0}
+        ]))
+        .await;
+        assert!(
+            (zero - base).abs() < 1e-9,
+            "max_uses 0 reserves no search fee: {zero} vs base {base}"
+        );
+        let float = estimate_for(serde_json::json!([
+            {"type": "web_search_20250305", "max_uses": 2.0}
+        ]))
+        .await;
+        assert!(
+            (float - base - 2.0 * 0.01).abs() < 1e-9,
+            "float max_uses must count: {float} vs base {base}"
+        );
+    }
+
+    #[tokio::test]
     async fn reservations_honor_explicit_output_limits_and_one_hour_write_rates() {
         let mut ctx = CallContext::for_test("private-token-model");
         let _ = ctx.token_estimate.set(100);
@@ -2400,6 +2465,32 @@ mod tests {
         assert!(
             (value - 2.51).abs() < 1e-9,
             "successor window must hold its own spend plus the carried actual, got {value}"
+        );
+    }
+
+    #[tokio::test]
+    async fn settle_after_window_rollover_recreates_missing_counter() {
+        // Same rollover, but no successor reservation recreated the
+        // counter: the carry itself must recreate it (stamped with the
+        // scope TTL recovered by window_ttl_for_key) holding exactly the
+        // actual.
+        let cache = Arc::new(InMemoryCache::default());
+        let hook = BudgetHook::with_duration(cache.clone(), Some(100.0), Duration::from_secs(60));
+        let mut ctx = make_ctx();
+        ctx.request_body = std::sync::Arc::new(serde_json::json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100
+        }));
+        hook.pre_call(&mut ctx).await.expect("ok");
+        cache.expire_counter_for_test("spend:abc").await;
+        assert!(cache.counter_value("spend:abc").await.is_none());
+
+        Hook::settle_budget(&hook, &ctx, 2.5).await;
+        let value = cache.counter_value("spend:abc").await.unwrap();
+        assert!(
+            (value - 2.5).abs() < 1e-9,
+            "carry must recreate the counter with the full actual, got {value}"
         );
     }
 

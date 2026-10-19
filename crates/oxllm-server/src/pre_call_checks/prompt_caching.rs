@@ -748,6 +748,36 @@ mod tests {
     }
 
     #[test]
+    fn prompt_hash_tools_only_breakpoint_uses_tools_and_leading_system() {
+        let c = check();
+        let body = |system: &str, user: &str| {
+            json!({
+                "model": "gpt-4o",
+                "tools": [{
+                    "name": "lookup",
+                    "input_schema": {"type": "object"},
+                    "cache_control": {"type": "ephemeral"}
+                }],
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user}
+                ]
+            })
+        };
+        let a = c.prompt_hash(&body("shared system", "question one"), "gpt-4o");
+        // Conversations after the tools+system head vary freely: the pin
+        // covers only the cached head.
+        let b = c.prompt_hash(&body("shared system", "question two"), "gpt-4o");
+        assert_eq!(a.map(|(h, _)| h), b.map(|(h, _)| h));
+        // A different system prompt is a different cached head.
+        let other = c.prompt_hash(&body("other system", "question one"), "gpt-4o");
+        assert_ne!(a.map(|(h, _)| h), other.map(|(h, _)| h));
+        // The estimate sees the system text (not just the tool JSON).
+        let (_, tokens) = a.expect("tools-only marked prefix present");
+        assert!(tokens >= estimate_tokens("shared system", "gpt-4o"));
+    }
+
+    #[test]
     fn prompt_hash_none_without_messages_or_empty_prefix() {
         let c = check();
         assert!(

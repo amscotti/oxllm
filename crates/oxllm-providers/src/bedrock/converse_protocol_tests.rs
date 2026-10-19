@@ -487,4 +487,42 @@ fn post_4_6_claude_sampling_and_forced_tool_choice_are_gated() {
         "{body}"
     );
     assert_eq!(body["toolConfig"]["toolChoice"], json!({"any": {}}));
+
+    // top_k rides additionalModelRequestFields on Converse; it must be
+    // gated for the same post-4.6 models, and a caller-supplied native
+    // forced tool_choice in additionalModelRequestFields must not
+    // bypass the downgrade.
+    let top_k_request = json!({
+        "messages": [{"role": "user", "content": "hi"}],
+        "top_k": 3
+    });
+    let body = transform("us.anthropic.claude-sonnet-5-5", &top_k_request);
+    assert!(
+        body.pointer("/additionalModelRequestFields/top_k")
+            .is_none(),
+        "top_k must be omitted post-4.6: {body}"
+    );
+    let body = transform("anthropic.claude-sonnet-4-20250514-v1:0", &top_k_request);
+    assert_eq!(body["additionalModelRequestFields"]["top_k"], 3);
+
+    let native_forced = json!({
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}}
+        }],
+        "additionalModelRequestFields": {"tool_choice": {"type": "any"}}
+    });
+    let body = transform("us.anthropic.claude-sonnet-5-5", &native_forced);
+    assert_eq!(
+        body["additionalModelRequestFields"]["tool_choice"],
+        json!({"type": "auto"}),
+        "native forced choice must downgrade: {body}"
+    );
+    let body = transform("anthropic.claude-sonnet-4-20250514-v1:0", &native_forced);
+    assert_eq!(
+        body["additionalModelRequestFields"]["tool_choice"],
+        json!({"type": "any"}),
+        "pre-4.7 models keep native forced choice: {body}"
+    );
 }

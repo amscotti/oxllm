@@ -249,8 +249,11 @@ async fn forward_count_tokens(
         let upstream_message = serde_json::from_slice::<Value>(&bytes)
             .ok()
             .and_then(|body| {
+                // AWS JSON errors use capital `Message`; Anthropic-style
+                // envelopes use error.message / message.
                 body.pointer("/error/message")
                     .or_else(|| body.pointer("/message"))
+                    .or_else(|| body.pointer("/Message"))
                     .and_then(Value::as_str)
                     .map(str::to_string)
             })
@@ -300,7 +303,12 @@ async fn count_at_bedrock(
         crate::orchestration::request_controls::copy(request, object);
     }
     let reply = forward_count_tokens(state, auth, model, input).await?;
-    let tokens = oxllm_providers::bedrock::count_tokens::parse_count_tokens_response(&reply)
+    // The passthrough rewrites Bedrock counting replies to the Anthropic
+    // {input_tokens} shape for native clients; accept either spelling.
+    let tokens = reply
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| oxllm_providers::bedrock::count_tokens::parse_count_tokens_response(&reply))
         .ok_or_else(|| {
             ApiError::internal("provider token-count response is missing inputTokens")
         })?;
@@ -437,6 +445,38 @@ router_settings:
     }
 
     #[tokio::test]
+    async fn native_count_tokens_bedrock_reply_is_anthropic_shaped() {
+        // Bedrock CountTokens answers {"inputTokens": n}; the native
+        // /v1/messages/count_tokens surface must relay the Anthropic
+        // {"input_tokens": n} shape SDKs parse.
+        let upstream = MockServer::start_async().await;
+        let state = bedrock_state(&upstream.url(""));
+        let mock = upstream
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens");
+                then.status(200).json_body(json!({"inputTokens": 7}));
+            })
+            .await;
+        let input = json!({"model": "counted", "messages": [{"role": "user", "content": "hello"}]});
+        let response = count_tokens(
+            State(state),
+            Extension(AuthUser::open()),
+            HeaderMap::new(),
+            Bytes::from(input.to_string()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(reply, json!({"input_tokens": 7}));
+        mock.assert_hits_async(1).await;
+    }
+
+    #[tokio::test]
     async fn native_count_tokens_preserves_provider_error_body_status_and_headers() {
         let body = r#"{ "type": "error", "error": { "type": "api_error", "message": "invalid sk-synthetic-native-key Bearer synthetic-native-token at https://synthetic.invalid/count" }, "request_id": "synthetic-provider-id" }
 "#;
@@ -502,7 +542,6 @@ router_settings:
         }
     }
 
-    #[cfg(feature = "platform-apis")]
     fn bedrock_state(api_base: &str) -> SharedState {
         let config = crate::config::parse_config_str(&format!(
             r#"

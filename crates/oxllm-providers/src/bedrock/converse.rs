@@ -605,6 +605,11 @@ fn is_nova2_model(model: &str) -> bool {
 /// additionalModelRequestFields. Other families/versions need a verified
 /// mapping before this adapter can advertise the same behavior.
 fn apply_top_k(request: &Value, model: &str, out: &mut Map<String, Value>) -> Result<()> {
+    // Post-4.6 Claude models reject top_k outright; omit it like the
+    // temperature/topP gates in build_inference_config.
+    if crate::anthropic::model_rejects_sampling_params(model) {
+        return Ok(());
+    }
     let Some(value) = request.get("top_k").filter(|value| !value.is_null()) else {
         return Ok(());
     };
@@ -1030,6 +1035,23 @@ fn apply_parallel_tool_calls(
         ));
     }
     let mut choice = native.or(mapped).unwrap_or_else(|| json!({"type":"auto"}));
+    // A caller-supplied native forced choice in
+    // additionalModelRequestFields bypasses the canonical downgrade in
+    // build_tool_config; apply the same forced-tool policy to the merged
+    // result so `any`/`tool` cannot reach a model that rejects them.
+    if crate::anthropic::model_rejects_forced_tool_use(model)
+        && matches!(
+            choice.get("type").and_then(Value::as_str),
+            Some("any" | "tool")
+        )
+    {
+        let mut downgraded = Map::new();
+        downgraded.insert("type".to_string(), json!("auto"));
+        if let Some(parallel) = choice.get("disable_parallel_tool_use") {
+            downgraded.insert("disable_parallel_tool_use".to_string(), parallel.clone());
+        }
+        choice = Value::Object(downgraded);
+    }
     if serial && choice.get("type").and_then(Value::as_str) != Some("none") {
         if choice
             .get("disable_parallel_tool_use")

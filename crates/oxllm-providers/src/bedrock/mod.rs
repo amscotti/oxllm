@@ -303,10 +303,9 @@ impl ChatProvider for BedrockProvider {
         // cache_control blocks.
         let url = self.endpoint_url_for_request(deployment, request);
         let path = url.split('?').next().unwrap_or(&url);
-        if matches!(
-            path.rsplit('/').next(),
-            Some("converse" | "converse-stream")
-        ) {
+        // endpoint_url_for_request never produces a converse-stream
+        // suffix (streams share the converse route here).
+        if matches!(path.rsplit('/').next(), Some("converse")) {
             return Some(PromptCacheWire::Converse);
         }
         Self::uses_anthropic_messages_api(request, deployment).then_some(PromptCacheWire::Anthropic)

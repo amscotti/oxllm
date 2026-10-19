@@ -24,8 +24,10 @@ use percent_encoding::utf8_percent_encode;
 use serde_json::{Value, json};
 
 use super::{
-    BedrockProvider, MODEL_PATH_SEGMENT, converse, should_use_converse, strip_model_suffixes,
+    ANTHROPIC_VERSION, BedrockProvider, MODEL_PATH_SEGMENT, converse, should_use_converse,
+    strip_model_suffixes,
 };
+use crate::anthropic::AnthropicProvider;
 
 /// Tokenizer label reported for counts served by this API (the reference
 /// reports `bedrock_api` for the runtime CountTokens counter).
@@ -81,15 +83,89 @@ fn resolve_count_model(deployment: &Deployment, requested_model: Option<&str>) -
 /// `inferenceConfig` are dropped, matching the reference transform).
 /// InvokeModel deployments forward the exact invoke body the chat path
 /// would send, base64-encoded per the API contract.
+/// Whether any message content uses Anthropic-native block shapes
+/// (`image`/`tool_use`/`tool_result`/`document`). The Converse transform
+/// consumes OpenAI-shaped content and would silently drop those blocks,
+/// undercounting; the reference routes Anthropic-shaped messages to the
+/// InvokeModel count input instead, which preserves them verbatim.
+fn has_anthropic_content_blocks(request: &Value) -> bool {
+    request
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages.iter().any(|message| {
+                message
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            matches!(
+                                part.get("type").and_then(Value::as_str),
+                                Some("image" | "tool_use" | "tool_result" | "document")
+                            )
+                        })
+                    })
+            })
+        })
+}
+
+/// Convert a top-level Anthropic `system` value (string or text blocks,
+/// as the native count normalizer lifts it) into Converse system blocks.
+/// The Converse transform itself only reads role:system messages, so a
+/// counting body built from a normalized/native request would otherwise
+/// silently uncount the whole system prompt.
+fn converse_system_blocks(system: &Value) -> Vec<Value> {
+    let mut blocks = Vec::new();
+    let mut push_text = |text: &str, cache_control: Option<&Value>| {
+        if !text.is_empty() {
+            blocks.push(json!({"text": text}));
+        }
+        if let Some(control) = cache_control.filter(|c| c.is_object()) {
+            let mut point = serde_json::Map::new();
+            point.insert("type".to_string(), json!("default"));
+            if control.get("ttl").and_then(Value::as_str) == Some("1h") {
+                point.insert("ttl".to_string(), json!("1h"));
+            }
+            blocks.push(json!({"cachePoint": Value::Object(point)}));
+        }
+    };
+    match system {
+        Value::String(text) => push_text(text, None),
+        Value::Array(parts) => {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    push_text(text, part.get("cache_control"));
+                }
+            }
+        }
+        _ => {}
+    }
+    blocks
+}
+
+/// Build the CountTokens request body for a deployment: Converse input
+/// (with top-level `system` converted) for Converse-routed models and
+/// plain OpenAI-shape content, base64 InvokeModel for invoke-routed
+/// models and any request carrying Anthropic content blocks.
 pub fn build_count_tokens_body(request: &Value, deployment: &Deployment) -> Result<Value> {
     let model = BedrockProvider::resolve_model(request, deployment);
-    if should_use_converse(model, BedrockProvider::use_converse(deployment)) {
+    if should_use_converse(model, BedrockProvider::use_converse(deployment))
+        && !has_anthropic_content_blocks(request)
+    {
         let converse_body =
             converse::transform_request_converse(request, model, &deployment.oxllm_params.extra)?;
         let mut converse_input = serde_json::Map::new();
         for key in ["messages", "system", "toolConfig"] {
             if let Some(value) = converse_body.get(key) {
                 converse_input.insert(key.to_string(), value.clone());
+            }
+        }
+        if !converse_input.contains_key("system")
+            && let Some(system) = request.get("system")
+        {
+            let blocks = converse_system_blocks(system);
+            if !blocks.is_empty() {
+                converse_input.insert("system".to_string(), Value::Array(blocks));
             }
         }
         if !converse_input.contains_key("messages") {
@@ -99,7 +175,24 @@ pub fn build_count_tokens_body(request: &Value, deployment: &Deployment) -> Resu
         }
         Ok(json!({"input": {"converse": Value::Object(converse_input)}}))
     } else {
-        let invoke_body = ChatProvider::transform_request(&BedrockProvider, request, deployment)?;
+        // InvokeModel input must carry the Anthropic Messages body for
+        // Anthropic-shaped requests (native normalized bodies and any
+        // request with Anthropic content blocks), not the Converse body
+        // a converse-routed chat transform would produce.
+        let invoke_body = if has_anthropic_content_blocks(request)
+            || BedrockProvider::uses_anthropic_messages_api(request, deployment)
+        {
+            let mut body =
+                ChatProvider::transform_request(&AnthropicProvider, request, deployment)?;
+            if let Value::Object(map) = &mut body {
+                map.insert("anthropic_version".to_string(), json!(ANTHROPIC_VERSION));
+                map.remove("stream");
+                map.remove("model");
+            }
+            body
+        } else {
+            ChatProvider::transform_request(&BedrockProvider, request, deployment)?
+        };
         let encoded = base64::engine::general_purpose::STANDARD.encode(invoke_body.to_string());
         Ok(json!({"input": {"invokeModel": {"body": encoded}}}))
     }
@@ -209,10 +302,77 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        let direct = ChatProvider::transform_request(&BedrockProvider, &request, &dep).unwrap();
+        // Golden vector (not derived from the transform under test): the
+        // Anthropic InvokeModel body Bedrock expects for this request.
         assert_eq!(
-            decoded, direct,
-            "invoke body must be the chat invoke payload"
+            decoded,
+            json!({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hello"}]
+            })
+        );
+    }
+
+    #[test]
+    fn converse_count_body_includes_top_level_system() {
+        // Native/utility-normalized bodies lift the system prompt to a
+        // top-level `system` field; the Converse transform only reads
+        // role:system messages, so the builder must convert it or the
+        // system prompt is silently uncounted.
+        let mut dep = deployment("bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0");
+        dep.oxllm_params
+            .extra
+            .insert("use_converse_api".to_string(), json!(true));
+        let request = json!({
+            "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+            "system": [{"type": "text", "text": "be terse", "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 64
+        });
+        let body = build_count_tokens_body(&request, &dep).unwrap();
+        assert_eq!(
+            body["input"]["converse"]["system"],
+            json!([{"text": "be terse"}, {"cachePoint": {"type": "default", "ttl": "1h"}}]),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn anthropic_blocks_route_to_invoke_count_input() {
+        // Anthropic-native content blocks would be dropped by the
+        // OpenAI-shaped Converse conversion; they must ride the
+        // InvokeModel input (Anthropic Messages body) instead, even on a
+        // Converse-routed deployment.
+        let mut dep = deployment("bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0");
+        dep.oxllm_params
+            .extra
+            .insert("use_converse_api".to_string(), json!(true));
+        let request = json!({
+            "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}}
+                ]
+            }],
+            "max_tokens": 64
+        });
+        let body = build_count_tokens_body(&request, &dep).unwrap();
+        let encoded = body["input"]["invokeModel"]["body"]
+            .as_str()
+            .expect("anthropic blocks must use invokeModel input");
+        let decoded: Value = serde_json::from_slice(
+            &base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(decoded["anthropic_version"], "bedrock-2023-05-31");
+        assert_eq!(
+            decoded["messages"][0]["content"][1]["type"], "image",
+            "image block must survive into the count body: {decoded}"
         );
     }
 

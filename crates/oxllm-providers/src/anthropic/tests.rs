@@ -7181,9 +7181,31 @@ fn generation_predicates_cover_5x_families() {
         "claude-opus-5",
         "claude-sonnet-5",
         "claude-opus-4-8",
+        // Mythos 5.1 is flagged only on the bare Anthropic id in the
+        // reference capability map; Bedrock dotted ids stay allowed
+        // until Bedrock behavior is verified live.
+        "anthropic.claude-mythos-5-1",
+        "us.anthropic.claude-mythos-5-1",
+        "global.anthropic.claude-mythos-5-1",
     ] {
         assert!(!model_rejects_forced_tool_use(model), "{model}");
     }
+    // Non-numeric sampling values must not slip past enforcement.
+    let weird = json!({
+        "model": "claude-sonnet-5-5",
+        "max_tokens": 100,
+        "temperature": "0.7",
+        "messages": [{"role": "user", "content": "hi"}]
+    });
+    let provider = AnthropicProvider;
+    let dep = adaptive_deployment("claude-sonnet-5-5");
+    assert!(
+        matches!(
+            provider.transform_request(&weird, &dep),
+            Err(oxllm_core::Error::BadRequest(_))
+        ),
+        "string temperature must be rejected on post-4.6 models"
+    );
     // `minimal` is an OpenAI spelling; it must collapse to `low`, never
     // reach Anthropic verbatim in output_config.effort.
     assert_eq!(
@@ -7251,6 +7273,7 @@ fn transform_enforces_sampling_and_forced_tool_policy_on_5_5() {
         "parallel_tool_calls": false
     });
     let mut strict_dep = adaptive_deployment("claude-sonnet-5-5");
+    strict_dep.oxllm_params.drop_params = Some(false);
     let error = provider
         .transform_request(&forced, &strict_dep)
         .expect_err("forced tool use on Sonnet 5.5 must be rejected");

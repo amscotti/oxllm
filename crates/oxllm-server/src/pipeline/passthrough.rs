@@ -711,6 +711,24 @@ async fn hooked_raw(
         } else {
             None
         };
+        // Bedrock CountTokens answers {"inputTokens": n}; native
+        // /v1/messages/count_tokens clients (Anthropic SDKs) expect
+        // {"input_tokens": n}. Rewrite the counting reply for Bedrock
+        // deployments so the native surface stays Anthropic-shaped
+        // (mirrors the reference bedrock->anthropic count response
+        // transform). The utility counter accepts either spelling.
+        if deployment.provider_slug() == "bedrock"
+            && endpoint_path(upstream_path) == "messages/count_tokens"
+            && let Some(tokens) = response_body
+                .as_ref()
+                .and_then(|body| body.get("inputTokens"))
+                .and_then(Value::as_u64)
+        {
+            *resp.body_mut() =
+                axum::body::Body::from(serde_json::json!({"input_tokens": tokens}).to_string());
+            resp.headers_mut()
+                .remove(axum::http::header::CONTENT_LENGTH);
+        }
         let usage = usage.or_else(|| {
             response_body
                 .as_ref()

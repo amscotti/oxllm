@@ -3091,9 +3091,21 @@ pub(crate) fn model_rejects_sampling_params(model: &str) -> bool {
 /// (Haiku 5.5 keeps forced tool use).
 pub(crate) fn model_rejects_forced_tool_use(model: &str) -> bool {
     let m = model.to_ascii_lowercase().replace(['_', '.'], "-");
-    ["fable-5-1", "mythos-5-1", "opus-5-5", "sonnet-5-5"]
+    if ["fable-5-1", "opus-5-5", "sonnet-5-5"]
         .iter()
         .any(|marker| m.contains(marker))
+    {
+        return true;
+    }
+    // Mythos 5.1 is flagged forced-tool-incapable only on the bare
+    // Anthropic id in the reference capability map; Bedrock dotted ids
+    // (anthropic./us./global. prefixes, normalized to
+    // `anthropic-claude-mythos-5-1` above) carry no such flag, unlike
+    // Fable 5.1 which is flagged on every route. Anthropic's docs name
+    // the model restriction for their own API; stay route-scoped until
+    // Bedrock behavior is verified live rather than weakening valid
+    // Bedrock forced calls.
+    m.contains("mythos-5-1") && !m.contains("anthropic-claude-mythos-5-1")
 }
 
 /// Enforce the post-4.6 sampling-parameter removal on a transformed
@@ -3109,19 +3121,19 @@ fn enforce_sampling_param_policy(
     if !model_rejects_sampling_params(model) {
         return Ok(());
     }
+    // A present non-null value is accepted only when it is numeric and
+    // default-valued; non-numeric values would otherwise slip past the
+    // numeric checks and fail opaquely upstream.
+    let accepted = |value: Option<&Value>, ok: fn(f64) -> bool| match value {
+        None | Some(Value::Null) => true,
+        Some(v) => v.as_f64().is_some_and(ok),
+    };
     let rejected: Vec<(&str, Value)> = [
         (
             "temperature",
-            out.get("temperature")
-                .and_then(Value::as_f64)
-                .is_some_and(|v| v != 1.0),
+            !accepted(out.get("temperature"), |v| v == 1.0),
         ),
-        (
-            "top_p",
-            out.get("top_p")
-                .and_then(Value::as_f64)
-                .is_some_and(|v| v < 0.99),
-        ),
+        ("top_p", !accepted(out.get("top_p"), |v| v >= 0.99)),
         ("top_k", out.contains_key("top_k")),
     ]
     .into_iter()
@@ -3286,6 +3298,7 @@ pub fn supports_native_output_format(model: &str) -> bool {
         "claude-opus-5",
         "claude-fable-5",
         "claude-mythos-5",
+        "claude-mythos-preview",
     ]
     .iter()
     .any(|family| model.contains(family))
