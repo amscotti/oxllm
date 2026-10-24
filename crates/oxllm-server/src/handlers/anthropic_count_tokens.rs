@@ -445,10 +445,10 @@ router_settings:
     }
 
     #[tokio::test]
-    async fn native_count_tokens_bedrock_reply_is_anthropic_shaped() {
-        // Bedrock CountTokens answers {"inputTokens": n}; the native
-        // /v1/messages/count_tokens surface must relay the Anthropic
-        // {"input_tokens": n} shape SDKs parse.
+    async fn native_count_tokens_bedrock_profile_uses_foundation_url_and_anthropic_reply() {
+        // CountTokens requires the foundation id even when the deployment uses
+        // an inference profile. Its {"inputTokens": n} reply must still be
+        // relayed in the Anthropic {"input_tokens": n} shape SDKs parse.
         let upstream = MockServer::start_async().await;
         let state = bedrock_state(&upstream.url(""));
         let mock = upstream
@@ -548,7 +548,7 @@ router_settings:
 model_list:
   - model_name: counted
     oxllm_params:
-      model: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      model: bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0
       api_base: {api_base}
       aws_access_key_id: AKIATESTKEY
       aws_secret_access_key: synthetic-secret

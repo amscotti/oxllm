@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 
 use super::{
     ANTHROPIC_VERSION, BedrockProvider, MODEL_PATH_SEGMENT, converse, should_use_converse,
-    strip_model_suffixes,
+    strip_cross_region_prefix, strip_model_suffixes,
 };
 use crate::anthropic::AnthropicProvider;
 
@@ -61,7 +61,9 @@ pub fn count_tokens_url(deployment: &Deployment, requested_model: Option<&str>) 
     }
     let model = resolve_count_model(deployment, requested_model);
     let model = strip_model_suffixes(&model);
-    let model_encoded = utf8_percent_encode(&model, MODEL_PATH_SEGMENT);
+    // CountTokens accepts foundation-model ids, not inference-profile ids.
+    let model = strip_cross_region_prefix(&model);
+    let model_encoded = utf8_percent_encode(model, MODEL_PATH_SEGMENT);
     Ok(format!("{base}/model/{model_encoded}/count-tokens"))
 }
 
@@ -230,6 +232,28 @@ mod tests {
             url,
             "https://bedrock-runtime.eu-west-1.amazonaws.com/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens"
         );
+    }
+
+    #[test]
+    fn count_tokens_url_normalizes_inference_profile_model_ids() {
+        for (profile, foundation) in [
+            (
+                "bedrock/us.anthropic.claude-opus-4-8",
+                "anthropic.claude-opus-4-8",
+            ),
+            (
+                "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "anthropic.claude-haiku-4-5-20251001-v1:0",
+            ),
+        ] {
+            let url = count_tokens_url(&deployment(profile), None).unwrap();
+            assert_eq!(
+                url,
+                format!(
+                    "https://bedrock-runtime.us-east-1.amazonaws.com/model/{foundation}/count-tokens"
+                )
+            );
+        }
     }
 
     #[test]
