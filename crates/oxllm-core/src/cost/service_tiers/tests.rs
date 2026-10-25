@@ -861,8 +861,8 @@ fn vertex_argon_batch_rates_cover_tokens_cache_reads_and_audio() {
         let expected = 300.0 * input + 500.0 * cache_read + 200.0 * audio + 100.0 * output;
         assert!((cost - expected).abs() < 1e-12, "{model}: {cost}");
     }
-    // The AI-Studio card publishes the same batch discount without an audio
-    // rate (it has no standard audio rate either).
+    // The AI-Studio card publishes the same batch discount without a
+    // modality-specific audio rate, so audio uses the resolved input rate.
     for model in ["gemini/gemini-4-argon", "gemini-4-argon"] {
         let pricing = crate::cost::lookup_pricing(model).expect("ai-studio argon priced");
         assert!(
@@ -874,7 +874,25 @@ fn vertex_argon_batch_rates_cover_tokens_cache_reads_and_audio() {
             (rates.input, rates.output, rates.cache_read),
             (1e-6, 5e-6, 5e-8)
         );
-        assert_eq!(rates.audio, 0.0, "{model} publishes no audio rate");
+        assert_eq!(rates.audio, 1e-6, "{model} uses the batch input rate");
+    }
+}
+
+#[test]
+fn gemini_flex_and_batch_use_published_audio_rates() {
+    for (model, expected) in [
+        ("gemini-2.5-flash-lite", 1.5e-7),
+        ("gemini/gemini-2.5-flash-lite", 1.5e-7),
+        ("gemini-3-flash-preview", 5e-7),
+        ("gemini-3.1-flash-lite", 2.5e-7),
+        ("gemini/gemini-3.1-flash-lite", 2.5e-7),
+        ("vertex_ai/gemini-3.1-flash-lite", 2.5e-7),
+    ] {
+        let pricing = crate::cost::lookup_pricing(model).expect("Gemini pricing");
+        for tier in ["flex", "batches"] {
+            let rates = pricing.rates_for_service_tier(1_000, 0, Some(tier));
+            assert_eq!(rates.audio, expected, "{model}: {tier}");
+        }
     }
 }
 

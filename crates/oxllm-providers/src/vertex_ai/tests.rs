@@ -61,6 +61,42 @@ fn make_deployment_with_extra(model: &str, extra: &[(&str, Value)]) -> Deploymen
 const PROVIDER: VertexProvider = VertexProvider;
 
 #[test]
+fn flagged_vertex_models_reject_or_drop_sampling_params() {
+    for model in [
+        "vertex_ai/gemini-3.6-flash",
+        "vertex_ai/gemini-3.8-flash-cyber",
+    ] {
+        let mut dep = make_deployment_with_extra(model, &[("vertex_project", json!("project"))]);
+        let request = json!({
+            "messages": [{"role": "user", "content": "Hi"}],
+            "temperature": 0.2,
+            "top_p": 0.5,
+            "top_k": 10
+        });
+        assert!(
+            ChatProvider::transform_request(&PROVIDER, &request, &dep).is_err(),
+            "{model}"
+        );
+        dep.oxllm_params.drop_params = Some(true);
+        let body = ChatProvider::transform_request(&PROVIDER, &request, &dep).unwrap();
+        for param in ["temperature", "top_p", "top_k"] {
+            assert!(body.get(param).is_none(), "{model}: {param}");
+        }
+    }
+    let older = make_deployment_with_extra(
+        "vertex_ai/gemini-2.5-flash",
+        &[("vertex_project", json!("project"))],
+    );
+    let body = ChatProvider::transform_request(
+        &PROVIDER,
+        &json!({"messages": [], "temperature": 0.2}),
+        &older,
+    )
+    .unwrap();
+    assert_eq!(body["temperature"], 0.2);
+}
+
+#[test]
 fn native_messages_api_uses_the_resolved_branch_not_version_fields_or_model_prices() {
     for (configured, requested, native) in [
         ("vertex_ai/custom-chat", "alias", false),

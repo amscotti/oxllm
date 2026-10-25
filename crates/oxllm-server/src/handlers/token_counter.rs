@@ -168,6 +168,7 @@ pub async fn token_counter(
         }
     }
     let model_used: String = deployment
+        .as_ref()
         .map(|d| {
             d.oxllm_params
                 .model
@@ -177,6 +178,13 @@ pub async fn token_counter(
         })
         .unwrap_or_else(|| model.clone());
     let tokenizer_type = oxllm_core::tokenizer_type_for(&model_used);
+    let drop_params = deployment
+        .as_ref()
+        .and_then(|deployment| deployment.oxllm_params.drop_params)
+        .or(state.config.oxllm_settings.drop_params)
+        .unwrap_or(false)
+        || request.get("drop_params").and_then(Value::as_bool) == Some(true);
+    oxllm_providers::anthropic::count_tokens::validate_tool_result_text(&request, drop_params)?;
     if request.get("call_endpoint").and_then(Value::as_bool) == Some(true) {
         oxllm_providers::anthropic::count_tokens::validate_tools(&request)
             .map_err(ApiError::from)?;

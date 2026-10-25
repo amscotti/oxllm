@@ -858,15 +858,14 @@ fn transform_response_does_not_fold_when_already_subset() {
 }
 
 #[test]
-fn stream_chunk_injects_dummy_choice_when_empty_choices_with_usage() {
+fn stream_chunk_preserves_empty_choices_on_usage_only_chunk() {
     let p = XaiProvider;
     let raw = "data: {\"id\":\"x\",\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}";
     let out = p
         .transform_stream_chunk(raw)
         .expect("ok")
         .expect("should produce value");
-    let choices = out["choices"].as_array().expect("choices present");
-    assert!(!choices.is_empty(), "dummy choice injected");
+    assert_eq!(out["choices"], serde_json::json!([]));
     assert_eq!(out["usage"]["prompt_tokens"], 5);
 }
 

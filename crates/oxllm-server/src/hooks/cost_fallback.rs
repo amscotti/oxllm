@@ -20,6 +20,30 @@
 use oxllm_core::{CallContext, ResponseSummary, UsageSummary, calculate_cost_for_service_tier};
 use serde_json::Value;
 
+/// Resolve the catalog identity used for GPT-transcribe billing. A public
+/// alias is accepted only when trusted routing/pricing state names the model.
+fn gpt_transcribe_model<'a>(ctx: &'a CallContext, model: &'a str) -> Option<&'a str> {
+    [
+        Some(model),
+        ctx.pricing_model.as_deref(),
+        ctx.deployment_model.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|candidate| candidate.rsplit('/').next() == Some("gpt-transcribe"))
+}
+
+/// Provider-reported media seconds are valid only for GPT-transcribe. Other
+/// transcription models keep their existing latency/receipt behavior.
+fn gpt_transcribe_seconds(ctx: &CallContext, model: &str, body: Option<&Value>) -> Option<f64> {
+    gpt_transcribe_model(ctx, model)?;
+    body?
+        .get("usage")?
+        .get("seconds")?
+        .as_f64()
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+}
+
 /// Canonical response-cost resolution used by headers, budgets, spend logs and
 /// exporters. Public aliases retain their wire identity while pricing can fall
 /// back to the concrete model selected by the router.
@@ -94,12 +118,24 @@ pub(crate) fn resolve_cost(
         .filter(|pricing| pricing.is_per_second_priced());
     let duration_table = if ctx.deployment_pricing.is_none() {
         models.iter().flatten().find_map(|model| {
-            oxllm_core::lookup_pricing_with_provider(model, provider)
-                .filter(|pricing| pricing.is_per_second_priced())
+            oxllm_core::lookup_pricing_with_provider(model, provider).filter(|pricing| {
+                pricing.is_per_second_priced() || model.rsplit('/').next() == Some("gpt-transcribe")
+            })
         })
     } else {
         None
     };
+    if let Some(media_model) = gpt_transcribe_model(ctx, model)
+        && let Some(seconds) = gpt_transcribe_seconds(ctx, model, body)
+    {
+        if let Some(pricing) = duration_override {
+            return pricing.cost_per_second(seconds * 1000.0);
+        }
+        if let Some(pricing) = oxllm_core::lookup_pricing_with_provider(media_model, provider) {
+            return pricing.cost_per_media_second(seconds);
+        }
+        return reported_cost();
+    }
     if duration_override.is_none() && duration_table.is_none() {
         // Normal unpriced requests (and token-priced requests lacking usage)
         // do not require an upstream duration observation.
@@ -461,6 +497,35 @@ mod tests {
             "fallback must use the serving provider's tiered row: got {cost}, expected {expected}"
         );
         assert_eq!(expected, 250_000.0 * 2.5e-6 + 1_000.0 * 1.5e-5);
+    }
+
+    #[test]
+    fn gpt_transcribe_uses_provider_seconds_without_request_latency() {
+        let ctx = CallContext::for_test("gpt-transcribe");
+        let body = serde_json::json!({"usage":{"type":"duration","seconds":2.0}});
+        assert_eq!(
+            resolve_cost(&ctx, "gpt-transcribe", None, Some(&body), None, "openai"),
+            Some(0.00015)
+        );
+        let mut aliased = CallContext::for_test("public-transcribe-alias");
+        aliased.pricing_model = Some("openai/gpt-transcribe".into());
+        aliased.deployment_model = Some("openai/gpt-transcribe".into());
+        assert_eq!(
+            resolve_cost(
+                &aliased,
+                "public-transcribe-alias",
+                None,
+                Some(&body),
+                None,
+                "openai"
+            ),
+            Some(0.00015)
+        );
+        // Other transcription models must not use the GPT-specific fallback.
+        assert_eq!(
+            resolve_cost(&ctx, "whisper-1", None, Some(&body), None, "openai"),
+            None
+        );
     }
 
     /// Pre-computed `resp.cost` is authoritative and returned verbatim — the

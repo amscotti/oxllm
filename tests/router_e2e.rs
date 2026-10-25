@@ -975,6 +975,7 @@ async fn test_azure_streaming_chat_completion_with_usage() {
             "model": "azure/my-gpt4-deployment",
             "messages": [{"role": "user", "content": "Hi"}],
             "stream": true,
+            "stream_options": {"include_usage": true},
         }))
         .send()
         .await

@@ -425,6 +425,7 @@ async fn groq_streaming_with_usage_chunk() {
             "model": "groq-llama",
             "messages": [{"role": "user", "content": "Hi"}],
             "stream": true,
+            "stream_options": {"include_usage": true},
         }))
         .send()
         .await

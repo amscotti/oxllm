@@ -163,9 +163,30 @@ struct ToolBlockState {
     accumulated_args: String,
 }
 
+#[derive(Default)]
+struct ThinkingBlockState {
+    next_index: u64,
+    current_index: Option<u64>,
+}
+
+impl ThinkingBlockState {
+    fn start(&mut self) -> u64 {
+        let index = self.next_index;
+        self.next_index = self.next_index.saturating_add(1);
+        self.current_index = Some(index);
+        index
+    }
+
+    fn current(&self) -> u64 {
+        self.current_index.unwrap_or(0)
+    }
+}
+
 thread_local! {
     static STREAM_TOOL_BLOCKS: RefCell<HashMap<u64, ToolBlockState>> =
         RefCell::new(HashMap::new());
+    static STREAM_THINKING_STATE: RefCell<ThinkingBlockState> =
+        RefCell::new(ThinkingBlockState::default());
 }
 
 /// Host-owned per-stream accumulator for the Anthropic provider.
@@ -184,6 +205,7 @@ thread_local! {
 pub struct AnthropicStreamState {
     meta: Option<StreamMeta>,
     tool_blocks: HashMap<u64, ToolBlockState>,
+    thinking: ThinkingBlockState,
     reverse_map: HashMap<String, String>,
 }
 
@@ -993,16 +1015,20 @@ impl ChatProvider for AnthropicProvider {
         // travels with the tokio task across worker-thread migrations.
         STREAM_META.with(|meta_cell| {
             STREAM_TOOL_BLOCKS.with(|blocks_cell| {
-                TOOL_NAME_MAP.with(|map_cell| {
-                    let mut meta_guard = meta_cell.borrow_mut();
-                    let mut blocks_guard = blocks_cell.borrow_mut();
-                    let map_guard = map_cell.borrow();
-                    transform_stream_chunk_impl(
-                        chunk,
-                        &mut meta_guard,
-                        &mut blocks_guard,
-                        &map_guard,
-                    )
+                STREAM_THINKING_STATE.with(|thinking_cell| {
+                    TOOL_NAME_MAP.with(|map_cell| {
+                        let mut meta_guard = meta_cell.borrow_mut();
+                        let mut blocks_guard = blocks_cell.borrow_mut();
+                        let mut thinking_guard = thinking_cell.borrow_mut();
+                        let map_guard = map_cell.borrow();
+                        transform_stream_chunk_impl(
+                            chunk,
+                            &mut meta_guard,
+                            &mut blocks_guard,
+                            &mut thinking_guard,
+                            &map_guard,
+                        )
+                    })
                 })
             })
         })
@@ -1034,7 +1060,13 @@ impl ChatProvider for AnthropicProvider {
                 "anthropic stream state type mismatch".into(),
             ));
         };
-        transform_stream_chunk_impl(chunk, &mut s.meta, &mut s.tool_blocks, &s.reverse_map)
+        transform_stream_chunk_impl(
+            chunk,
+            &mut s.meta,
+            &mut s.tool_blocks,
+            &mut s.thinking,
+            &s.reverse_map,
+        )
     }
 
     fn prompt_cache_wire(
@@ -1123,6 +1155,25 @@ pub fn is_invalid_thinking_signature_error(error_text: &str) -> bool {
     lower.contains("thinking")
         && lower.contains("signature")
         && (lower.contains("invalid") || lower.contains("valid string"))
+}
+
+/// Detect the specific signature-binding mismatch that callers can ask
+/// Anthropic to reject with `thinking.block_binding.prefix_mismatch_behavior:
+/// error`. Other invalid signatures must not be classified by this helper.
+pub fn is_thinking_binding_mismatch_error(error_text: &str) -> bool {
+    !error_text.is_empty()
+        && error_text
+            .to_ascii_lowercase()
+            .contains("bound to a different conversation")
+}
+
+/// Whether the caller explicitly requested a binding-mismatch error and must
+/// not have it hidden by a retry that strips their thinking blocks.
+pub fn request_errors_on_thinking_binding_mismatch(request_body: &Value) -> bool {
+    request_body
+        .pointer("/thinking/block_binding/prefix_mismatch_behavior")
+        .and_then(Value::as_str)
+        == Some("error")
 }
 
 /// Strip `thinking` / `redacted_thinking` content blocks and the top-level
@@ -1884,6 +1935,15 @@ fn placeholder_text_block(cache_control: Option<Value>) -> Value {
 /// Any other block type (or an `image_url` whose URL we could not convert)
 /// is passed through unchanged so non-image content flows unaffected.
 fn convert_content_block_to_anthropic(block: &Value) -> Value {
+    let mut block = block.clone();
+    if matches!(
+        block.get("type").and_then(|v| v.as_str()),
+        Some("thinking" | "redacted_thinking")
+    ) {
+        if let Some(object) = block.as_object_mut() {
+            object.remove("index");
+        }
+    }
     if block.get("type").and_then(|v| v.as_str()) == Some("image_url") {
         let url = block
             .get("image_url")
@@ -3601,6 +3661,7 @@ fn transform_stream_chunk_impl(
     chunk: &str,
     meta: &mut Option<StreamMeta>,
     tool_blocks: &mut HashMap<u64, ToolBlockState>,
+    thinking: &mut ThinkingBlockState,
     reverse_map: &HashMap<String, String>,
 ) -> Result<Option<Value>> {
     let trimmed = chunk.trim();
@@ -3635,14 +3696,16 @@ fn transform_stream_chunk_impl(
             // Clear the per-stream tool-block tracker so a new stream never
             // inherits a prior stream's blocks.
             tool_blocks.clear();
+            *thinking = ThinkingBlockState::default();
             Ok(Some(role_chunk))
         }
         "content_block_start" => Ok(build_content_block_start_chunk(
             &value,
             tool_blocks,
+            thinking,
             reverse_map,
         )),
-        "content_block_delta" => Ok(build_delta_chunk(&value, tool_blocks)),
+        "content_block_delta" => Ok(build_delta_chunk(&value, tool_blocks, thinking)),
         "content_block_stop" => Ok(build_content_block_stop_chunk(&value, tool_blocks)),
         "message_delta" => Ok(Some(build_finish_chunk(&value, meta))),
         "error" => {
@@ -3844,13 +3907,18 @@ fn build_role_chunk(value: &Value, meta: &StreamMeta) -> Value {
 fn build_content_block_start_chunk(
     value: &Value,
     tool_blocks: &mut HashMap<u64, ToolBlockState>,
+    thinking: &mut ThinkingBlockState,
     reverse_map: &HashMap<String, String>,
 ) -> Option<Value> {
     let block = value.get("content_block")?;
     let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+    let thinking_index =
+        matches!(block_type, "thinking" | "redacted_thinking").then(|| thinking.start());
 
     if block_type == "redacted_thinking" {
+        let mut block = block.clone();
+        block["index"] = json!(thinking_index.unwrap_or(0));
         return Some(json!({
             "object":"chat.completion.chunk",
             "choices":[{"index":0,"delta":{"thinking_blocks":[block]},"finish_reason":null}]
@@ -3920,6 +3988,7 @@ fn build_content_block_start_chunk(
 fn build_delta_chunk(
     value: &Value,
     tool_blocks: &mut HashMap<u64, ToolBlockState>,
+    thinking_state: &mut ThinkingBlockState,
 ) -> Option<Value> {
     let delta = value.get("delta")?;
     let delta_type = delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -3999,7 +4068,7 @@ fn build_delta_chunk(
             // clients can reassemble it.
             delta_obj.insert(
                 "thinking_blocks".to_string(),
-                json!([{"type": "thinking", "signature": signature}]),
+                json!([{"type": "thinking", "signature": signature, "index": thinking_state.current()}]),
             );
         }
         return Some(json!({

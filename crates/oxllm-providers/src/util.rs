@@ -630,6 +630,11 @@ pub(crate) fn thinking_blocks_for_replay(
                     block["thinking"] = json!(text);
                 }
             }
+            if let Some(object) = block.as_object_mut() {
+                // `index` is a stream-accumulator hint, not an Anthropic
+                // request field; never replay it to the provider.
+                object.remove("index");
+            }
             replay.push(block);
         }
     }
@@ -728,6 +733,18 @@ mod tests {
                     vec![signed(Some(json!(expected_text)))]
                 );
             }
+        }
+
+        #[test]
+        fn stream_index_is_removed_before_replay() {
+            let mut block = signed(Some(json!("thought")));
+            block["index"] = json!(3);
+            let message = json!({
+                "role": "assistant", "content": "answer", "thinking_blocks": [block]
+            });
+            let replay = thinking_blocks_for_replay(&message, true).unwrap();
+            assert_eq!(replay.len(), 1);
+            assert!(replay[0].get("index").is_none());
         }
 
         #[test]

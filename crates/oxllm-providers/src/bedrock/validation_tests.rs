@@ -1025,6 +1025,43 @@ fn validation_converse_stream_thinking_block_is_replayable_after_stop() {
 }
 
 #[test]
+fn validation_converse_thinking_blocks_have_sequential_indexes() {
+    let request = json!({"model": "anthropic.claude-sonnet-4-5"});
+    let mut state = None;
+    let mut chunks = Vec::new();
+    for raw in [
+        r#"{"messageStart":{}}"#,
+        r#"{"contentBlockIndex":0,"start":{"reasoningContent":{}}}"#,
+        r#"{"contentBlockIndex":0,"delta":{"reasoningContent":{"signature":"sig-0"}}}"#,
+        r#"{"contentBlockIndex":0}"#,
+        r#"{"contentBlockIndex":1,"start":{"reasoningContent":{"redactedContent":"AA=="}}}"#,
+        r#"{"contentBlockIndex":2,"start":{"reasoningContent":{}}}"#,
+        r#"{"contentBlockIndex":2,"delta":{"reasoningContent":{"text":"done","signature":"sig-2"}}}"#,
+        r#"{"contentBlockIndex":2}"#,
+    ] {
+        if let Some(chunk) = BedrockProvider
+            .transform_stream_chunk_stateful(raw, &mut state, &request)
+            .unwrap()
+        {
+            chunks.push(chunk);
+        }
+    }
+    assert_eq!(chunks.len(), 6, "{chunks:?}");
+    assert_eq!(
+        chunks[2]["choices"][0]["delta"]["thinking_blocks"][0]["index"],
+        0
+    );
+    assert_eq!(
+        chunks[3]["choices"][0]["delta"]["thinking_blocks"][0]["index"],
+        1
+    );
+    assert_eq!(
+        chunks[5]["choices"][0]["delta"]["thinking_blocks"][0]["index"],
+        2
+    );
+}
+
+#[test]
 fn validation_fragmented_redacted_thinking_errors_instead_of_losing_bytes() {
     let mut state = None;
     let request = json!({"model": "anthropic.claude-sonnet-4-5"});

@@ -632,7 +632,18 @@ async fn hooked_raw(
         } else {
             &model
         };
-        let normalized = oxllm_providers::anthropic::count_tokens::normalize_request(&input, model)
+        let drop_params = deployment
+            .oxllm_params
+            .drop_params
+            .or(state.config.oxllm_settings.drop_params)
+            .unwrap_or(false)
+            || input.get("drop_params").and_then(Value::as_bool) == Some(true);
+        let normalized =
+            oxllm_providers::anthropic::count_tokens::normalize_request_with_drop_params(
+                &input,
+                model,
+                drop_params,
+            )
             .map_err(ApiError::from)?;
         Bytes::from(normalized.to_string())
     } else {
@@ -1641,15 +1652,16 @@ pub(crate) fn meter_native_stream(
                         "native upstream stream failed".into(),
                     ));
                 }
-                Err(_) => {
-                    break StreamExit::Error(oxllm_core::Error::Network(
-                        "native upstream stream idle timeout".into(),
-                    ));
-                }
+                Err(_) => break StreamExit::IdleTimeout,
             }
         };
-        if matches!(exit, StreamExit::Error(oxllm_core::Error::Network(_))) {
-            let _ = tx.try_send(Err(std::io::Error::other("upstream stream failed")));
+        let transport_error = match &exit {
+            StreamExit::IdleTimeout => Some("upstream stream idle timeout"),
+            StreamExit::Error(oxllm_core::Error::Network(_)) => Some("upstream stream failed"),
+            _ => None,
+        };
+        if let Some(message) = transport_error {
+            let _ = tx.try_send(Err(std::io::Error::other(message)));
         }
         // message_start's zero output count is a prompt snapshot, not a final
         // output report. Preserve prompt/cache usage but estimate text already
@@ -3935,5 +3947,69 @@ mod tests {
             resolve_model(&state, None, &Value::Null, Some("groq")).is_err(),
             "missing provider must not fall back to a different provider's key"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn native_idle_timeout_preserves_timeout_and_skips_cooldown() {
+        use tokio_stream::StreamExt as _;
+        use tokio_stream::wrappers::ReceiverStream;
+
+        let mut state = AppState::with_registry(
+            ProxyConfig {
+                model_list: vec![],
+                oxllm_settings: OxllmSettings::default(),
+                general_settings: GeneralSettings::default(),
+                router_settings: crate::config::types::RouterSettings {
+                    routing: crate::config::types::RoutingKnobs {
+                        allowed_fails: Some(0),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                extra: serde_json::Map::new(),
+            },
+            oxllm_providers::default_registry(),
+        )
+        .unwrap();
+        let (spend_tx, mut ledger) = tokio::sync::mpsc::channel(4);
+        state.spend_tx = Some(spend_tx);
+        let deployment = Deployment {
+            model_name: "claude".into(),
+            oxllm_params: oxllm_core::deployment::OxllmParams {
+                model: "anthropic/claude-sonnet-4-6".into(),
+                stream_timeout: Some(1),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cooldown_key = state.router.cooldown_key(&deployment);
+        let (upstream_tx, upstream_rx) =
+            tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(2);
+        upstream_tx
+            .send(Ok(Bytes::from(concat!(
+                "data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n"
+            ))))
+            .await
+            .unwrap();
+        let upstream_body = axum::body::Body::from_stream(ReceiverStream::new(upstream_rx));
+        let response = meter_native_stream(
+            &state,
+            deployment,
+            oxllm_core::CallContext::for_test("claude"),
+            Response::new(upstream_body),
+            Default::default(),
+        );
+        let mut body = response.into_body().into_data_stream();
+        let first = body.next().await.unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&first).contains("message_start"));
+        let error = body.next().await.unwrap().expect_err("idle read must fail");
+        assert!(error.to_string().contains("timeout"), "{error}");
+        let row = ledger.recv().await.expect("partial native spend row");
+        assert_eq!(row.status.as_deref(), Some("partial"));
+        assert_eq!(row.prompt_tokens, Some(10));
+        assert!(row.completion_tokens.unwrap() > 0);
+        assert!(!state.router.cooldown_store().is_cooling(&cooldown_key));
+        drop(upstream_tx);
     }
 }

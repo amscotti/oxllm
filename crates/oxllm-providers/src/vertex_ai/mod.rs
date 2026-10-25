@@ -390,6 +390,9 @@ impl ChatProvider for VertexProvider {
                 &openapi_model(&model),
                 &params,
             );
+            let drop_params = deployment.oxllm_params.drop_params == Some(true)
+                || request.get("drop_params").and_then(Value::as_bool) == Some(true);
+            crate::openai_compat::enforce_gemini_sampling_params(&mut body, &model, drop_params)?;
             crate::openai_compat::relax_gemini_unsupported_minimal_effort(&mut body, &model);
             crate::openai_compat::drop_foreign_thinking_blocks(&mut body);
             Ok(body)

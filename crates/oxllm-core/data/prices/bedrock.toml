@@ -38,6 +38,11 @@ output_cost_per_token = 2.500000e-6
 max_input_tokens = 1000000
 max_output_tokens = 64000
 cache_read_input_token_cost = 7.500000e-8
+input_cost_per_token_batches = 1.500000e-7
+output_cost_per_token_batches = 1.250000e-6
+input_cost_per_token_priority = 5.250000e-7
+output_cost_per_token_priority = 4.375000e-6
+cache_read_input_token_cost_priority = 1.312500e-7
 
 ["amazon.nova-2-multimodal-embeddings-v1:0"]
 input_cost_per_token = 1.350000e-7
@@ -52,6 +57,10 @@ max_output_tokens = 64000
 cache_read_input_token_cost = 3.125000e-7
 input_cost_per_audio_token = 1.250000e-6
 input_cost_per_image_token = 1.250000e-6
+input_cost_per_token_batches = 6.250000e-7
+output_cost_per_token_batches = 5.000000e-6
+input_cost_per_token_priority = 2.187500e-6
+output_cost_per_token_priority = 1.750000e-5
 
 ["amazon.nova-lite-v1:0"]
 input_cost_per_token = 6.000000e-8
@@ -59,6 +68,8 @@ output_cost_per_token = 2.400000e-7
 max_input_tokens = 300000
 max_output_tokens = 10000
 cache_read_input_token_cost = 1.500000e-8
+input_cost_per_token_batches = 3.000000e-8
+output_cost_per_token_batches = 1.200000e-7
 
 ["amazon.nova-micro-v1:0"]
 input_cost_per_token = 3.500000e-8
@@ -66,6 +77,8 @@ output_cost_per_token = 1.400000e-7
 max_input_tokens = 128000
 max_output_tokens = 10000
 cache_read_input_token_cost = 8.750000e-9
+input_cost_per_token_batches = 1.750000e-8
+output_cost_per_token_batches = 7.000000e-8
 
 ["amazon.nova-pro-v1:0"]
 input_cost_per_token = 8.000000e-7
@@ -76,6 +89,11 @@ cache_read_input_token_cost = 2.000000e-7
 cache_read_input_token_cost_flex = 1.000000e-7
 input_cost_per_token_flex = 4.000000e-7
 output_cost_per_token_flex = 1.600000e-6
+input_cost_per_token_batches = 4.000000e-7
+output_cost_per_token_batches = 1.600000e-6
+input_cost_per_token_priority = 1.400000e-6
+output_cost_per_token_priority = 5.600000e-6
+cache_read_input_token_cost_priority = 3.500000e-7
 
 ["amazon.rerank-v1:0"]
 input_cost_per_token = 0.0
@@ -327,7 +345,7 @@ search_queries_cost_per_query = 1.000000e-02
 ["anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
-max_input_tokens = 1000000
+max_input_tokens = 200000
 max_output_tokens = 64000
 cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
@@ -490,7 +508,7 @@ cache_creation_input_token_cost_above_1hr_above_100k_tokens = 1.100000e-6
 ["apac.anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
-max_input_tokens = 1000000
+max_input_tokens = 200000
 max_output_tokens = 64000
 cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
@@ -1628,6 +1646,10 @@ max_input_tokens = 164000
 max_output_tokens = 8000
 input_cost_per_token_flex = 3.100000e-7
 output_cost_per_token_flex = 9.250000e-7
+input_cost_per_token_batches = 3.100000e-7
+output_cost_per_token_batches = 9.250000e-7
+input_cost_per_token_priority = 1.085000e-6
+output_cost_per_token_priority = 3.237500e-6
 
 ["eu.amazon.nova-2-lite-v1:0"]
 input_cost_per_token = 4.290000e-7
@@ -1842,7 +1864,7 @@ search_queries_cost_per_query = 1.000000e-02
 ["eu.anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
-max_input_tokens = 1000000
+max_input_tokens = 200000
 max_output_tokens = 64000
 cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
@@ -1930,6 +1952,11 @@ output_cost_per_token = 2.500000e-6
 max_input_tokens = 1000000
 max_output_tokens = 64000
 cache_read_input_token_cost = 7.500000e-8
+input_cost_per_token_batches = 1.500000e-7
+output_cost_per_token_batches = 1.250000e-6
+input_cost_per_token_priority = 5.250000e-7
+output_cost_per_token_priority = 4.375000e-6
+cache_read_input_token_cost_priority = 1.312500e-7
 
 ["global.anthropic.claude-fable-5"]
 input_cost_per_token = 1.000000e-5
@@ -2027,7 +2054,7 @@ search_queries_cost_per_query = 1.000000e-02
 ["global.anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
-max_input_tokens = 1000000
+max_input_tokens = 200000
 max_output_tokens = 64000
 cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
@@ -2085,6 +2112,10 @@ max_input_tokens = 128000
 max_output_tokens = 8000
 input_cost_per_token_flex = 5.000000e-8
 output_cost_per_token_flex = 1.500000e-7
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 1.500000e-7
+input_cost_per_token_priority = 1.600000e-7
+output_cost_per_token_priority = 5.100000e-7
 
 ["google.gemma-3-27b-it"]
 input_cost_per_token = 2.300000e-7
@@ -2093,6 +2124,10 @@ max_input_tokens = 128000
 max_output_tokens = 8000
 input_cost_per_token_flex = 1.200000e-7
 output_cost_per_token_flex = 1.900000e-7
+input_cost_per_token_batches = 1.200000e-7
+output_cost_per_token_batches = 1.900000e-7
+input_cost_per_token_priority = 4.000000e-7
+output_cost_per_token_priority = 6.700000e-7
 
 ["google.gemma-3-4b-it"]
 input_cost_per_token = 4.000000e-8
@@ -2101,6 +2136,10 @@ max_input_tokens = 128000
 max_output_tokens = 8000
 input_cost_per_token_flex = 2.000000e-8
 output_cost_per_token_flex = 4.000000e-8
+input_cost_per_token_batches = 2.000000e-8
+output_cost_per_token_batches = 4.000000e-8
+input_cost_per_token_priority = 7.000000e-8
+output_cost_per_token_priority = 1.400000e-7
 
 ["jp.anthropic.claude-haiku-4-5-20251001-v1:0"]
 input_cost_per_token = 1.100000e-6
@@ -2225,12 +2264,16 @@ input_cost_per_token = 7.200000e-7
 output_cost_per_token = 7.200000e-7
 max_input_tokens = 128000
 max_output_tokens = 2048
+input_cost_per_token_batches = 3.600000e-7
+output_cost_per_token_batches = 3.600000e-7
 
 ["meta.llama3-1-8b-instruct-v1:0"]
 input_cost_per_token = 2.200000e-7
 output_cost_per_token = 2.200000e-7
 max_input_tokens = 128000
 max_output_tokens = 2048
+input_cost_per_token_batches = 1.100000e-7
+output_cost_per_token_batches = 1.100000e-7
 
 ["meta.llama3-2-11b-instruct-v1:0"]
 input_cost_per_token = 1.600000e-7
@@ -2261,6 +2304,8 @@ input_cost_per_token = 7.200000e-7
 output_cost_per_token = 7.200000e-7
 max_input_tokens = 128000
 max_output_tokens = 4096
+input_cost_per_token_batches = 3.600000e-7
+output_cost_per_token_batches = 3.600000e-7
 
 ["meta.llama3-70b-instruct-v1:0"]
 input_cost_per_token = 2.650000e-6
@@ -2297,6 +2342,10 @@ max_input_tokens = 1000000
 max_output_tokens = 8000
 input_cost_per_token_flex = 1.500000e-7
 output_cost_per_token_flex = 6.000000e-7
+input_cost_per_token_batches = 1.500000e-7
+output_cost_per_token_batches = 6.000000e-7
+input_cost_per_token_priority = 5.200000e-7
+output_cost_per_token_priority = 2.100000e-6
 
 ["minimax.minimax-m2.1"]
 input_cost_per_token = 3.000000e-7
@@ -2305,6 +2354,10 @@ max_input_tokens = 196000
 max_output_tokens = 8000
 input_cost_per_token_flex = 1.500000e-7
 output_cost_per_token_flex = 6.000000e-7
+input_cost_per_token_batches = 1.500000e-7
+output_cost_per_token_batches = 6.000000e-7
+input_cost_per_token_priority = 5.250000e-7
+output_cost_per_token_priority = 2.100000e-6
 
 ["minimax.minimax-m2.5"]
 input_cost_per_token = 3.000000e-7
@@ -2313,6 +2366,10 @@ max_input_tokens = 196000
 max_output_tokens = 8000
 input_cost_per_token_flex = 1.500000e-7
 output_cost_per_token_flex = 6.000000e-7
+input_cost_per_token_batches = 1.500000e-7
+output_cost_per_token_batches = 6.000000e-7
+input_cost_per_token_priority = 5.250000e-7
+output_cost_per_token_priority = 2.100000e-6
 
 ["mistral.devstral-2-123b"]
 input_cost_per_token = 4.000000e-7
@@ -2321,6 +2378,10 @@ max_input_tokens = 256000
 max_output_tokens = 32000
 input_cost_per_token_flex = 2.000000e-7
 output_cost_per_token_flex = 1.000000e-6
+input_cost_per_token_batches = 2.000000e-7
+output_cost_per_token_batches = 1.000000e-6
+input_cost_per_token_priority = 7.000000e-7
+output_cost_per_token_priority = 3.500000e-6
 
 ["mistral.magistral-small-2509"]
 input_cost_per_token = 5.000000e-7
@@ -2329,6 +2390,10 @@ max_input_tokens = 128000
 max_output_tokens = 40000
 input_cost_per_token_flex = 2.500000e-7
 output_cost_per_token_flex = 7.500000e-7
+input_cost_per_token_batches = 2.500000e-7
+output_cost_per_token_batches = 7.500000e-7
+input_cost_per_token_priority = 8.800000e-7
+output_cost_per_token_priority = 2.630000e-6
 
 ["mistral.ministral-3-14b-instruct"]
 input_cost_per_token = 2.000000e-7
@@ -2337,6 +2402,10 @@ max_input_tokens = 128000
 max_output_tokens = 8000
 input_cost_per_token_flex = 1.000000e-7
 output_cost_per_token_flex = 1.000000e-7
+input_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_batches = 1.000000e-7
+input_cost_per_token_priority = 3.500000e-7
+output_cost_per_token_priority = 3.500000e-7
 
 ["mistral.ministral-3-3b-instruct"]
 input_cost_per_token = 1.000000e-7
@@ -2345,6 +2414,10 @@ max_input_tokens = 128000
 max_output_tokens = 8000
 input_cost_per_token_flex = 5.000000e-8
 output_cost_per_token_flex = 5.000000e-8
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 5.000000e-8
+input_cost_per_token_priority = 1.700000e-7
+output_cost_per_token_priority = 1.700000e-7
 
 ["mistral.ministral-3-8b-instruct"]
 input_cost_per_token = 1.500000e-7
@@ -2353,6 +2426,10 @@ max_input_tokens = 128000
 max_output_tokens = 8000
 input_cost_per_token_flex = 7.000000e-8
 output_cost_per_token_flex = 7.000000e-8
+input_cost_per_token_batches = 7.000000e-8
+output_cost_per_token_batches = 7.000000e-8
+input_cost_per_token_priority = 2.600000e-7
+output_cost_per_token_priority = 2.600000e-7
 
 ["mistral.mistral-7b-instruct-v0:2"]
 input_cost_per_token = 1.500000e-7
@@ -2379,6 +2456,10 @@ max_input_tokens = 256000
 max_output_tokens = 32000
 input_cost_per_token_flex = 2.500000e-7
 output_cost_per_token_flex = 7.500000e-7
+input_cost_per_token_batches = 2.500000e-7
+output_cost_per_token_batches = 7.500000e-7
+input_cost_per_token_priority = 8.800000e-7
+output_cost_per_token_priority = 2.630000e-6
 
 ["mistral.mistral-small-2402-v1:0"]
 input_cost_per_token = 1.000000e-6
@@ -2401,6 +2482,10 @@ max_input_tokens = 32768
 max_output_tokens = 8192
 input_cost_per_token_flex = 2.000000e-8
 output_cost_per_token_flex = 2.000000e-8
+input_cost_per_token_batches = 2.000000e-8
+output_cost_per_token_batches = 2.000000e-8
+input_cost_per_token_priority = 7.000000e-8
+output_cost_per_token_priority = 7.000000e-8
 
 ["mistral.voxtral-small-24b-2507"]
 input_cost_per_token = 1.000000e-7
@@ -2409,12 +2494,20 @@ max_input_tokens = 32768
 max_output_tokens = 8192
 input_cost_per_token_flex = 5.000000e-8
 output_cost_per_token_flex = 1.500000e-7
+input_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_batches = 1.500000e-7
+input_cost_per_token_priority = 1.700000e-7
+output_cost_per_token_priority = 5.200000e-7
 
 ["moonshot.kimi-k2-thinking"]
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 2.500000e-6
 max_input_tokens = 256000
 max_output_tokens = 16000
+input_cost_per_token_batches = 3.000000e-7
+output_cost_per_token_batches = 1.250000e-6
+input_cost_per_token_priority = 1.050000e-6
+output_cost_per_token_priority = 4.380000e-6
 
 ["moonshotai.kimi-k2.5"]
 input_cost_per_token = 6.000000e-7
@@ -2423,6 +2516,10 @@ max_input_tokens = 256000
 max_output_tokens = 16000
 input_cost_per_token_flex = 3.000000e-7
 output_cost_per_token_flex = 1.500000e-6
+input_cost_per_token_batches = 3.000000e-7
+output_cost_per_token_batches = 1.500000e-6
+input_cost_per_token_priority = 1.050000e-6
+output_cost_per_token_priority = 5.250000e-6
 
 ["nvidia.nemotron-nano-12b-v2"]
 input_cost_per_token = 2.000000e-7
@@ -2431,6 +2528,10 @@ max_input_tokens = 128000
 max_output_tokens = 8000
 input_cost_per_token_flex = 1.000000e-7
 output_cost_per_token_flex = 3.000000e-7
+input_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_batches = 3.000000e-7
+input_cost_per_token_priority = 3.500000e-7
+output_cost_per_token_priority = 1.050000e-6
 
 ["nvidia.nemotron-nano-3-30b"]
 input_cost_per_token = 6.000000e-8
@@ -2439,6 +2540,10 @@ max_input_tokens = 256000
 max_output_tokens = 8000
 input_cost_per_token_flex = 3.000000e-8
 output_cost_per_token_flex = 1.200000e-7
+input_cost_per_token_batches = 3.000000e-8
+output_cost_per_token_batches = 1.200000e-7
+input_cost_per_token_priority = 1.100000e-7
+output_cost_per_token_priority = 4.200000e-7
 
 ["nvidia.nemotron-nano-9b-v2"]
 input_cost_per_token = 6.000000e-8
@@ -2447,6 +2552,10 @@ max_input_tokens = 128000
 max_output_tokens = 8000
 input_cost_per_token_flex = 3.000000e-8
 output_cost_per_token_flex = 1.200000e-7
+input_cost_per_token_batches = 3.000000e-8
+output_cost_per_token_batches = 1.200000e-7
+input_cost_per_token_priority = 1.100000e-7
+output_cost_per_token_priority = 4.000000e-7
 
 ["nvidia.nemotron-super-3-120b"]
 input_cost_per_token = 1.500000e-7
@@ -2455,6 +2564,10 @@ max_input_tokens = 256000
 max_output_tokens = 32000
 input_cost_per_token_flex = 7.500000e-8
 output_cost_per_token_flex = 3.250000e-7
+input_cost_per_token_batches = 7.500000e-8
+output_cost_per_token_batches = 3.250000e-7
+input_cost_per_token_priority = 2.625000e-7
+output_cost_per_token_priority = 1.137500e-6
 
 ["openai.gpt-oss-120b-1:0"]
 input_cost_per_token = 1.500000e-7
@@ -2465,6 +2578,8 @@ input_cost_per_token_flex = 7.500000e-8
 output_cost_per_token_flex = 3.000000e-7
 input_cost_per_token_priority = 2.625000e-7
 output_cost_per_token_priority = 1.050000e-6
+input_cost_per_token_batches = 7.500000e-8
+output_cost_per_token_batches = 3.000000e-7
 
 ["openai.gpt-oss-20b-1:0"]
 input_cost_per_token = 7.000000e-8
@@ -2475,6 +2590,8 @@ input_cost_per_token_flex = 3.500000e-8
 output_cost_per_token_flex = 1.500000e-7
 input_cost_per_token_priority = 1.225000e-7
 output_cost_per_token_priority = 5.250000e-7
+input_cost_per_token_batches = 3.500000e-8
+output_cost_per_token_batches = 1.500000e-7
 
 ["openai.gpt-oss-safeguard-120b"]
 input_cost_per_token = 1.500000e-7
@@ -2483,6 +2600,10 @@ max_input_tokens = 128000
 max_output_tokens = 16000
 input_cost_per_token_flex = 7.000000e-8
 output_cost_per_token_flex = 3.000000e-7
+input_cost_per_token_batches = 7.000000e-8
+output_cost_per_token_batches = 3.000000e-7
+input_cost_per_token_priority = 2.600000e-7
+output_cost_per_token_priority = 1.050000e-6
 
 ["openai.gpt-oss-safeguard-20b"]
 input_cost_per_token = 7.000000e-8
@@ -2491,6 +2612,10 @@ max_input_tokens = 128000
 max_output_tokens = 16000
 input_cost_per_token_flex = 3.000000e-8
 output_cost_per_token_flex = 1.000000e-7
+input_cost_per_token_batches = 3.000000e-8
+output_cost_per_token_batches = 1.000000e-7
+input_cost_per_token_priority = 1.200000e-7
+output_cost_per_token_priority = 3.500000e-7
 
 ["qwen.qwen3-235b-a22b-2507-v1:0"]
 input_cost_per_token = 2.200000e-7
@@ -2509,17 +2634,25 @@ max_input_tokens = 32768
 max_output_tokens = 8192
 input_cost_per_token_flex = 7.500000e-8
 output_cost_per_token_flex = 3.000000e-7
+input_cost_per_token_batches = 7.500000e-8
+output_cost_per_token_batches = 3.000000e-7
+input_cost_per_token_priority = 2.625000e-7
+output_cost_per_token_priority = 1.050000e-6
 
 ["qwen.qwen3-coder-30b-a3b-v1:0"]
 input_cost_per_token = 1.500000e-7
 output_cost_per_token = 6.000000e-7
 max_input_tokens = 262144
 max_output_tokens = 16384
+input_cost_per_token_batches = 7.500000e-8
+output_cost_per_token_batches = 3.000000e-7
+input_cost_per_token_priority = 2.625000e-7
+output_cost_per_token_priority = 1.050000e-6
 
 ["qwen.qwen3-coder-480b-a35b-v1:0"]
 input_cost_per_token = 4.500000e-7
 output_cost_per_token = 1.800000e-6
-max_input_tokens = 131072
+max_input_tokens = 262144
 max_output_tokens = 16384
 
 ["qwen.qwen3-coder-next"]
@@ -2529,6 +2662,10 @@ max_input_tokens = 256000
 max_output_tokens = 16000
 input_cost_per_token_flex = 2.500000e-7
 output_cost_per_token_flex = 6.000000e-7
+input_cost_per_token_batches = 2.500000e-7
+output_cost_per_token_batches = 6.000000e-7
+input_cost_per_token_priority = 8.750000e-7
+output_cost_per_token_priority = 2.100000e-6
 
 ["qwen.qwen3-next-80b-a3b"]
 input_cost_per_token = 1.500000e-7
@@ -2541,6 +2678,10 @@ input_cost_per_token = 5.300000e-7
 output_cost_per_token = 2.660000e-6
 max_input_tokens = 256000
 max_output_tokens = 8000
+input_cost_per_token_batches = 2.600000e-7
+output_cost_per_token_batches = 1.330000e-6
+input_cost_per_token_priority = 9.300000e-7
+output_cost_per_token_priority = 4.660000e-6
 
 ["twelvelabs.marengo-embed-2-7-v1:0"]
 input_cost_per_token = 7.000000e-5
@@ -2571,6 +2712,11 @@ cache_read_input_token_cost = 8.250000e-8
 cache_read_input_token_cost_flex = 4.125000e-8
 input_cost_per_token_flex = 1.650000e-7
 output_cost_per_token_flex = 1.375000e-6
+input_cost_per_token_batches = 1.650000e-7
+output_cost_per_token_batches = 1.375000e-6
+input_cost_per_token_priority = 5.775000e-7
+output_cost_per_token_priority = 4.812500e-6
+cache_read_input_token_cost_priority = 1.443750e-7
 
 ["us.amazon.nova-2-pro-preview-20251202-v1:0"]
 input_cost_per_token = 1.375000e-6
@@ -2580,6 +2726,10 @@ max_output_tokens = 64000
 cache_read_input_token_cost = 3.437500e-7
 input_cost_per_audio_token = 1.375000e-6
 input_cost_per_image_token = 1.375000e-6
+input_cost_per_token_batches = 6.875000e-7
+output_cost_per_token_batches = 5.500000e-6
+input_cost_per_token_priority = 2.406250e-6
+output_cost_per_token_priority = 1.925000e-5
 
 ["us.amazon.nova-lite-v1:0"]
 input_cost_per_token = 6.000000e-8
@@ -2587,6 +2737,8 @@ output_cost_per_token = 2.400000e-7
 max_input_tokens = 300000
 max_output_tokens = 10000
 cache_read_input_token_cost = 1.500000e-8
+input_cost_per_token_batches = 3.000000e-8
+output_cost_per_token_batches = 1.200000e-7
 
 ["us.amazon.nova-micro-v1:0"]
 input_cost_per_token = 3.500000e-8
@@ -2594,6 +2746,8 @@ output_cost_per_token = 1.400000e-7
 max_input_tokens = 128000
 max_output_tokens = 10000
 cache_read_input_token_cost = 8.750000e-9
+input_cost_per_token_batches = 1.750000e-8
+output_cost_per_token_batches = 7.000000e-8
 
 ["us.amazon.nova-premier-v1:0"]
 input_cost_per_token = 2.500000e-6
@@ -2610,6 +2764,11 @@ cache_read_input_token_cost = 2.000000e-7
 cache_read_input_token_cost_flex = 1.000000e-7
 input_cost_per_token_flex = 4.000000e-7
 output_cost_per_token_flex = 1.600000e-6
+input_cost_per_token_batches = 4.000000e-7
+output_cost_per_token_batches = 1.600000e-6
+input_cost_per_token_priority = 1.400000e-6
+output_cost_per_token_priority = 5.600000e-6
+cache_read_input_token_cost_priority = 3.500000e-7
 
 ["us.anthropic.claude-3-5-haiku-20241022-v1:0"]
 input_cost_per_token = 8.000000e-7
@@ -2784,7 +2943,7 @@ search_queries_cost_per_query = 1.000000e-02
 ["us.anthropic.claude-sonnet-4-20250514-v1:0"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
-max_input_tokens = 1000000
+max_input_tokens = 200000
 max_output_tokens = 64000
 cache_read_input_token_cost = 3.000000e-7
 cache_creation_input_token_cost = 3.750000e-6
@@ -2848,6 +3007,10 @@ max_input_tokens = 163840
 max_output_tokens = 163840
 input_cost_per_token_flex = 3.100000e-7
 output_cost_per_token_flex = 9.250000e-7
+input_cost_per_token_batches = 3.100000e-7
+output_cost_per_token_batches = 9.250000e-7
+input_cost_per_token_priority = 1.085000e-6
+output_cost_per_token_priority = 3.237500e-6
 
 ["us.meta.llama3-1-405b-instruct-v1:0"]
 input_cost_per_token = 2.400000e-6
@@ -2860,12 +3023,16 @@ input_cost_per_token = 7.200000e-7
 output_cost_per_token = 7.200000e-7
 max_input_tokens = 128000
 max_output_tokens = 2048
+input_cost_per_token_batches = 3.600000e-7
+output_cost_per_token_batches = 3.600000e-7
 
 ["us.meta.llama3-1-8b-instruct-v1:0"]
 input_cost_per_token = 2.200000e-7
 output_cost_per_token = 2.200000e-7
 max_input_tokens = 128000
 max_output_tokens = 2048
+input_cost_per_token_batches = 1.100000e-7
+output_cost_per_token_batches = 1.100000e-7
 
 ["us.meta.llama3-2-11b-instruct-v1:0"]
 input_cost_per_token = 1.600000e-7
@@ -2896,6 +3063,8 @@ input_cost_per_token = 7.200000e-7
 output_cost_per_token = 7.200000e-7
 max_input_tokens = 128000
 max_output_tokens = 4096
+input_cost_per_token_batches = 3.600000e-7
+output_cost_per_token_batches = 3.600000e-7
 
 ["us.meta.llama4-maverick-17b-instruct-v1:0"]
 input_cost_per_token = 2.400000e-7
@@ -2955,6 +3124,10 @@ max_input_tokens = 203000
 max_output_tokens = 4000
 input_cost_per_token_flex = 3.000000e-7
 output_cost_per_token_flex = 1.100000e-6
+input_cost_per_token_batches = 3.000000e-7
+output_cost_per_token_batches = 1.100000e-6
+input_cost_per_token_priority = 1.050000e-6
+output_cost_per_token_priority = 3.850000e-6
 
 ["zai.glm-4.7-flash"]
 input_cost_per_token = 7.000000e-8
@@ -2963,12 +3136,20 @@ max_input_tokens = 203000
 max_output_tokens = 4000
 input_cost_per_token_flex = 3.500000e-8
 output_cost_per_token_flex = 2.000000e-7
+input_cost_per_token_batches = 3.500000e-8
+output_cost_per_token_batches = 2.000000e-7
+input_cost_per_token_priority = 1.225000e-7
+output_cost_per_token_priority = 7.000000e-7
 
 ["zai.glm-5"]
 input_cost_per_token = 1.000000e-6
 output_cost_per_token = 3.200000e-6
 max_input_tokens = 200000
 max_output_tokens = 128000
+input_cost_per_token_batches = 5.000000e-7
+output_cost_per_token_batches = 1.600000e-6
+input_cost_per_token_priority = 1.750000e-6
+output_cost_per_token_priority = 5.600000e-6
 ["anthropic.claude-fable-5-1"]
 input_cost_per_token = 1.000000e-5
 output_cost_per_token = 5.000000e-5
@@ -4114,6 +4295,10 @@ max_input_tokens = 4096
 max_output_tokens = 4096
 input_cost_per_token_flex = 7.500000e-8
 output_cost_per_token_flex = 3.000000e-7
+input_cost_per_token_batches = 7.500000e-8
+output_cost_per_token_batches = 3.000000e-7
+input_cost_per_token_priority = 2.625000e-7
+output_cost_per_token_priority = 1.050000e-6
 
 ["amazon.nova-2-sonic-v1:0"]
 input_cost_per_token = 3.300000e-7
@@ -4197,8 +4382,8 @@ search_queries_cost_per_query = 1.000000e-02
 ["global.xai.grok-4.7"]
 input_cost_per_token = 2.000000e-6
 output_cost_per_token = 6.000000e-6
-max_input_tokens = 500000
-max_output_tokens = 500000
+max_input_tokens = 524288
+max_output_tokens = 524288
 cache_read_input_token_cost = 5.000000e-7
 cache_read_input_token_cost_flex = 2.500000e-7
 cache_read_input_token_cost_priority = 8.750000e-7
@@ -4242,8 +4427,8 @@ search_queries_cost_per_query = 1.000000e-02
 ["us.xai.grok-4.7"]
 input_cost_per_token = 2.200000e-6
 output_cost_per_token = 6.600000e-6
-max_input_tokens = 500000
-max_output_tokens = 500000
+max_input_tokens = 524288
+max_output_tokens = 524288
 cache_read_input_token_cost = 5.500000e-7
 cache_read_input_token_cost_flex = 2.750000e-7
 cache_read_input_token_cost_priority = 9.625000e-7
@@ -4308,6 +4493,11 @@ max_input_tokens = 1000000
 max_output_tokens = 10000
 cache_read_input_token_cost = 6.250000e-7
 mode = "chat"
+input_cost_per_token_batches = 1.250000e-6
+output_cost_per_token_batches = 6.250000e-6
+input_cost_per_token_priority = 4.375000e-6
+output_cost_per_token_priority = 2.187500e-5
+cache_read_input_token_cost_priority = 1.093750e-6
 
 ["jp.amazon.nova-2-lite-v1:0"]
 input_cost_per_token = 3.960000e-7

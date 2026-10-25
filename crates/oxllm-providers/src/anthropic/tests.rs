@@ -3204,6 +3204,42 @@ fn stream_signature_delta_preserved_in_thinking_blocks() {
 }
 
 #[test]
+fn stream_thinking_blocks_have_sequential_indexes() {
+    let p = AnthropicProvider;
+    let mut state = None;
+    let events = [
+        r#"{"type":"message_start","message":{"id":"msg-1","model":"claude","usage":{"input_tokens":1,"output_tokens":0}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-0"}}"#,
+        r#"{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"AA=="}}"#,
+        r#"{"type":"content_block_start","index":2,"content_block":{"type":"thinking","thinking":""}}"#,
+        r#"{"type":"content_block_delta","index":2,"delta":{"type":"signature_delta","signature":"sig-2"}}"#,
+    ];
+    let mut chunks = Vec::new();
+    for event in events {
+        if let Some(chunk) = p
+            .transform_stream_chunk_stateful(&format!("data: {event}"), &mut state, &json!({}))
+            .unwrap()
+        {
+            chunks.push(chunk);
+        }
+    }
+    assert_eq!(chunks.len(), 4);
+    assert_eq!(
+        chunks[1]["choices"][0]["delta"]["thinking_blocks"][0]["index"],
+        0
+    );
+    assert_eq!(
+        chunks[2]["choices"][0]["delta"]["thinking_blocks"][0]["index"],
+        1
+    );
+    assert_eq!(
+        chunks[3]["choices"][0]["delta"]["thinking_blocks"][0]["index"],
+        2
+    );
+}
+
+#[test]
 fn stream_empty_signature_delta_returns_none() {
     // An empty signature_delta fragment produces nothing.
     let p = AnthropicProvider;
@@ -3259,6 +3295,33 @@ fn stream_combined_signature_and_thinking_delta_surfaces_both() {
     let delta = &out["choices"][0]["delta"];
     assert_eq!(delta["reasoning_content"], "thinking_text");
     assert_eq!(delta["thinking_blocks"][0]["signature"], "sig_value");
+}
+
+#[test]
+fn binding_mismatch_guard_is_specific_to_requested_binding_errors() {
+    let body = json!({
+        "thinking": {"block_binding": {"prefix_mismatch_behavior": "error"}}
+    });
+    assert!(request_errors_on_thinking_binding_mismatch(&body));
+    assert!(is_thinking_binding_mismatch_error(
+        "Invalid `signature` in `thinking` block. The block is bound to a different conversation."
+    ));
+    assert!(is_invalid_thinking_signature_error(
+        "Invalid `signature` in `thinking` block. The block is bound to a different conversation."
+    ));
+    assert!(!is_thinking_binding_mismatch_error(
+        "Invalid `signature` in `thinking` block"
+    ));
+}
+
+#[test]
+fn inline_thinking_replay_removes_stream_index() {
+    let message = json!({
+        "role": "assistant",
+        "content": [{"type": "thinking", "thinking": "thought", "signature": "sig", "index": 0}]
+    });
+    let out = normalize_message(&message).unwrap().unwrap();
+    assert!(out["content"][0].get("index").is_none());
 }
 
 // =================================================================

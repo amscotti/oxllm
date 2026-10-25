@@ -33,6 +33,52 @@ use crate::util::apply_bearer_auth;
 
 pub(crate) use sse::parse_openai_stream_chunk;
 
+/// Fold additive reasoning tokens into `completion_tokens` for providers such
+/// as xAI and Azure AI Grok whose total is prompt + completion + reasoning.
+/// The fold is idempotent and only applies when that additive identity holds.
+pub(crate) fn fold_reasoning_tokens_into_completion(out: &mut Value) {
+    let Some(usage) = out.get_mut("usage").and_then(|u| u.as_object_mut()) else {
+        return;
+    };
+    fold_reasoning_in_usage_object(usage);
+}
+
+/// Shared inner: fold reasoning into completion for one usage object map.
+pub(crate) fn fold_reasoning_in_usage_object(usage: &mut Map<String, Value>) {
+    let reasoning = usage
+        .get("completion_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if reasoning == 0 {
+        return;
+    }
+    let prompt = usage
+        .get("prompt_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let completion = usage
+        .get("completion_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total = usage
+        .get("total_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if total == prompt.saturating_add(completion) {
+        return;
+    }
+    if total != prompt.saturating_add(completion).saturating_add(reasoning) {
+        return;
+    }
+    usage.insert(
+        "completion_tokens".to_string(),
+        Value::Number(serde_json::Number::from(
+            completion.saturating_add(reasoning),
+        )),
+    );
+}
+
 /// The request parameters every compat provider preserves in
 /// `transform_request`. Shared so the list cannot drift between providers.
 pub const SUPPORTED_CHAT_PARAMS: &[&str] = &[
@@ -320,6 +366,52 @@ fn strip_message_fields(body: &mut Value, dropped: &[&str]) {
     }
 }
 
+/// Whether Google honors sampling controls for this Gemini model. These
+/// flagged releases accept the fields but ignore them, and newer releases may
+/// reject them. Older and unlisted models retain their existing behavior.
+pub(crate) fn gemini_supports_sampling_params(model: &str) -> bool {
+    let bare = model.rsplit('/').next().unwrap_or(model);
+    !matches!(
+        bare,
+        "gemini-3.5-flash-lite"
+            | "gemini-3.6-flash"
+            | "gemini-3.7-flash"
+            | "gemini-3.8-flash"
+            | "gemini-3.8-flash-cyber"
+    )
+}
+
+/// Enforce the flagged Gemini sampling contract after request shaping. Null
+/// knobs are already omitted by the builder and are not errors.
+pub(crate) fn enforce_gemini_sampling_params(
+    body: &mut Value,
+    model: &str,
+    drop_params: bool,
+) -> Result<()> {
+    if gemini_supports_sampling_params(model) {
+        return Ok(());
+    }
+    let Some(object) = body.as_object_mut() else {
+        return Ok(());
+    };
+    let requested = ["temperature", "top_p", "top_k"]
+        .into_iter()
+        .filter(|param| object.contains_key(*param))
+        .collect::<Vec<_>>();
+    if requested.is_empty() {
+        return Ok(());
+    }
+    if drop_params {
+        for param in requested {
+            object.remove(param);
+        }
+        return Ok(());
+    }
+    Err(oxllm_core::Error::BadRequest(format!(
+        "{model} does not support sampling parameters (temperature, top_p, top_k); set drop_params=true to omit them"
+    )))
+}
+
 /// Build a chat request body using an explicit allow-list of param names.
 /// Providers with a narrower surface (e.g. Gemini via
 /// [`OpenAiCompatProvider::with_supported_params`]) pass their override so
@@ -410,6 +502,11 @@ impl ChatProvider for OpenAiCompatProvider {
             .supported_params_override
             .unwrap_or(SUPPORTED_CHAT_PARAMS);
         let mut out = build_chat_request_with_params(request, model, params);
+        if self.slug == "gemini" {
+            let drop_params = deployment.oxllm_params.drop_params == Some(true)
+                || request.get("drop_params").and_then(Value::as_bool) == Some(true);
+            enforce_gemini_sampling_params(&mut out, model, drop_params)?;
+        }
         // Mantle and Databricks-hosted OpenAI models reject the same sampling
         // params, and the gpt-5.6 family rejects function tools unless
         // reasoning is explicitly off. Other compat hosts keep the caller's

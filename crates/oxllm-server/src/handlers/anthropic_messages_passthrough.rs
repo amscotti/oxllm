@@ -28,6 +28,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
+use serde_json::Value;
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
@@ -105,7 +106,7 @@ async fn messages_passthrough_inner(
 ) -> Result<Response, ApiError> {
     let state = state.load_full();
     let model = extract_request_model(&body)?;
-    forward_with_mode(
+    let response = forward_with_mode(
         &state,
         &auth,
         PassthroughMode::HookedRaw {
@@ -122,5 +123,79 @@ async fn messages_passthrough_inner(
         .with_provider_hint("anthropic")
         .with_forward_headers(vetted_client_headers(&headers)),
     )
-    .await
+    .await?;
+    normalize_stop_sequence(response).await
+}
+
+/// Anthropic requires nullable `stop_sequence` on successful Messages
+/// responses. Preserve streaming/error bodies and every other field verbatim.
+async fn normalize_stop_sequence(response: Response) -> Result<Response, ApiError> {
+    let is_json = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"));
+    if !response.status().is_success() || !is_json {
+        return Ok(response);
+    }
+    let (parts, body) = response.into_parts();
+    let bytes = axum::body::to_bytes(body, crate::security::MAX_RESPONSE_BODY_BYTES)
+        .await
+        .map_err(|_| ApiError::internal("native Anthropic response could not be read"))?;
+    let mut value: Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            return Ok(Response::from_parts(parts, axum::body::Body::from(bytes)));
+        }
+    };
+    if value.get("type").and_then(Value::as_str) == Some("error") {
+        return Ok(Response::from_parts(parts, axum::body::Body::from(bytes)));
+    }
+    let Some(object) = value.as_object_mut() else {
+        return Ok(Response::from_parts(parts, axum::body::Body::from(bytes)));
+    };
+    if object.contains_key("stop_sequence") {
+        return Ok(Response::from_parts(parts, axum::body::Body::from(bytes)));
+    }
+    object.insert("stop_sequence".into(), Value::Null);
+    let body = axum::body::Body::from(value.to_string());
+    let mut response = Response::from_parts(parts, body);
+    response
+        .headers_mut()
+        .remove(axum::http::header::CONTENT_LENGTH);
+    Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stop_sequence_preserves_non_object_json() {
+        let mut response = Response::new(axum::body::Body::from("[]"));
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/json"),
+        );
+        let response = normalize_stop_sequence(response).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(bytes.as_ref(), b"[]");
+    }
+
+    #[tokio::test]
+    async fn stop_sequence_leaves_error_bodies_unchanged() {
+        let raw = r#"{"type":"error","error":{"type":"overloaded_error","message":"busy"}}"#;
+        let mut response = Response::new(axum::body::Body::from(raw));
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/json"),
+        );
+        let response = normalize_stop_sequence(response).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(bytes.as_ref(), raw.as_bytes());
+    }
 }

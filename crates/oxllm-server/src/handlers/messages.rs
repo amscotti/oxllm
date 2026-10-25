@@ -29,7 +29,7 @@ use crate::error::ApiError;
 use crate::handlers::anthropic_common::{
     anthropic_error_response, sanitise_forwarded_error_message, status_to_anthropic_error_type,
 };
-use crate::handlers::chat::chat_completions_inner;
+use crate::handlers::chat::chat_completions_inner_preserving_stream_usage;
 use crate::handlers::convert::anthropic::{
     AnthropicStreamConverter, anthropic_to_openai_request, openai_to_anthropic_response,
     process_openai_sse_event, validate_anthropic_to_openai_request,
@@ -90,6 +90,19 @@ async fn messages_inner(
     crate::pipeline::check_request_model_acl(&state, &auth, model, &request_body, &headers).await?;
 
     validate_anthropic_to_openai_request(&request_body)?;
+    let drop_params = state
+        .router
+        .deployments_for_model(&state.deployments, model)
+        .into_iter()
+        .next()
+        .and_then(|deployment| deployment.oxllm_params.drop_params)
+        .or(state.config.oxllm_settings.drop_params)
+        .unwrap_or(false)
+        || request_body.get("drop_params").and_then(Value::as_bool) == Some(true);
+    oxllm_providers::anthropic::count_tokens::validate_tool_result_text(
+        &request_body,
+        drop_params,
+    )?;
     let chat_body = anthropic_to_openai_request(&request_body);
     let chat_bytes = serde_json::to_vec(&chat_body)
         .map_err(|e| ApiError::internal(format!("failed to serialize request: {e}")))?;
@@ -104,53 +117,57 @@ async fn messages_inner(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let chat_response =
-        match chat_completions_inner(state, &auth, &headers, Bytes::from(chat_bytes)).await {
-            Ok(resp) if resp.status().is_success() => resp,
-            Ok(resp) => {
-                let status = resp.status();
-                // Capture the orchestrator-stamped transparency headers
-                // (`x-request-id`, `x-oxllm-*`, `x-ratelimit-*`) BEFORE
-                // `into_body()` discards the header map, so an Anthropic SDK
-                // client can correlate a 429/500 from this route with
-                // logs/traces — matching the success path's
-                // `preserved_response_headers` handling.
-                let preserved = preserved_response_headers(resp.headers());
-                let body_bytes =
-                    axum::body::to_bytes(resp.into_body(), crate::security::MAX_ERROR_BODY_BYTES)
-                        .await
-                        .map_err(|e| {
-                            ApiError::internal(format!("failed to read error body: {e}"))
-                        })?;
-                let error_body: Value = serde_json::from_slice(&body_bytes).unwrap_or(Value::Null);
-                let raw_message = error_body
-                    .get("error")
-                    .and_then(|e| e.get("message"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("upstream error");
-                tracing::debug!(
-                    status = status.as_u16(),
-                    raw_message = raw_message,
-                    "anthropic messages handler forwarding upstream error"
-                );
-                let message = sanitise_forwarded_error_message(raw_message);
-                return Ok(anthropic_error_response(
-                    status,
-                    status_to_anthropic_error_type(status),
-                    &message,
-                    &preserved,
-                ));
-            }
-            Err(e) => {
-                let status = e.status;
-                let message = e.message.clone();
-                let error_type = status_to_anthropic_error_type(e.status);
-                let preserved = preserved_response_headers(e.into_response().headers());
-                return Ok(anthropic_error_response(
-                    status, error_type, &message, &preserved,
-                ));
-            }
-        };
+    let chat_response = match chat_completions_inner_preserving_stream_usage(
+        state,
+        &auth,
+        &headers,
+        Bytes::from(chat_bytes),
+    )
+    .await
+    {
+        Ok(resp) if resp.status().is_success() => resp,
+        Ok(resp) => {
+            let status = resp.status();
+            // Capture the orchestrator-stamped transparency headers
+            // (`x-request-id`, `x-oxllm-*`, `x-ratelimit-*`) BEFORE
+            // `into_body()` discards the header map, so an Anthropic SDK
+            // client can correlate a 429/500 from this route with
+            // logs/traces — matching the success path's
+            // `preserved_response_headers` handling.
+            let preserved = preserved_response_headers(resp.headers());
+            let body_bytes =
+                axum::body::to_bytes(resp.into_body(), crate::security::MAX_ERROR_BODY_BYTES)
+                    .await
+                    .map_err(|e| ApiError::internal(format!("failed to read error body: {e}")))?;
+            let error_body: Value = serde_json::from_slice(&body_bytes).unwrap_or(Value::Null);
+            let raw_message = error_body
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("upstream error");
+            tracing::debug!(
+                status = status.as_u16(),
+                raw_message = raw_message,
+                "anthropic messages handler forwarding upstream error"
+            );
+            let message = sanitise_forwarded_error_message(raw_message);
+            return Ok(anthropic_error_response(
+                status,
+                status_to_anthropic_error_type(status),
+                &message,
+                &preserved,
+            ));
+        }
+        Err(e) => {
+            let status = e.status;
+            let message = e.message.clone();
+            let error_type = status_to_anthropic_error_type(e.status);
+            let preserved = preserved_response_headers(e.into_response().headers());
+            return Ok(anthropic_error_response(
+                status, error_type, &message, &preserved,
+            ));
+        }
+    };
 
     if is_stream {
         convert_stream_to_anthropic(chat_response).await

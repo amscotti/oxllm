@@ -826,6 +826,9 @@ pub(crate) struct AnthropicStreamConverter {
     model: String,
     next_block_index: i64,
     open_block: Option<(i64, OpenBlockKind)>,
+    live_tool_call: Option<u64>,
+    held_tool_calls: std::collections::BTreeSet<u64>,
+    tool_call_error: Option<String>,
     tool_calls: std::collections::HashMap<u64, ToolCallBlock>,
     input_tokens: u64,
     output_tokens: u64,
@@ -845,6 +848,9 @@ impl AnthropicStreamConverter {
             model: String::new(),
             next_block_index: 0,
             open_block: None,
+            live_tool_call: None,
+            held_tool_calls: std::collections::BTreeSet::new(),
+            tool_call_error: None,
             tool_calls: std::collections::HashMap::new(),
             input_tokens: 0,
             output_tokens: 0,
@@ -855,9 +861,170 @@ impl AnthropicStreamConverter {
         }
     }
 
+    fn tool_call_error_events(&mut self) -> Option<Vec<Value>> {
+        let message = self.tool_call_error.clone()?;
+        self.finished = true;
+        let mut events = Vec::new();
+        if let Some((idx, _)) = self.open_block.take() {
+            events.push(json!({"type": "content_block_stop", "index": idx}));
+        }
+        self.live_tool_call = None;
+        events.push(json!({
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": message}
+        }));
+        Some(events)
+    }
+
+    /// Open one pending tool block and flush its buffered arguments. Anthropic
+    /// tool blocks are sequential, so only this call remains live; all other
+    /// calls stay held until a non-tool chunk or the stream finishes.
+    fn open_tool_call(&mut self, index: u64, events: &mut Vec<Value>) {
+        if !self.held_tool_calls.contains(&index) {
+            return;
+        }
+        let (id, name, started) = match self.tool_calls.get(&index) {
+            Some(call) => (call.id.clone(), call.name.clone(), call.started),
+            None => return,
+        };
+        if started {
+            self.held_tool_calls.remove(&index);
+            return;
+        }
+        if id.is_empty() || name.is_empty() {
+            return;
+        }
+        self.held_tool_calls.remove(&index);
+        if let Some((idx, _)) = self.open_block.take() {
+            events.push(json!({"type": "content_block_stop", "index": idx}));
+        }
+        let new_idx = self.next_block_index;
+        self.next_block_index += 1;
+        let pending_arguments = match self.tool_calls.get_mut(&index) {
+            Some(call) => {
+                call.started = true;
+                call.anthropic_index = new_idx;
+                std::mem::take(&mut call.pending_arguments)
+            }
+            None => String::new(),
+        };
+        self.live_tool_call = Some(index);
+        self.open_block = Some((new_idx, OpenBlockKind::ToolUse));
+        events.push(json!({
+            "type": "content_block_start",
+            "index": new_idx,
+            "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}}
+        }));
+        if !pending_arguments.is_empty() {
+            events.push(json!({
+                "type": "content_block_delta", "index": new_idx,
+                "delta": {"type": "input_json_delta", "partial_json": pending_arguments}
+            }));
+        }
+    }
+
+    fn release_held_tool_calls(&mut self, events: &mut Vec<Value>) {
+        while let Some(index) = self.held_tool_calls.iter().next().copied() {
+            let ready = self
+                .tool_calls
+                .get(&index)
+                .is_some_and(|call| !call.id.is_empty() && !call.name.is_empty());
+            if !ready {
+                // An incomplete entry at the end of the stream cannot form a
+                // valid block. Discard it rather than blocking later calls.
+                self.held_tool_calls.remove(&index);
+                continue;
+            }
+            self.open_tool_call(index, events);
+        }
+    }
+
+    fn process_tool_calls(&mut self, tool_calls: &[Value], events: &mut Vec<Value>) {
+        for tool_call in tool_calls {
+            let openai_index = tool_call.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+            // Defence-in-depth: bound the per-stream tool-call map so a
+            // pathological index flood cannot grow it unboundedly.
+            if self.tool_calls.len() >= MAX_STREAM_TOOL_CALLS
+                && !self.tool_calls.contains_key(&openai_index)
+            {
+                tracing::warn!(
+                    tool_call_index = openai_index,
+                    "dropping tool call beyond MAX_STREAM_TOOL_CALLS cap"
+                );
+                continue;
+            }
+            let id = tool_call.get("id").and_then(|v| v.as_str());
+            let name = tool_call
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str());
+            self.record_tool_call_metadata(openai_index, id, name, events);
+            if let Some(args) = tool_call
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|v| v.as_str())
+            {
+                self.record_tool_call_arguments(openai_index, args, events);
+            }
+        }
+    }
+
+    fn record_tool_call_metadata(
+        &mut self,
+        index: u64,
+        id: Option<&str>,
+        name: Option<&str>,
+        events: &mut Vec<Value>,
+    ) {
+        let (ready, started) = {
+            let call = self.tool_calls.entry(index).or_default();
+            if let Some(id) = id.filter(|id| !id.is_empty()) {
+                call.id = id.to_string();
+            }
+            if let Some(name) = name.filter(|name| !name.is_empty()) {
+                call.name = name.to_string();
+            }
+            (!call.id.is_empty() && !call.name.is_empty(), call.started)
+        };
+        if ready && !started {
+            self.held_tool_calls.insert(index);
+            if self.live_tool_call.is_none() {
+                self.open_tool_call(index, events);
+            }
+        }
+    }
+
+    fn record_tool_call_arguments(&mut self, index: u64, arguments: &str, events: &mut Vec<Value>) {
+        if arguments.is_empty() {
+            return;
+        }
+        if self.live_tool_call == Some(index) {
+            let anthropic_index = self.tool_calls.get(&index).map(|call| call.anthropic_index);
+            if self.open_block == Some((anthropic_index.unwrap_or(-1), OpenBlockKind::ToolUse)) {
+                events.push(json!({
+                    "type": "content_block_delta", "index": anthropic_index,
+                    "delta": {"type": "input_json_delta", "partial_json": arguments}
+                }));
+                return;
+            }
+        }
+        self.held_tool_calls.insert(index);
+        let call = self.tool_calls.entry(index).or_default();
+        if call.pending_arguments.len() + arguments.len() > MAX_STREAM_BUFFER_BYTES {
+            self.tool_call_error = Some(format!(
+                "tool call arguments exceed the {MAX_STREAM_BUFFER_BYTES}-byte streaming limit"
+            ));
+            return;
+        }
+        call.pending_arguments.push_str(arguments);
+    }
+
     pub(crate) fn convert_chunk(&mut self, chunk: &Value) -> Vec<Value> {
         if self.finished {
             return Vec::new();
+        }
+        if let Some(events) = self.tool_call_error_events() {
+            return events;
         }
         if let Some(error) = chunk.get("error").filter(|e| !e.is_null()) {
             self.finished = true;
@@ -869,6 +1036,7 @@ impl AnthropicStreamConverter {
             if let Some((idx, _)) = self.open_block.take() {
                 ev.push(json!({"type": "content_block_stop", "index": idx}));
             }
+            self.live_tool_call = None;
             ev.push(json!({"type": "error", "error": error}));
             return ev;
         }
@@ -966,6 +1134,32 @@ impl AnthropicStreamConverter {
         if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
             if let Some(choice) = choices.first() {
                 if let Some(delta) = choice.get("delta") {
+                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                        self.process_tool_calls(tool_calls, &mut events);
+                    }
+                    let has_content_to_release = [
+                        "/choices/0/delta/reasoning_content",
+                        "/choices/0/delta/content",
+                        "/choices/0/delta/thinking_blocks",
+                        "/choices/0/delta/citations",
+                    ]
+                    .into_iter()
+                    .any(|pointer| {
+                        chunk
+                            .pointer(pointer)
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.is_empty())
+                    }) || chunk
+                        .pointer("/choices/0/delta/thinking_blocks")
+                        .and_then(Value::as_array)
+                        .is_some_and(|blocks| !blocks.is_empty())
+                        || chunk
+                            .pointer("/choices/0/finish_reason")
+                            .and_then(Value::as_str)
+                            .is_some();
+                    if has_content_to_release {
+                        self.release_held_tool_calls(&mut events);
+                    }
                     if let Some(text) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
                         if !text.is_empty() {
                             let need_new =
@@ -1045,125 +1239,10 @@ impl AnthropicStreamConverter {
                             }
                         }
                     }
-
-                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
-                        for tool_call in tool_calls {
-                            let openai_index =
-                                tool_call.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-                            // Defence-in-depth: bound the per-stream tool-call
-                            // map so a pathological index flood cannot grow it
-                            // unboundedly.
-                            if self.tool_calls.len() >= MAX_STREAM_TOOL_CALLS
-                                && !self.tool_calls.contains_key(&openai_index)
-                            {
-                                tracing::warn!(
-                                    tool_call_index = openai_index,
-                                    "dropping tool call beyond MAX_STREAM_TOOL_CALLS cap"
-                                );
-                                continue;
-                            }
-                            let entry = self.tool_calls.entry(openai_index).or_default();
-
-                            if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
-                                if entry.id.is_empty() {
-                                    entry.id = id.to_string();
-                                }
-                            }
-                            if let Some(name) = tool_call
-                                .get("function")
-                                .and_then(|f| f.get("name"))
-                                .and_then(|v| v.as_str())
-                            {
-                                entry.name = name.to_string();
-                            }
-
-                            // Open the tool-use content block once both `id`
-                            // and `name` are known. OpenAI's strict shape sends
-                            // them together in the first delta, but other
-                            // providers split them across chunks; requiring them
-                            // in a single delta would silently drop the whole
-                            // tool call (block start plus all argument deltas).
-                            if !entry.started && !entry.id.is_empty() && !entry.name.is_empty() {
-                                if let Some((idx, _)) = self.open_block.take() {
-                                    events
-                                        .push(json!({"type": "content_block_stop", "index": idx}));
-                                }
-                                let new_idx = self.next_block_index;
-                                self.next_block_index += 1;
-                                entry.anthropic_index = new_idx;
-                                entry.started = true;
-                                let id_val = entry.id.clone();
-                                let name_val = entry.name.clone();
-                                events.push(json!({
-                                "type": "content_block_start",
-                                "index": new_idx,
-                                "content_block": {
-                                "type": "tool_use",
-                                "id": id_val,
-                                "name": name_val,
-                                "input": {}
-                                }
-                                }));
-                                self.open_block = Some((new_idx, OpenBlockKind::ToolUse));
-                                if !entry.pending_arguments.is_empty() {
-                                    let pending = std::mem::take(&mut entry.pending_arguments);
-                                    events.push(json!({
-                                    "type": "content_block_delta",
-                                    "index": new_idx,
-                                    "delta": {"type": "input_json_delta", "partial_json": pending}
-                                    }));
-                                }
-                            }
-
-                            if let Some(args) = tool_call
-                                .get("function")
-                                .and_then(|f| f.get("arguments"))
-                                .and_then(|v| v.as_str())
-                            {
-                                if !args.is_empty() {
-                                    let started = entry.started;
-                                    let anthropic_index = entry.anthropic_index;
-                                    // Only emit a delta when this block is
-                                    // still the active one. The Anthropic
-                                    // protocol requires sequential content
-                                    // blocks, so once a newer block opened
-                                    // (`open_block` moved on) emitting a delta
-                                    // for the stopped index would be a
-                                    // delta-after-stop violation. Skip the
-                                    // fragment rather than corrupt the stream.
-                                    let is_active = started
-                                        && self.open_block
-                                            == Some((anthropic_index, OpenBlockKind::ToolUse));
-                                    if is_active {
-                                        events.push(json!({
-                                        "type": "content_block_delta",
-                                        "index": anthropic_index,
-                                        "delta": {"type": "input_json_delta", "partial_json": args}
-                                        }));
-                                    } else if !started {
-                                        // Block not open yet (id/name still
-                                        // arriving); buffer until open so no
-                                        // argument delta is lost.
-                                        // Defence-in-depth: cap the buffer so
-                                        // a misbehaving upstream streaming
-                                        // endless arguments into an unopened
-                                        // block cannot hold unbounded memory.
-                                        if entry.pending_arguments.len() + args.len()
-                                            <= MAX_STREAM_BUFFER_BYTES
-                                        {
-                                            entry.pending_arguments.push_str(args);
-                                        }
-                                    }
-                                    // else: block was started but is no longer
-                                    // the active one — a non-conforming
-                                    // upstream interleaved tool calls. Skip.
-                                }
-                            }
-                        }
-                    }
                 }
 
                 if let Some(finish) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                    self.release_held_tool_calls(&mut events);
                     self.pending_stop_reason = Some(map_openai_finish_to_anthropic(finish));
                     if let Some((idx, _)) = self.open_block.take() {
                         events.push(json!({"type": "content_block_stop", "index": idx}));
@@ -1179,11 +1258,16 @@ impl AnthropicStreamConverter {
         if self.finished {
             return Vec::new();
         }
+        if let Some(events) = self.tool_call_error_events() {
+            return events;
+        }
         self.finished = true;
         let mut events = Vec::new();
+        self.release_held_tool_calls(&mut events);
         if let Some((idx, _)) = self.open_block.take() {
             events.push(json!({"type": "content_block_stop", "index": idx}));
         }
+        self.live_tool_call = None;
         if let Some(stop_reason) = self.pending_stop_reason.take() {
             events.push(json!({
                 "type": "message_delta",
@@ -1211,6 +1295,7 @@ impl AnthropicStreamConverter {
         if let Some((idx, _)) = self.open_block.take() {
             events.push(json!({"type": "content_block_stop", "index": idx}));
         }
+        self.live_tool_call = None;
         events
     }
 }
@@ -2599,13 +2684,10 @@ mod tests {
         );
     }
 
-    /// C24 LOW: a non-conforming upstream that interleaves tool calls (opens
-    /// tool 1, then sends args for the already-stopped tool 0) must NOT
-    /// produce a `content_block_delta` for the closed block. The Anthropic
-    /// protocol requires sequential blocks; a delta after stop is a protocol
-    /// violation. The fragment is silently skipped.
+    /// Interleaved arguments remain attached to their call while later calls
+    /// wait, then flush as complete blocks instead of corrupting JSON.
     #[test]
-    fn stream_interleaved_tool_args_after_block_closed_are_skipped() {
+    fn stream_interleaved_tool_args_are_buffered_and_released() {
         let mut converter = AnthropicStreamConverter::new();
 
         // Chunk 1: open tool call 0.
@@ -2619,7 +2701,7 @@ mod tests {
         }]
         }));
 
-        // Chunk 2: open tool call 1 — this stops tool 0's block.
+        // Chunk 2: tool call 1 arrives but is held behind live tool 0.
         let open1 = converter.convert_chunk(&json!({
         "choices": [{
         "index": 0,
@@ -2628,11 +2710,11 @@ mod tests {
         }]
         }));
         assert!(
-            open1.iter().any(|e| e["type"] == "content_block_stop"),
-            "tool 0's block must be stopped when tool 1 opens: {open1:?}"
+            !open1.iter().any(|e| e["type"] == "content_block_stop"),
+            "tool 0 must stay live while tool 1 is held: {open1:?}"
         );
 
-        // Chunk 3: args arrive for tool 0 (the already-stopped block).
+        // Chunk 3: args arrive for tool 0, which is still the live block.
         let late_args = converter.convert_chunk(&json!({
         "choices": [{
         "index": 0,
@@ -2641,14 +2723,15 @@ mod tests {
         }]
         }));
         assert!(
-            !late_args.iter().any(|e| e["type"] == "content_block_delta"
+            late_args.iter().any(|e| e["type"] == "content_block_delta"
                 && e["delta"]["type"] == "input_json_delta"
                 && e["delta"]["partial_json"] == "{\"late\":true}"),
-            "args for the already-stopped block must be skipped, not emitted as a delta: {late_args:?}"
+            "tool 0 is still live and must accept its argument fragment: {late_args:?}"
         );
 
-        // Sanity: args for the ACTIVE block (tool 1) are still forwarded.
-        let active_args = converter.convert_chunk(&json!({
+        // Tool 1's fragment is held until the stream ends, then emitted as a
+        // complete tool_use block rather than appended to tool 0.
+        let held_args = converter.convert_chunk(&json!({
         "choices": [{
         "index": 0,
         "delta": {"tool_calls": [{"index": 1, "function": {"arguments": "{\"ok\":1}"}}]},
@@ -2656,12 +2739,186 @@ mod tests {
         }]
         }));
         assert!(
-            active_args
+            !held_args.iter().any(|e| e["type"] == "content_block_delta"
+                && e["delta"]["type"] == "input_json_delta"
+                && e["delta"]["partial_json"] == "{\"ok\":1}"),
+            "held tool 1 arguments must not append to tool 0: {held_args:?}"
+        );
+        let final_events = converter.finish_events();
+        assert!(
+            final_events
+                .iter()
+                .any(|e| e["type"] == "content_block_start" && e["content_block"]["name"] == "f1"),
+            "held call must open before the terminal event: {final_events:?}"
+        );
+        assert!(
+            final_events
                 .iter()
                 .any(|e| e["type"] == "content_block_delta"
                     && e["delta"]["type"] == "input_json_delta"
                     && e["delta"]["partial_json"] == "{\"ok\":1}"),
-            "args for the active block must still be emitted: {active_args:?}"
+            "held arguments must flush at the end: {final_events:?}"
+        );
+    }
+
+    #[test]
+    fn stream_parallel_tool_calls_in_one_chunk_use_separate_blocks() {
+        let mut converter = AnthropicStreamConverter::new();
+        let mut events = converter.convert_chunk(&json!({
+            "id": "chatcmpl-parallel",
+            "model": "mistral",
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [
+                    {"index": 0, "id": "call_0", "type": "function", "function": {"name": "f0", "arguments": "{\"a\":1}"}},
+                    {"index": 1, "id": "call_1", "type": "function", "function": {"name": "f1", "arguments": "{\"b\":2}"}}
+                ]},
+                "finish_reason": null
+            }]
+        }));
+        events.extend(converter.finish_events());
+        for (name, arguments) in [("f0", "{\"a\":1}"), ("f1", "{\"b\":2}")] {
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event["type"] == "content_block_start"
+                        && event["content_block"]["name"] == name),
+                "missing tool_use block for {name}: {events:?}"
+            );
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event["type"] == "content_block_delta"
+                        && event["delta"]["type"] == "input_json_delta"
+                        && event["delta"]["partial_json"] == arguments),
+                "missing argument for {name}: {events:?}"
+            );
+        }
+        assert!(
+            !events.iter().any(|event| event["delta"]["partial_json"]
+                .as_str()
+                .is_some_and(|arguments| arguments.contains("}{"))),
+            "arguments from different calls must never concatenate: {events:?}"
+        );
+    }
+
+    #[test]
+    fn stream_argument_only_fragments_do_not_reopen_started_calls() {
+        let mut converter = AnthropicStreamConverter::new();
+        let mut events = converter.convert_chunk(&json!({
+            "id": "chatcmpl-no-reopen",
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "id": "call_0", "type": "function", "function": {"name": "f0", "arguments": "{\"a\":1}"}}]},
+                "finish_reason": null
+            }]
+        }));
+        events.extend(converter.finish_events());
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["type"] == "content_block_start")
+                .count(),
+            1,
+            "argument-only fragments must not reopen the started call: {events:?}"
+        );
+    }
+
+    #[test]
+    fn stream_incomplete_held_call_does_not_block_later_ready_call() {
+        let mut converter = AnthropicStreamConverter::new();
+        converter.convert_chunk(&json!({
+            "id": "chatcmpl-incomplete",
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [
+                    {"index": 0, "id": "call_0", "type": "function", "function": {"name": "f0"}},
+                    {"index": 1, "id": "call_1", "type": "function", "function": {"arguments": "{\"later\":true}"}},
+                    {"index": 2, "id": "call_2", "type": "function", "function": {"name": "f2", "arguments": "{\"ok\":1}"}}
+                ]},
+                "finish_reason": null
+            }]
+        }));
+        let events = converter.finish_events();
+        assert!(
+            events
+                .iter()
+                .any(|event| event["type"] == "content_block_start"
+                    && event["content_block"]["name"] == "f2"),
+            "ready call must not be blocked by an incomplete earlier call: {events:?}"
+        );
+    }
+
+    #[test]
+    fn stream_mixed_text_and_tool_chunks_release_held_calls_before_text() {
+        let mut converter = AnthropicStreamConverter::new();
+        converter.convert_chunk(&json!({
+            "id": "chatcmpl-order",
+            "model": "mistral",
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [
+                    {"index": 0, "id": "call_0", "type": "function", "function": {"name": "f0"}},
+                    {"index": 1, "id": "call_1", "type": "function", "function": {"name": "f1"}}
+                ]},
+                "finish_reason": null
+            }]
+        }));
+        let events = converter.convert_chunk(&json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"content": "between", "tool_calls": [
+                    {"index": 2, "id": "call_2", "type": "function", "function": {"name": "f2"}}
+                ]},
+                "finish_reason": null
+            }]
+        }));
+        let text_pos = events
+            .iter()
+            .position(|event| event["delta"]["text"] == "between")
+            .expect("text event");
+        let held_pos = events
+            .iter()
+            .position(|event| event["content_block"]["name"] == "f1")
+            .expect("held call event");
+        assert!(
+            held_pos < text_pos,
+            "held call must precede later text: {events:?}"
+        );
+    }
+
+    #[test]
+    fn stream_tool_call_overflow_returns_error_instead_of_truncating() {
+        let mut converter = AnthropicStreamConverter::new();
+        converter.convert_chunk(&json!({
+            "id": "chatcmpl-overflow",
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 0, "id": "call_0", "type": "function", "function": {"name": "f0"}}]},
+                "finish_reason": null
+            }]
+        }));
+        let oversized = "x".repeat(MAX_STREAM_BUFFER_BYTES + 1);
+        converter.convert_chunk(&json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [{"index": 1, "id": "call_1", "type": "function", "function": {"name": "f1", "arguments": oversized}}]},
+                "finish_reason": null
+            }]
+        }));
+        let events = converter.finish_events();
+        assert!(
+            events.iter().any(|event| event["type"] == "error"),
+            "overflow must surface an explicit stream error: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| event["content_block"]["name"] == "f1"),
+            "capped arguments must not be emitted: {events:?}"
         );
     }
 

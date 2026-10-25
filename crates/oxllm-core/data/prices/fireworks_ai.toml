@@ -2122,3 +2122,36 @@ input_cost_per_token = 1.250000e-6
 output_cost_per_token = 4.250000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 1.500000e-7
+cache_read_input_token_cost_priority = 2.250000e-7
+input_cost_per_token_priority = 1.875000e-6
+output_cost_per_token_priority = 6.375000e-6
+
+["fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash-1017"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+max_output_tokens = 393216
+cache_read_input_token_cost = 6.000000e-9
+cache_read_input_token_cost_priority = 7.500000e-9
+input_cost_per_token_priority = 3.750000e-7
+output_cost_per_token_priority = 1.500000e-6
+
+["fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash-1017-us"]
+input_cost_per_token = 4.500000e-7
+output_cost_per_token = 1.800000e-6
+max_input_tokens = 1048576
+max_output_tokens = 393216
+cache_read_input_token_cost = 9.000000e-9
+cache_read_input_token_cost_priority = 1.125000e-8
+input_cost_per_token_priority = 5.625000e-7
+output_cost_per_token_priority = 2.250000e-6
+
+["fireworks_ai/accounts/fireworks/models/minimax-m3p1-flash"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+cache_read_input_token_cost = 1.500000e-8
+cache_read_input_token_cost_priority = 2.250000e-8
+input_cost_per_token_priority = 2.250000e-7
+output_cost_per_token_priority = 9.000000e-7

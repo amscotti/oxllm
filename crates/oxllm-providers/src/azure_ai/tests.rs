@@ -342,6 +342,85 @@ fn chat_model_snapshots_are_not_rewritten_by_embedding_model_normalization() {
 }
 
 #[test]
+fn tool_reference_parts_are_removed_only_from_tool_messages() {
+    let reference = json!({"type": "tool_reference", "reference": "call-1"});
+    let body = ChatProvider::transform_request(
+        &AzureAiProvider,
+        &json!({
+            "messages": [
+                {"role": "tool", "tool_call_id": "call-1", "content": [reference.clone()]},
+                {"role": "tool", "tool_call_id": "call-2", "content": [
+                    {"type": "text", "text": "result"}, reference.clone()
+                ]},
+                {"role": "user", "content": [reference.clone()]}
+            ]
+        }),
+        &deployment("grok", "https://resource.services.ai.azure.com/models"),
+    )
+    .expect("Foundry request");
+    assert_eq!(body["messages"][0]["content"], "");
+    assert_eq!(body["messages"][1]["content"], "result");
+    assert_eq!(body["messages"][2]["content"][0], reference);
+}
+
+#[test]
+fn gpt_6_1_sol_drops_refused_effort_levels_on_foundry() {
+    for model in ["gpt-6.1-sol", "gpt-6.1-sol-2026-09-24"] {
+        for effort in ["none", "minimal"] {
+            let body = ChatProvider::transform_request(
+                &AzureAiProvider,
+                &json!({
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "reasoning_effort": effort,
+                    "temperature": 0.3,
+                    "top_p": 0.5
+                }),
+                &deployment(model, "https://resource.services.ai.azure.com/models"),
+            )
+            .expect("Foundry request");
+            assert!(body.get("reasoning_effort").is_none(), "{model}: {effort}");
+            assert!(body.get("temperature").is_none(), "{model}: {effort}");
+            assert!(body.get("top_p").is_none(), "{model}: {effort}");
+        }
+    }
+}
+
+#[test]
+fn grok_reasoning_tokens_fold_into_completion_for_unary_and_streaming_usage() {
+    let usage = json!({
+        "prompt_tokens": 100,
+        "completion_tokens": 100,
+        "total_tokens": 250,
+        "completion_tokens_details": {"reasoning_tokens": 50}
+    });
+    let response = json!({
+        "model": "private-deployment",
+        "choices": [{"message": {"role": "assistant", "content": "done"}}],
+        "usage": usage,
+    });
+    let body = ChatProvider::transform_response(&AzureAiProvider, &response, "azure_ai/private")
+        .expect("unary response");
+    assert_eq!(body["usage"]["completion_tokens"], 150);
+    assert_eq!(body["usage"]["total_tokens"], 250);
+
+    let raw =
+        format!("data: {{\"model\":\"private-deployment\",\"choices\":[],\"usage\":{usage}}}");
+    let stateless = AzureAiProvider
+        .transform_stream_chunk(&raw)
+        .expect("stream chunk")
+        .expect("usage chunk");
+    let mut state = None;
+    let stateful = AzureAiProvider
+        .transform_stream_chunk_stateful(&raw, &mut state, &json!({}))
+        .expect("stateful stream chunk")
+        .expect("usage chunk");
+    for chunk in [stateless, stateful] {
+        assert_eq!(chunk["usage"]["completion_tokens"], 150);
+        assert_eq!(chunk["usage"]["total_tokens"], 250);
+    }
+}
+
+#[test]
 fn image_embeddings_use_a_distinct_route_and_a_native_allowlisted_body() {
     let mut deployment = deployment(
         "embed-v-4-0",

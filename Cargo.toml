@@ -121,6 +121,9 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["r
 # 0.23.46, and the requirement keeps every transitive consumer on a patched
 # 0.23.x release.
 rustls = { version = "0.23.46", default-features = false, features = ["aws-lc-rs"] }
+# 1.0.10 is the security floor: 1.0.9 trusted the compromised
+# emSign ECC Root CA - G3 certificate authority.
+webpki-roots = "1.0.10"
 
 # JWT auth (HMAC HS256/HS384/HS512 only).
 # jsonwebtoken 10.x requires a CryptoProvider to be selected via features —
@@ -145,6 +148,7 @@ tracing-subscriber.workspace = true
 sha2.workspace = true
 rand.workspace = true
 rustls.workspace = true
+webpki-roots.workspace = true
 
 [features]
 default = []

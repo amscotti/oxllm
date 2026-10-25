@@ -225,6 +225,7 @@ async fn test_completions_streaming_returns_text_completion_chunks() {
         "model": "gpt-3.5-turbo-instruct",
         "prompt": "Hello",
         "stream": true,
+        "stream_options": {"include_usage": true},
         }))
         .send()
         .await

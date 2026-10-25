@@ -21,3 +21,24 @@ output_cost_per_token = 5.000000e-7
 max_input_tokens = 1048576
 max_output_tokens = 1048576
 cache_read_input_token_cost = 4.000000e-8
+
+["baseten/deepseek-ai/DeepSeek-V4.1-Flash-1017"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+cache_read_input_token_cost = 7.000000e-9
+
+["baseten/deepseek-ai/DeepSeek-V4.1-Flash-1017-Fast"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+cache_read_input_token_cost = 1.400000e-8
+
+["baseten/reflection/Beam-1.0"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+cache_read_input_token_cost = 4.000000e-8

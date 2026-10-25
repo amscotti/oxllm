@@ -20,7 +20,9 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
-use crate::handlers::chat::{MAX_STREAM_BUFFER_BYTES, chat_completions_inner};
+use crate::handlers::chat::{
+    MAX_STREAM_BUFFER_BYTES, chat_completions_inner_preserving_stream_usage,
+};
 use crate::orchestration::stream::send_converted_event;
 use crate::pipeline::preserved_response_headers;
 use crate::sse::{SseFramer, extract_sse_data, pop_sse_event};
@@ -56,18 +58,20 @@ pub async fn completions(
     let chat_body = wrap_prompt_as_chat(&request_body);
 
     // Read `stream` from the wrapped body so the converter path agrees with
-    // what `chat_completions_inner` passes to the orchestrator.
+    // what `chat_completions_inner_preserving_stream_usage` passes to the orchestrator.
     let is_stream = chat_body
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Serialize→re-parse is intentional: `chat_completions_inner` is the
+    // Serialize→re-parse is intentional: `chat_completions_inner_preserving_stream_usage` is the
     // canonical entrypoint shared with `/v1/messages` and `/v1/responses`.
     let bytes = serde_json::to_vec(&chat_body)
         .map_err(|e| ApiError::internal(format!("failed to serialize chat body: {e}")))?;
 
-    let chat_response = chat_completions_inner(state, &auth, &headers, Bytes::from(bytes)).await?;
+    let chat_response =
+        chat_completions_inner_preserving_stream_usage(state, &auth, &headers, Bytes::from(bytes))
+            .await?;
     if !chat_response.status().is_success() {
         return Ok(chat_response);
     }

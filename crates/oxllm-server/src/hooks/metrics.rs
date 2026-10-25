@@ -40,8 +40,10 @@ impl Default for MetricsHook {
 impl Hook for MetricsHook {
     async fn post_success(&self, ctx: &CallContext, resp: &ResponseSummary) {
         // A cache hit is still a completed request. Only upstream usage/cost
-        // and routing decisions are absent on that short-circuit path.
-        metrics::record_request(&resp.model, &resp.provider, "success");
+        // and routing decisions are absent on that short-circuit path. Keep
+        // the request counter on the requested group after a fallback;
+        // token/cost series below intentionally retain the serving model.
+        metrics::record_request(&ctx.model, &resp.provider, "success");
         if ctx.cache_hit {
             return;
         }
@@ -84,7 +86,15 @@ impl Hook for MetricsHook {
             oxllm_core::Error::ModelNotFound(_) => "unknown",
             _ => &ctx.model,
         };
-        metrics::record_request(model, "", "error");
+        let provider = ctx
+            .deployment_model
+            .as_deref()
+            .map(|model| match model.split_once('/') {
+                Some((provider, _)) if !provider.is_empty() => provider,
+                _ => "openai",
+            })
+            .unwrap_or("");
+        metrics::record_request(model, provider, "error");
     }
 }
 
@@ -272,9 +282,70 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn post_failure_uses_selected_provider_when_available() {
+        let _ = metrics::render();
+        let hook = MetricsHook::new();
+        let mut ctx = CallContext::for_test("requested-failure-group");
+        ctx.deployment_model = Some("azure_ai/grok-4".into());
+        hook.post_failure(&ctx, &oxllm_core::Error::Network("boom".into()))
+            .await;
+        let rendered = metrics::render();
+        assert!(
+            rendered.contains(
+                "oxllm_requests_total{model=\"requested-failure-group\",provider=\"azure_ai\",status=\"error\"} 1"
+            ),
+            "selected provider must label routed failures: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn post_failure_maps_bare_models_to_openai() {
+        let _ = metrics::render();
+        let hook = MetricsHook::new();
+        for model in ["gpt-4o", "/gpt-4o"] {
+            let mut ctx = CallContext::for_test("requested-bare-model");
+            ctx.deployment_model = Some(model.into());
+            hook.post_failure(&ctx, &oxllm_core::Error::Network("boom".into()))
+                .await;
+        }
+        let rendered = metrics::render();
+        assert!(
+            rendered.contains(
+                "oxllm_requests_total{model=\"requested-bare-model\",provider=\"openai\",status=\"error\"} 2"
+            ),
+            "bare OpenAI deployments must keep their provider: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn post_success_request_metric_preserves_requested_group_after_fallback() {
+        let _ = metrics::render();
+        let hook = MetricsHook::new();
+        let ctx = CallContext::for_test("requested-metric-group");
+        hook.post_success(&ctx, &make_response("serving-metric-model", 10, 5))
+            .await;
+        let rendered = metrics::render();
+        assert!(
+            rendered.contains(
+                "oxllm_requests_total{model=\"requested-metric-group\",provider=\"openai\",status=\"success\"} 1"
+            ),
+            "success counter must retain the requested group: {rendered}"
+        );
+        assert!(
+            !rendered.contains(
+                "oxllm_requests_total{model=\"serving-metric-model\",provider=\"openai\",status=\"success\"}"
+            ),
+            "fallback serving model must not replace the request-group label: {rendered}"
+        );
+    }
+
     /// The bounded model label applies in both directions: an over-long
-    /// serving model on the success path and an over-long requested model on
-    /// the failure path must both be truncated, never rendered raw.
+    /// requested model on either the success or failure path must be
+    /// truncated, never rendered raw.
     #[tokio::test]
     #[serial_test::serial]
     async fn success_and_failure_request_labels_are_length_bounded() {
@@ -282,8 +353,8 @@ mod tests {
         let hook = MetricsHook::new();
         let long_success = "h".repeat(64 * 3 + 8);
         hook.post_success(
-            &CallContext::for_test("ctx-model"),
-            &make_response(&long_success, 1, 1),
+            &CallContext::for_test(&long_success),
+            &make_response("serving-model", 1, 1),
         )
         .await;
 

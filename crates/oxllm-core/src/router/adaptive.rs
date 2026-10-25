@@ -57,7 +57,7 @@ use std::sync::{Arc, Mutex};
 
 use rand::Rng;
 
-use crate::cost::lookup_pricing;
+use crate::cost::{deployment_pricing_model, lookup_pricing_with_provider};
 use crate::deployment::Deployment;
 use crate::router::complexity::TextMatcher;
 use crate::router::least_busy::LeastBusy;
@@ -546,7 +546,7 @@ impl RoutingStrategy for AdaptiveRouter {
         // Thompson sampling blended with normalized cost:
         // score = sample * quality_weight − normalized_cost * cost_weight.
         let snapshot = self.bandit.sample_snapshot(&cells);
-        let costs = normalized_costs(deployments, self.config.cost_weight);
+        let costs = normalized_costs(deployments, &ctx.model, self.config.cost_weight);
         // NaN scores (pathological pricing with cost_weight > 0) always lose
         // the `>` comparison, so `best_score` stays at `NEG_INFINITY` iff
         // EVERY candidate scored NaN. In that case the argmax would otherwise
@@ -636,7 +636,11 @@ fn sanitize_config(mut config: AdaptiveRouterConfig) -> AdaptiveRouterConfig {
 /// more-negative — deployment still scores higher, matching how
 /// [`LowestCost`](crate::router::LowestCost) ranks negative rates via the
 /// `<` comparison instead of silently zeroing the term.
-fn normalized_costs(deployments: &[&Deployment], cost_weight: f64) -> Vec<f64> {
+fn normalized_costs(
+    deployments: &[&Deployment],
+    requested_model: &str,
+    cost_weight: f64,
+) -> Vec<f64> {
     // Cost blending is opt-in: the documented default is `cost_weight: 0.0`,
     // in which case the cost term is semantically disabled. Short-circuit
     // before any pricing lookup so the hot path does no map work, and so a
@@ -660,7 +664,8 @@ fn normalized_costs(deployments: &[&Deployment], cost_weight: f64) -> Vec<f64> {
                     );
                 }
             }
-            lookup_pricing(&d.oxllm_params.model)
+            let pricing_model = deployment_pricing_model(d, requested_model);
+            lookup_pricing_with_provider(&pricing_model, d.provider_slug())
                 .filter(|pricing| !pricing.is_per_second_priced())
                 .map(|p| p.input_cost_per_token + p.output_cost_per_token)
         })
@@ -1221,7 +1226,9 @@ mod tests {
         let deps = two_deps();
         let refs: Vec<&Deployment> = deps.iter().collect();
         assert!(
-            normalized_costs(&refs, 0.5).iter().all(|c| *c == 0.0),
+            normalized_costs(&refs, "model", 0.5)
+                .iter()
+                .all(|c| *c == 0.0),
             "unpriced candidates must disable the cost term"
         );
     }
@@ -1232,9 +1239,28 @@ mod tests {
         let unpriced = make_dep("dep-unpriced");
         let deps = [priced, unpriced];
         let refs: Vec<&Deployment> = deps.iter().collect();
-        let costs = normalized_costs(&refs, 0.5);
+        let costs = normalized_costs(&refs, "model", 0.5);
         assert_eq!(costs[0], 1.0, "the only priced candidate is the max");
         assert_eq!(costs[1], 1.0, "unpriced candidate reads pessimistic");
+    }
+
+    #[test]
+    fn normalized_costs_uses_base_model_for_opaque_aliases() {
+        let mut expensive = make_dep("dep-expensive");
+        expensive.oxllm_params.model = "openai/gpt-4o".to_string();
+        let mut aliased = make_dep("dep-aliased");
+        aliased.oxllm_params.model = "openai/private-alias".to_string();
+        aliased.model_info = Some(crate::deployment::ModelInfo {
+            base_model: Some("openai/gpt-4o-mini".to_string()),
+            ..Default::default()
+        });
+        let deps = [expensive, aliased];
+        let refs: Vec<&Deployment> = deps.iter().collect();
+        let costs = normalized_costs(&refs, "model", 0.5);
+        assert!(
+            costs[1] < costs[0],
+            "the base-model-priced alias must be cheaper: {costs:?}"
+        );
     }
 
     #[test]
@@ -1248,7 +1274,7 @@ mod tests {
         let pricey = make_dep_priced("dep-pricey", -0.001, 0.0); // sum = -0.001
         let deps = [cheap, pricey];
         let refs: Vec<&Deployment> = deps.iter().collect();
-        let costs = normalized_costs(&refs, 0.5);
+        let costs = normalized_costs(&refs, "model", 0.5);
         assert!(
             costs.iter().any(|c| *c != 0.0),
             "negative pricing must not silently zero the cost term (got {costs:?})"
@@ -1271,7 +1297,7 @@ mod tests {
         let plain = make_dep("dep-plain");
         let deps = [inf, nan, plain];
         let refs: Vec<&Deployment> = deps.iter().collect();
-        let costs = normalized_costs(&refs, 0.0);
+        let costs = normalized_costs(&refs, "model", 0.0);
         assert!(
             costs.iter().all(|c| *c == 0.0),
             "cost_weight=0 must skip pricing entirely (got {costs:?})"

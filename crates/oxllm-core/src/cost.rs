@@ -15,6 +15,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
+use crate::deployment::Deployment;
 use crate::hook::UsageSummary;
 
 mod service_tiers;
@@ -372,13 +373,12 @@ impl ModelPricing {
     ///
     /// Rate-fallback semantic (the *standard price-table path*): a model entry
     /// lacking `cache_read_input_token_cost`, `cache_creation_input_token_cost`,
-    /// `cache_creation_input_token_cost_above_1hr`, or
-    /// `input_cost_per_audio_token` bills those buckets at **0.0**. Fireworks
-    /// is the exception: a missing cache-read rate bills at half the base
-    /// input rate. This deliberately differs from the [`DeploymentPricing`]
-    /// override path (which falls back to the input rate, matching the reference
-    /// `_cost_per_token_custom_pricing_helper`). Reasoning tokens fall back
-    /// to the output rate on both paths.
+    /// or `cache_creation_input_token_cost_above_1hr` bills those buckets at
+    /// **0.0**. Fireworks is the exception: a missing cache-read rate bills at
+    /// half the base input rate. A missing audio rate falls back to the
+    /// resolved input rate, including service/context tiers, because those are
+    /// ordinary prompt tokens when no modality-specific price is published.
+    /// Reasoning tokens fall back to the output rate on both paths.
     ///
     /// This method uses standard pricing. Use
     /// [`Self::rates_for_service_tier`] for a request served on another tier.
@@ -420,7 +420,7 @@ impl ModelPricing {
             cache_read: cache_read_rate,
             cache_creation: cache_creation.unwrap_or(0.0),
             cache_creation_1h: cache_creation_1h.unwrap_or(0.0),
-            audio: self.input_cost_per_audio_token.unwrap_or(0.0),
+            audio: self.input_cost_per_audio_token.unwrap_or(input),
             reasoning: self.output_cost_per_reasoning_token.unwrap_or(output),
             citation: self.citation_cost_per_token.unwrap_or(0.0),
             search_query: self.search_queries_cost_per_query.unwrap_or(0.0),
@@ -452,6 +452,18 @@ impl ModelPricing {
             .or(self.input_cost_per_second)
             .or(self.output_cost_per_second)?;
         Some(duration_cost(rate, response_time_ms))
+    }
+
+    /// Compute cost from provider-reported media duration, not request latency.
+    /// Unlike [`Self::cost_per_second`], this does not require the request to be
+    /// wall-clock duration priced: transcription models use media seconds while
+    /// remaining excluded from elapsed-request billing.
+    pub fn cost_per_media_second(&self, seconds: f64) -> Option<f64> {
+        let rate = self
+            .cost_per_second_rate
+            .or(self.input_cost_per_second)
+            .or(self.output_cost_per_second)?;
+        Some(duration_cost(rate, seconds * 1000.0))
     }
 
     /// Whether this model is priced per-second (duration-based) rather than
@@ -1071,6 +1083,120 @@ pub fn lookup_pricing_with_provider(model: &str, provider: &str) -> Option<&'sta
         Some(provider)
     };
     lookup_with_optional_provider(price_table(), model, provider)
+}
+
+/// Return the literal catalog key reached by a provider-aware lookup. Unlike
+/// [`lookup_pricing_with_provider`], this preserves the actual matched key so
+/// a later provider-agnostic pricing-override lookup cannot inherit a
+/// different provider's row through a synthetic alias.
+fn resolve_deployment_catalog_key(model: &str, provider: &str) -> Option<&'static str> {
+    fn try_key<'a>(
+        table: &'a HashMap<String, ModelPricing>,
+        provider: &str,
+        name: &str,
+    ) -> Option<&'a str> {
+        if name
+            .strip_prefix(provider)
+            .is_some_and(|rest| rest.starts_with('/'))
+        {
+            if let Some((key, _)) = table.get_key_value(name) {
+                return Some(key);
+            }
+        }
+        let prefixed = format!("{provider}/{name}");
+        if let Some((key, _)) = table.get_key_value(&prefixed) {
+            return Some(key);
+        }
+        table.get_key_value(name).map(|(key, _)| key.as_str())
+    }
+
+    let table = price_table();
+    if let Some(key) = try_key(table, provider, model) {
+        return Some(key);
+    }
+    let mut stripped = strip_provider_prefix(model);
+    let mut levels = 0u8;
+    loop {
+        if let Some(key) = try_key(table, provider, stripped) {
+            return Some(key);
+        }
+        if levels >= 3 {
+            break;
+        }
+        let next = strip_provider_prefix(stripped);
+        if next == stripped {
+            break;
+        }
+        stripped = next;
+        levels += 1;
+    }
+    if let Some(base) = strip_date_version_suffix(stripped) {
+        if let Some(key) = try_key(table, provider, base) {
+            return Some(key);
+        }
+    }
+    None
+}
+
+/// Resolve the price-table model for a deployment. Published serving-model
+/// prices win; an explicit `model_info.base_model` (or legacy params
+/// `base_model`) prices opaque profiles and deployment aliases when the wire
+/// model has no catalog row. Wildcard deployments resolve against the
+/// requested model, matching spend attribution.
+pub fn deployment_pricing_model(deployment: &Deployment, requested: &str) -> String {
+    let provider = deployment.provider_slug();
+    let prefix = format!("{provider}/");
+    let configured = &deployment.oxllm_params.model;
+    let model = if configured.contains('*') {
+        format!(
+            "{prefix}{}",
+            requested.strip_prefix(&prefix).unwrap_or(requested)
+        )
+    } else {
+        configured.clone()
+    };
+    if lookup_pricing_with_provider(&model, provider).is_some() {
+        return model;
+    }
+    let hint = deployment
+        .model_info
+        .as_ref()
+        .and_then(|info| info.base_model.as_deref())
+        .or_else(|| {
+            deployment
+                .oxllm_params
+                .extra
+                .get("base_model")
+                .and_then(serde_json::Value::as_str)
+        });
+    if let Some(hint) = hint.filter(|hint| !hint.trim().is_empty() && !hint.contains('*')) {
+        // Some providers namespace their catalog by the upstream vendor
+        // (groq/openai/gpt-oss-120b). Probe that exact serving-provider form
+        // before stripping a recognized provider prefix for Azure/Claude-style
+        // aliases. Only literal catalog keys are returned: pricing overrides
+        // resolve without a provider hint and must not inherit through a
+        // synthetic, prefix-stripped alias.
+        let hinted = format!("{prefix}{hint}");
+        if let Some(matched) = resolve_deployment_catalog_key(&hinted, provider) {
+            return matched.to_string();
+        }
+        if let Some(native) = hint
+            .split_once('/')
+            .filter(|(slug, _)| {
+                matches!(
+                    *slug,
+                    "openai" | "azure" | "anthropic" | "bedrock" | "gemini" | "vertex_ai"
+                )
+            })
+            .map(|(_, native)| native)
+        {
+            let hinted = format!("{prefix}{native}");
+            if let Some(matched) = resolve_deployment_catalog_key(&hinted, provider) {
+                return matched.to_string();
+            }
+        }
+    }
+    model
 }
 
 /// Look up `{provider}/{model}` in the price table without heap-allocating on
@@ -2369,7 +2495,7 @@ output_cost_per_token = 2e-6
             (
                 "bedrock_mantle",
                 "openai.gpt-daybreak-blue-5.6-sol",
-                1_000_000,
+                1_050_000,
                 128_000,
             ),
             ("bedrock", "global.openai.gpt-6.1-sol", 1_000_000, 131_072),
@@ -2926,13 +3052,10 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
         );
     }
 
-    /// Table-path rate fallback (`_get_cost_per_unit(..., default=0.0)` semantics):
-    /// a model entry lacking cache-read, cache-creation, and audio rates bills
-    /// those buckets at 0 — cached/audio tokens are FREE, and are only removed
-    /// from the regular input bucket. This deliberately differs from the
-    /// [`DeploymentPricing`] override path, which falls back to the input rate.
+    /// Missing cache rates remain free on the table path. Missing audio rates
+    /// instead use the resolved text-input rate, including context tiers.
     #[test]
-    fn missing_cache_and_audio_rates_bill_zero_on_table_path() {
+    fn missing_cache_rates_bill_zero_and_audio_falls_back_to_input() {
         let pricing = ModelPricing {
             input_cost_per_token: 1e-6,
             output_cost_per_token: 2e-6,
@@ -2956,7 +3079,18 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
         assert_eq!(rates.cache_read, 0.0);
         assert_eq!(rates.cache_creation, 0.0);
         assert_eq!(rates.cache_creation_1h, 0.0);
-        assert_eq!(rates.audio, 0.0);
+        assert_eq!(rates.audio, 1e-6);
+
+        let mut tiered = pricing.clone();
+        tiered.tiers.push(CostTier {
+            threshold_tokens: 2_000,
+            input_cost_per_token: Some(3e-6),
+            output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
+            cache_creation_input_token_cost_above_1hr: None,
+        });
+        assert_eq!(tiered.rates_for_prompt(2_001, 0).audio, 3e-6);
 
         let prompt = 1_000u64;
         let u = UsageSummary {
@@ -2973,14 +3107,14 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             browser_open_requests: None,
         };
         let cost = cost_from_rates(&u, rates);
-        let expected = (prompt - 400 - 50) as f64 * 1e-6;
+        let expected = (prompt - 400) as f64 * 1e-6;
         assert!(
             (cost - expected).abs() < 1e-12,
-            "missing cache/audio rates must bill those buckets free: got {cost}, expected {expected}"
+            "cache tokens must be free and audio must use the input rate: got {cost}, expected {expected}"
         );
 
         // End-to-end on a shipped model with no audio or cache-creation rate:
-        // gpt-4o audio tokens bill free (not at the 2.5e-6 input rate).
+        // gpt-4o audio tokens use the ordinary input rate.
         let gpt4o = lookup_pricing("gpt-4o").expect("gpt-4o priced");
         assert!(gpt4o.input_cost_per_audio_token.is_none());
         let u = UsageSummary {
@@ -2997,10 +3131,10 @@ cache_read_input_token_cost_above_200k_tokens = 2e-7
             browser_open_requests: None,
         };
         let cost = calculate_cost("gpt-4o", &u).expect("priced");
-        let expected = (prompt - 200) as f64 * gpt4o.input_cost_per_token;
+        let expected = prompt as f64 * gpt4o.input_cost_per_token;
         assert!(
             (cost - expected).abs() < 1e-12,
-            "gpt-4o audio must bill free on the table path: got {cost}, expected {expected}"
+            "gpt-4o audio must use the input rate: got {cost}, expected {expected}"
         );
     }
 
@@ -3986,29 +4120,26 @@ input_cost_per_token_above_100k_tokens = "2000000"
         };
         let cost = calculate_cost("gpt-4o", &u).expect("priced");
 
-        // gpt-4o declares no `input_cost_per_audio_token`, so on the
-        // price-table path the audio bucket bills at 0.0 (the reference
-        // `_get_cost_per_unit(..., default=0.0)`) — audio tokens are FREE,
-        // they are only removed from the regular input bucket so the total
-        // input-charged tokens equal `prompt - audio`.
+        // gpt-4o declares no `input_cost_per_audio_token`, so its audio
+        // tokens fall back to the ordinary text-input rate. They are removed
+        // from the regular bucket and billed once at that same rate.
         assert!(
             pricing.input_cost_per_audio_token.is_none(),
             "this test pins the missing-audio-rate semantic; gpt-4o must have no audio rate"
         );
-        let expected = (prompt - audio) as f64 * pricing.input_cost_per_token;
+        let expected = prompt as f64 * pricing.input_cost_per_token;
         assert!(
             (cost - expected).abs() < 1e-12,
             "got {cost}, expected {expected}"
         );
 
-        // Sanity: the pre-fix fallback (audio billed at the text input rate,
-        // i.e. the double-charge-era formula `prompt * input`) is strictly
-        // larger — audio tokens must not re-enter the bill at the input rate.
+        // Sanity: charging both the regular and audio buckets for the same
+        // tokens would double-bill them.
         let fallback = prompt as f64 * pricing.input_cost_per_token
             + audio as f64 * pricing.input_cost_per_token;
         assert!(
             (fallback - cost).abs() > 1e-9,
-            "audio tokens must bill free on the table path: got {cost}, fallback {fallback}"
+            "audio tokens must not be double charged: got {cost}, fallback {fallback}"
         );
     }
 

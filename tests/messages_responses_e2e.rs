@@ -61,6 +61,78 @@ fn make_proxy_config(mock_base_url: &str, model_name: &str, model: &str) -> Prox
 }
 
 #[tokio::test]
+async fn native_messages_adds_null_stop_sequence_without_rewriting_the_response() {
+    let mock = MockServer::start();
+    let config = make_proxy_config(&mock.base_url(), "claude", "anthropic/claude-3-5-sonnet");
+    let upstream = mock.mock(|when, then| {
+        when.method(httpmock::Method::POST).path("/messages");
+        then.status(200).json_body(json!({
+            "id": "msg-native-null-stop",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-3-5-sonnet",
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 2, "output_tokens": 1}
+        }));
+    });
+    let handle = start_oxllm(config).await.unwrap();
+    let response = reqwest::Client::new()
+        .post(handle.url("/anthropic/v1/messages"))
+        .json(&json!({
+            "model": "claude", "max_tokens": 10,
+            "messages": [{"role": "user", "content": "hello"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    assert!(body["stop_sequence"].is_null());
+    assert_eq!(body["id"], "msg-native-null-stop");
+    assert_eq!(body["content"][0]["text"], "ok");
+    upstream.assert_hits(1);
+    let _ = handle.shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn malformed_tool_result_text_is_rejected_before_any_upstream_call() {
+    let mock = MockServer::start();
+    let config = make_proxy_config(&mock.base_url(), "claude", "openai/gpt-4o");
+    let upstream = mock.mock(|when, then| {
+        when.method(httpmock::Method::POST);
+        then.status(200).json_body(json!({}));
+    });
+    let handle = start_oxllm(config).await.unwrap();
+    for invalid in [Value::Null, json!(42)] {
+        for path in [
+            "/v1/messages",
+            "/v1/messages/count_tokens",
+            "/utils/token_counter",
+        ] {
+            let response = reqwest::Client::new()
+                .post(handle.url(path))
+                .json(&json!({
+                    "model": "claude",
+                    "max_tokens": 10,
+                    "messages": [{"role": "user", "content": [{
+                        "type": "tool_result", "tool_use_id": "call-1",
+                        "content": [{"type": "text", "text": invalid}],
+                    }]}],
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 400, "{path}: {invalid}");
+            let body = response.text().await.unwrap();
+            assert!(body.contains("tool_result text must be a string"), "{body}");
+        }
+    }
+    upstream.assert_hits(0);
+    let _ = handle.shutdown_tx.send(());
+}
+
+#[tokio::test]
 async fn translated_messages_forward_client_betas_and_keep_pdf_documents() {
     let mock = MockServer::start();
     let config = make_proxy_config(&mock.base_url(), "claude", "anthropic/claude-3-5-sonnet");

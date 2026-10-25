@@ -132,6 +132,45 @@ fn deployment() -> Deployment {
 }
 
 #[test]
+fn flagged_gemini_models_reject_or_drop_sampling_params() {
+    for model in [
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+        "gemini-3.8-flash",
+        "gemini-3.8-flash-cyber",
+    ] {
+        let mut dep = deployment();
+        dep.oxllm_params.model = format!("gemini/{model}");
+        let request = json!({
+            "messages": [{"role": "user", "content": "Hi"}],
+            "temperature": 0.2,
+            "top_p": 0.5,
+            "top_k": 10
+        });
+        assert!(
+            GeminiProvider.transform_request(&request, &dep).is_err(),
+            "{model}"
+        );
+        dep.oxllm_params.drop_params = Some(true);
+        let body = GeminiProvider.transform_request(&request, &dep).unwrap();
+        for param in ["temperature", "top_p", "top_k"] {
+            assert!(body.get(param).is_none(), "{model}: {param}");
+        }
+    }
+    let mut older = deployment();
+    older.oxllm_params.model = "gemini/gemini-2.5-flash".into();
+    let body = GeminiProvider
+        .transform_request(
+            &json!({"messages": [], "temperature": 0.2, "top_p": 0.5}),
+            &older,
+        )
+        .unwrap();
+    assert_eq!(body["temperature"], 0.2);
+    assert_eq!(body["top_p"], 0.5);
+}
+
+#[test]
 fn endpoint_url_uses_default_gemini_base() {
     let p = GeminiProvider;
     assert_eq!(

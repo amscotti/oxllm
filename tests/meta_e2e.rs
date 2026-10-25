@@ -427,6 +427,7 @@ async fn meta_streaming_with_usage_chunk() {
             "model": "muse-spark-1.1",
             "messages": [{"role": "user", "content": "Hi"}],
             "stream": true,
+            "stream_options": {"include_usage": true},
         }))
         .send()
         .await
@@ -964,6 +965,7 @@ async fn meta_streaming_reasoning_usage_details() {
             "model": "muse-spark-1.1",
             "messages": [{"role": "user", "content": "Solve it"}],
             "stream": true,
+            "stream_options": {"include_usage": true},
         }))
         .send()
         .await

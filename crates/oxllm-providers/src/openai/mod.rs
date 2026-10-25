@@ -180,6 +180,11 @@ fn is_gpt_reasoning_series(leaf: &str) -> bool {
     (leaf.starts_with("gpt-5") || leaf.starts_with("gpt-6")) && !is_gpt_chat_model(leaf)
 }
 
+/// Whether the model has GPT-6.1-Sol's restricted effort-level contract.
+pub(crate) fn is_gpt_6_1_sol(model: &str) -> bool {
+    model_leaf(model).starts_with("gpt-6.1-sol")
+}
+
 fn leaf_excludes_none(leaf: &str) -> bool {
     leaf.contains("codex") || leaf.ends_with("-pro") || leaf.contains("-chat")
 }
@@ -260,6 +265,8 @@ pub(crate) fn apply_openai_reasoning_limits(body: &mut Value, model: &str) {
         .is_some_and(|t| t.as_f64() != Some(1.0))
         && should_strip_temperature(model, body);
     let strip_sampling = should_strip_reasoning_unsupported(model, body);
+    let strip_unsupported_effort = is_gpt_6_1_sol(&leaf)
+        && effort_level(body).is_some_and(|level| matches!(level, "none" | "minimal"));
     let drop_always = is_o_series_lowered(&leaf) || is_gpt_reasoning_series(&leaf);
     apply_openai_token_limit_alias(body);
     let Some(obj) = body.as_object_mut() else {
@@ -267,6 +274,9 @@ pub(crate) fn apply_openai_reasoning_limits(body: &mut Value, model: &str) {
     };
     if strip_temp {
         obj.remove("temperature");
+    }
+    if strip_unsupported_effort {
+        obj.remove("reasoning_effort");
     }
     if drop_always {
         for key in ALWAYS_DROPPED_ON_REASONING_SERIES {
@@ -312,17 +322,15 @@ pub(crate) fn apply_openai_token_limit_alias(body: &mut Value) {
 ///
 /// Accepting `"none"` is not the same as defaulting to it. gpt-5.1 / 5.2 /
 /// 5.4 default to `"none"`; gpt-5.5, gpt-5.6, gpt-6-luna, and gpt-6-sol accept
-/// `"none"` but default to reasoning on. gpt-6-astra does not accept `"none"`.
+/// `"none"` but default to reasoning on. gpt-6-astra and gpt-6.1-sol do not
+/// accept `"none"`; gpt-6.1-sol also rejects `"minimal"`.
 /// Codex, pro, and chat variants do not accept it.
 fn supports_none_reasoning_effort(model: &str) -> bool {
     let leaf = model_leaf(model);
     if leaf_excludes_none(&leaf) {
         return false;
     }
-    if leaf.starts_with("gpt-6-luna")
-        || leaf.starts_with("gpt-6-sol")
-        || leaf.starts_with("gpt-6.1-sol")
-    {
+    if leaf.starts_with("gpt-6-luna") || leaf.starts_with("gpt-6-sol") {
         return true;
     }
     if leaf.starts_with("gpt-6") {

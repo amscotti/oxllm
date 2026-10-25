@@ -1,17 +1,23 @@
 use super::*;
 
 #[test]
-fn versioned_chat_models_keep_sampling_and_sol_one_accepts_explicit_none() {
+fn versioned_chat_models_keep_sampling_and_sol_one_drops_unsupported_effort() {
     for model in ["gpt-5.6-chat", "gpt-6.1-sol-chat-2026-09-24"] {
         let mut body = json!({"temperature":0.3,"top_p":0.5});
         apply_openai_reasoning_limits(&mut body, model);
         assert_eq!(body["temperature"], 0.3);
         assert_eq!(body["top_p"], 0.5);
     }
-    let mut body = json!({"reasoning_effort":"none","temperature":0.3,"top_p":0.5});
-    apply_openai_reasoning_limits(&mut body, "gpt-6.1-sol");
-    assert_eq!(body["temperature"], 0.3);
-    assert_eq!(body["top_p"], 0.5);
+    for effort in ["none", "minimal"] {
+        let mut body = json!({"reasoning_effort":effort,"temperature":0.3,"top_p":0.5});
+        apply_openai_reasoning_limits(&mut body, "gpt-6.1-sol");
+        assert!(body.get("reasoning_effort").is_none(), "{effort}");
+        assert!(body.get("temperature").is_none(), "{effort}");
+        assert!(body.get("top_p").is_none(), "{effort}");
+    }
+    let mut supported = json!({"reasoning_effort":"low"});
+    apply_openai_reasoning_limits(&mut supported, "gpt-6.1-sol");
+    assert_eq!(supported["reasoning_effort"], "low");
 }
 use oxllm_core::Endpoint;
 use oxllm_core::deployment::{Deployment, OxllmParams};
@@ -2056,6 +2062,8 @@ fn supports_none_classification() {
         "gpt-4o",
         "gpt-6-astra",
         "gpt-6-astra-2026-09-03",
+        "gpt-6.1-sol",
+        "gpt-6.1-sol-2026-09-24",
     ] {
         assert!(
             !supports_none_reasoning_effort(model),

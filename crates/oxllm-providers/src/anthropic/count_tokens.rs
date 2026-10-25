@@ -18,10 +18,55 @@ pub fn validate_tools(request: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Reject null or non-string text in a `tool_result` text block. Missing text
+/// remains valid empty text. `drop_params` retains the existing lenient
+/// conversion behavior instead of rejecting the request.
+pub fn validate_tool_result_text(request: &Value, drop_params: bool) -> Result<()> {
+    if drop_params {
+        return Ok(());
+    }
+    let Some(messages) = request.get("messages").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for (message_index, message) in messages.iter().enumerate() {
+        let Some(blocks) = message.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        for (block_index, block) in blocks.iter().enumerate() {
+            if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                continue;
+            }
+            let Some(parts) = block.get("content").and_then(Value::as_array) else {
+                continue;
+            };
+            for part in parts {
+                if part.get("type").and_then(Value::as_str) == Some("text")
+                    && part.get("text").is_some_and(|text| !text.is_string())
+                {
+                    return Err(Error::BadRequest(format!(
+                        "messages[{message_index}].content[{block_index}] tool_result text must be a string"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Preserve native system/tools fields and normalize image_url blocks, including
 /// blocks nested in tool_result content. Leading system messages follow the
 /// caller's top-level system content. Generation-only fields are omitted.
 pub fn normalize_request(request: &Value, model: &str) -> Result<Value> {
+    normalize_request_with_drop_params(request, model, false)
+}
+
+/// [`normalize_request`] with the caller/deployment drop-params policy.
+pub fn normalize_request_with_drop_params(
+    request: &Value,
+    model: &str,
+    drop_params: bool,
+) -> Result<Value> {
+    validate_tool_result_text(request, drop_params)?;
     validate_tools(request)?;
     let messages = request
         .get("messages")
@@ -333,6 +378,27 @@ mod tests {
             merge_system(Some(&json!(5)), Some(&json!("extracted"))),
             Err(Error::BadRequest(_))
         ));
+    }
+
+    #[test]
+    fn malformed_tool_result_text_is_rejected_unless_drop_params_is_set() {
+        for invalid in [Value::Null, json!(42)] {
+            let request = json!({"messages": [{"role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": "call-1",
+                "content": [{"type": "text", "text": invalid}],
+            }]}]});
+            let error = validate_tool_result_text(&request, false).unwrap_err();
+            assert!(error.to_string().contains("messages[0].content[0]"));
+            assert!(normalize_request(&request, "claude-sonnet-5-5").is_err());
+            assert!(
+                normalize_request_with_drop_params(&request, "claude-sonnet-5-5", true).is_ok()
+            );
+        }
+        let missing = json!({"messages": [{"role": "user", "content": [{
+            "type": "tool_result", "tool_use_id": "call-1",
+            "content": [{"type": "text"}],
+        }]}]});
+        assert!(validate_tool_result_text(&missing, false).is_ok());
     }
 
     #[test]

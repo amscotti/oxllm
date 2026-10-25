@@ -425,6 +425,7 @@ async fn xai_streaming_with_usage_chunk() {
             "model": "xai-grok-4",
             "messages": [{"role": "user", "content": "Hi"}],
             "stream": true,
+            "stream_options": {"include_usage": true},
         }))
         .send()
         .await

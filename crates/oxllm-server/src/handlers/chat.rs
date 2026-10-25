@@ -56,6 +56,27 @@ pub(crate) async fn chat_completions_inner(
     headers: &axum::http::HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    chat_completions_inner_with_usage_policy(state, auth, headers, body, false).await
+}
+
+/// Variant for native-response converters that must retain usage metadata on
+/// every OpenAI chunk until their own terminal event has been assembled.
+pub(crate) async fn chat_completions_inner_preserving_stream_usage(
+    state: Arc<AppState>,
+    auth: &AuthUser,
+    headers: &axum::http::HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    chat_completions_inner_with_usage_policy(state, auth, headers, body, true).await
+}
+
+async fn chat_completions_inner_with_usage_policy(
+    state: Arc<AppState>,
+    auth: &AuthUser,
+    headers: &axum::http::HeaderMap,
+    body: Bytes,
+    preserve_stream_usage: bool,
+) -> Result<Response, ApiError> {
     let mut request_body: Value = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;
 
@@ -101,6 +122,7 @@ pub(crate) async fn chat_completions_inner(
         headers,
     )
     .await?;
+    pipeline.call_ctx.preserve_stream_usage_for_conversion = preserve_stream_usage;
 
     // Guardrails run after JSON parsing + structural validation but before
     // orchestration, so the masked body is the one serialized into the

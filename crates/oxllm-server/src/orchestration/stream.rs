@@ -39,6 +39,11 @@ use crate::state::AppState;
 /// Default stream idle timeout if none configured.
 pub(crate) const DEFAULT_STREAM_TIMEOUT_SECS: u64 = 60;
 
+/// Provider-idle timeout used to distinguish a stalled stream from a
+/// connection-health failure. The client sees a 504 envelope containing
+/// "timeout", but the deployment is not cooled for slow generation.
+const STREAM_IDLE_TIMEOUT_MESSAGE: &str = "upstream stream idle timeout";
+
 /// Cap on how long the pump waits for the client to drain a full SSE
 /// channel before abandoning the stream. A client that keeps the
 /// connection open but stops reading backfills the 64-event channel and
@@ -94,6 +99,16 @@ fn is_usage_only_chunk(value: &serde_json::Value) -> bool {
         .and_then(serde_json::Value::as_array)
         .is_some_and(std::vec::Vec::is_empty);
     empty_choices && extract_usage(value).is_some()
+}
+
+/// Usage is metered internally on every chunk, but clients must see it only in
+/// the single terminal usage chunk. Content/finish chunks never carry usage.
+fn strip_usage_from_content_chunk(value: &mut serde_json::Value) {
+    if !is_usage_only_chunk(value)
+        && let Some(object) = value.as_object_mut()
+    {
+        object.remove("usage");
+    }
 }
 
 /// Append a transformed chunk's `delta.content` fragments to the
@@ -175,6 +190,31 @@ fn estimate_stream_usage(
     })
 }
 
+/// Fill in usage missing from an incomplete stream. A prompt-only snapshot
+/// must not suppress completion estimation: reported prompt/cache counters are
+/// preserved while already-received text supplies the missing output count.
+fn estimate_incomplete_stream_usage(
+    accumulated_usage: &mut Option<oxllm_core::UsageSummary>,
+    call_ctx: &oxllm_core::CallContext,
+    response_model: &str,
+    completion_text: &str,
+) {
+    if accumulated_usage.is_none() {
+        *accumulated_usage = estimate_stream_usage(call_ctx, response_model, completion_text);
+    }
+    let Some(usage) = accumulated_usage.as_mut() else {
+        return;
+    };
+    if usage.completion_tokens != 0 || completion_text.is_empty() {
+        return;
+    }
+    let completion_tokens = oxllm_core::tokens::estimate_tokens(completion_text, response_model);
+    if completion_tokens != 0 {
+        usage.completion_tokens = completion_tokens;
+        usage.total_tokens = usage.prompt_tokens.saturating_add(completion_tokens);
+    }
+}
+
 /// Maximum bytes the Bedrock streaming path will retain in `raw_buffer`
 /// between chunk arrivals without a complete eventstream frame. AWS
 /// eventstream frames declare their `total_len` as a 4-byte big-endian
@@ -193,6 +233,9 @@ pub(crate) const MAX_RAW_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Debug)]
 pub(crate) enum StreamExit {
     Done,
+    /// The local read-idle deadline expired. This is distinct from a
+    /// provider-supplied 504 so only genuine local stalls skip health cooldown.
+    IdleTimeout,
     Error(oxllm_core::Error),
     /// The HTTP client went away mid-stream (dropped the response body
     /// reader, closed the connection, etc.). Upstream tokens were very
@@ -294,6 +337,8 @@ pub(crate) async fn handle_stream_success(
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: !call_ctx.preserve_stream_usage_for_conversion,
         };
         // Tracks whether the OpenAI `[DONE]` terminator has already been
         // emitted (either inline via `process_buffer` when the upstream
@@ -411,8 +456,7 @@ pub(crate) async fn handle_stream_success(
             bytes_already_sent = bytes_sent_to_client,
             "stream idle timeout, aborting; no fallback after bytes sent"
             );
-            break StreamExit::Error(oxllm_core::Error::Network(
-            "stream idle timeout".to_string()));
+            break StreamExit::IdleTimeout;
             }
             }
             }
@@ -446,6 +490,9 @@ pub(crate) async fn handle_stream_success(
                     }
                     accumulate_completion_text(&mut completion_text, &value);
                     normalize_stream_chunk(&mut value, &original_request, &usage_injection);
+                    if usage_injection.strip_content_usage {
+                        strip_usage_from_content_chunk(&mut value);
+                    }
                     // The upstream's own usage-only chunk is forwarded only
                     // when the client asked for usage; when it is forwarded,
                     // `emitted` suppresses the synthesized duplicate.
@@ -593,6 +640,16 @@ async fn finalize_stream_exit(
     completion_text: &str,
     reported_cost: Option<f64>,
 ) {
+    let (exit, idle_timeout) = match exit {
+        StreamExit::IdleTimeout => (
+            StreamExit::Error(oxllm_core::Error::Upstream {
+                status: 504,
+                message: STREAM_IDLE_TIMEOUT_MESSAGE.to_string(),
+            }),
+            true,
+        ),
+        other => (other, false),
+    };
     match exit {
         StreamExit::Done => {
             // Release the in-flight slot the chat loop reserved for the
@@ -605,17 +662,23 @@ async fn finalize_stream_exit(
             // `stream_chunk_builder` fallback. Without this the
             // post-success budget settle treats the streamed tokens as
             // free to the caller.
-            if accumulated_usage.is_none() && bytes_sent_to_client {
-                if let Some(estimated) =
-                    estimate_stream_usage(call_ctx, response_model, completion_text)
-                {
+            if bytes_sent_to_client {
+                let missing_completion = accumulated_usage
+                    .as_ref()
+                    .is_none_or(|usage| usage.completion_tokens == 0);
+                estimate_incomplete_stream_usage(
+                    accumulated_usage,
+                    call_ctx,
+                    response_model,
+                    completion_text,
+                );
+                if missing_completion && let Some(estimated) = accumulated_usage.as_ref() {
                     tracing::info!(
                         request_id = %call_ctx.request_id,
                         prompt_tokens = estimated.prompt_tokens,
                         completion_tokens = estimated.completion_tokens,
-                        "stream ended without a usage chunk; billing estimated usage"
+                        "stream usage was incomplete; billing estimated usage"
                     );
-                    *accumulated_usage = Some(estimated);
                 }
             }
             // Aggregators report measured spend on late usage chunks, including
@@ -688,10 +751,20 @@ async fn finalize_stream_exit(
                 );
                 return;
             }
-            // The client went away mid-stream. Keep the budget/RPM
-            // reservation as the debit (`post_failure` would refund it
-            // and make disconnect-to-avoid-charge work) but always
-            // release the no-TTL `max_parallel_requests` gauge so a
+            // The client went away mid-stream. Estimate missing usage before
+            // writing the partial row: the provider had already accepted the
+            // prompt and may have generated the deltas sent to the client.
+            if bytes_sent_to_client {
+                estimate_incomplete_stream_usage(
+                    accumulated_usage,
+                    call_ctx,
+                    response_model,
+                    completion_text,
+                );
+            }
+            // Keep the budget/RPM reservation as the debit (`post_failure`
+            // would refund it and make disconnect-to-avoid-charge work) but
+            // always release the no-TTL `max_parallel_requests` gauge so a
             // disconnect storm cannot lock the key until restart.
             pipeline::release_concurrency(state, call_ctx).await;
             // When `accumulated_usage` is available, account deployment
@@ -740,6 +813,14 @@ async fn finalize_stream_exit(
         StreamExit::Error(err) => {
             // Release the in-flight slot (the stream has ended).
             state.router.record_in_flight(cooldown_key, -1);
+            if idle_timeout && bytes_sent_to_client {
+                estimate_incomplete_stream_usage(
+                    accumulated_usage,
+                    call_ctx,
+                    response_model,
+                    completion_text,
+                );
+            }
             let (status, message) = match &err {
                 oxllm_core::Error::Upstream { status, message } => (*status, message.as_str()),
                 _ => (500, "upstream stream failed"),
@@ -763,10 +844,15 @@ async fn finalize_stream_exit(
             // `stream: true`. The status is synthesized first
             // (out-of-range -> 502) so the derived `type`/`code` track
             // what the client would see on the non-streaming path.
+            let error_code = if idle_timeout {
+                Some(crate::error::UPSTREAM_TIMEOUT_CODE)
+            } else {
+                crate::error::code_for_upstream_status(synthesized.as_u16())
+            };
             let error_obj = crate::error::error_envelope_object(
                 message,
                 crate::error::error_type_for_status(synthesized.as_u16()),
-                crate::error::code_for_upstream_status(synthesized.as_u16()),
+                error_code,
             );
             let error_event = serde_json::json!({ "error": error_obj });
             match send_event(tx, Event::default().data(error_event.to_string())).await {
@@ -833,6 +919,8 @@ async fn finalize_stream_exit(
             // cooldown are counted for transport-class errors only —
             // deterministic transform/parse errors would be reproduced by
             // a sibling and say nothing about the deployment's health.
+            // Idle read timeouts are excluded below for the same reason:
+            // slow generation is not evidence of a failed connection.
             if let oxllm_core::Error::Network(msg) = &err {
                 if state.router.record_connection_failure(cooldown_key, msg) {
                     ::metrics::counter!(
@@ -842,10 +930,14 @@ async fn finalize_stream_exit(
                     .increment(1);
                 }
             }
-            let fail_status: Option<u16> = match &err {
-                oxllm_core::Error::Network(_) => Some(0),
-                oxllm_core::Error::Upstream { status, .. } => Some(*status),
-                _ => None,
+            let fail_status: Option<u16> = if idle_timeout {
+                None
+            } else {
+                match &err {
+                    oxllm_core::Error::Network(_) => Some(0),
+                    oxllm_core::Error::Upstream { status, .. } => Some(*status),
+                    _ => None,
+                }
             };
             if let Some(status) = fail_status
                 && super::outcomes::terminal_failure_affects_deployment(state, status)
@@ -865,6 +957,9 @@ async fn finalize_stream_exit(
                 bytes_sent_to_client
             );
             pipeline::post_failure(state, call_ctx, &err).await;
+        }
+        StreamExit::IdleTimeout => {
+            unreachable!("idle timeouts are normalized before exit accounting")
         }
     }
 }
@@ -1268,6 +1363,9 @@ async fn process_buffer(
                 }
                 accumulate_completion_text(completion_text, &value);
                 normalize_stream_chunk(&mut value, original_request, usage_injection);
+                if usage_injection.strip_content_usage {
+                    strip_usage_from_content_chunk(&mut value);
+                }
                 if is_usage_only_chunk(&value) {
                     if !usage_injection.include_usage {
                         // The client never asked for usage chunks; this one
@@ -1351,6 +1449,12 @@ struct UsageInjection {
     reported_cost: Option<f64>,
     /// Last served-tier observation; independent of whether usage was sent.
     served_service_tier: Option<String>,
+    /// Provider usage metadata merged across chunks so complementary fields
+    /// survive after usage is stripped from content chunks.
+    reported_usage: Option<serde_json::Value>,
+    /// Whether content/finish chunks should have usage removed for a direct
+    /// OpenAI client. Native converters keep the metadata for their own events.
+    strip_content_usage: bool,
 }
 
 fn normalize_stream_chunk(
@@ -1367,9 +1471,36 @@ fn normalize_stream_chunk(
     }
 }
 
-/// Capture `usage.cost` from a transformed stream chunk. Later chunks
-/// overwrite earlier ones so the final usage-only chunk wins.
+/// Merge nested provider usage metadata. Later scalar values win, while
+/// complementary fields from earlier snapshots are retained.
+fn merge_usage_metadata(current: &mut serde_json::Value, incoming: &serde_json::Value) {
+    let Some(incoming) = incoming.as_object() else {
+        *current = incoming.clone();
+        return;
+    };
+    if !current.is_object() {
+        *current = serde_json::Value::Object(serde_json::Map::new());
+    }
+    for (key, value) in incoming {
+        if let Some(existing) = current.get_mut(key) {
+            if existing.is_object() && value.is_object() {
+                merge_usage_metadata(existing, value);
+                continue;
+            }
+        }
+        current[key] = value.clone();
+    }
+}
+
+/// Capture usage metadata from a transformed stream chunk. Later chunks win
+/// on conflicting values; complementary fields are merged across snapshots.
 fn capture_stream_usage_cost(usage_injection: &mut UsageInjection, value: &serde_json::Value) {
+    if let Some(usage) = value.get("usage").filter(|usage| usage.is_object()) {
+        match usage_injection.reported_usage.as_mut() {
+            Some(current) => merge_usage_metadata(current, usage),
+            None => usage_injection.reported_usage = Some(usage.clone()),
+        }
+    }
     if let Some(c) = pipeline::extract_body_usage_cost(value) {
         usage_injection.reported_cost = Some(c);
     }
@@ -1417,31 +1548,31 @@ fn build_usage_chunk_if_requested(
         return None;
     }
     accumulated_usage.map(|u| {
-        let mut usage = serde_json::json!({
-            "choices": [],
-            "usage": {
-                "prompt_tokens": u.prompt_tokens,
-                "completion_tokens": u.completion_tokens,
-                "total_tokens": u.total_tokens,
-            }
-        });
-        if let Some(tier) = &usage_injection.served_service_tier {
-            usage["service_tier"] = serde_json::json!(tier);
-        }
+        // Start with the provider's latest usage object so fields outside our
+        // billing summary (for example Anthropic server_tool_use) survive.
+        // Accumulated counts overwrite the canonical fields below.
+        let mut usage = usage_injection
+            .reported_usage
+            .clone()
+            .filter(|usage| usage.is_object())
+            .unwrap_or_else(|| serde_json::json!({}));
+        usage["prompt_tokens"] = serde_json::json!(u.prompt_tokens);
+        usage["completion_tokens"] = serde_json::json!(u.completion_tokens);
+        usage["total_tokens"] = serde_json::json!(u.total_tokens);
         // Preserve a late provider receipt when the client requested usage.
         // In particular, Perplexity's dynamic fees cannot be reconstructed
         // from token counts alone in a subsequent /spend/calculate preview.
         if let Some(cost) = usage_injection.reported_cost {
-            usage["usage"]["cost"] = serde_json::json!(cost);
+            usage["cost"] = serde_json::json!(cost);
         }
         // H6: surface `completion_tokens_details.reasoning_tokens` so
         // streaming clients of reasoning models (o3 / o4-mini) see the same
         // breakdown as the non-streaming path. The field is a subset of
         // `completion_tokens` and is priced at the completion rate.
-        usage["usage"]["completion_tokens_details"]["reasoning_tokens"] =
+        usage["completion_tokens_details"]["reasoning_tokens"] =
             serde_json::json!(u.reasoning_tokens.unwrap_or(0));
         if let Some(value) = u.cache_creation_input_tokens {
-            usage["usage"]["cache_creation_input_tokens"] = serde_json::json!(value);
+            usage["cache_creation_input_tokens"] = serde_json::json!(value);
         }
         for (name, value) in [
             ("cached_tokens", u.cache_read_input_tokens),
@@ -1452,10 +1583,14 @@ fn build_usage_chunk_if_requested(
             ("audio_tokens", u.audio_input_tokens),
         ] {
             if let Some(value) = value {
-                usage["usage"]["prompt_tokens_details"][name] = serde_json::json!(value);
+                usage["prompt_tokens_details"][name] = serde_json::json!(value);
             }
         }
-        usage
+        let mut chunk = serde_json::json!({"choices": [], "usage": usage});
+        if let Some(tier) = &usage_injection.served_service_tier {
+            chunk["service_tier"] = serde_json::json!(tier);
+        }
+        chunk
     })
 }
 
@@ -1618,7 +1753,10 @@ mod tests {
                 let entry = spend_rx.try_recv().expect("partial debit must be logged");
                 assert_eq!(entry.status.as_deref(), Some("partial"));
                 assert_eq!(entry.session_id.as_deref(), Some("partial-stream-session"));
-                assert_eq!(entry.total_tokens, Some(if has_usage { 3 } else { 0 }));
+                assert_eq!(
+                    entry.total_tokens,
+                    usage.as_ref().map(|usage| usage.total_tokens as i64)
+                );
             } else {
                 assert!(actual_key.abs() < 1e-9 && actual_dep.abs() < 1e-9);
                 assert_eq!(state.cache.counter_value("rpm:abc").await, Some(0.0));
@@ -1647,6 +1785,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let mut done = false;
         process_buffer(
@@ -1772,6 +1912,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(entry.status.as_deref(), Some("partial"));
+        assert!(entry.prompt_tokens.unwrap() > 0);
+        assert!(entry.completion_tokens.unwrap() > 0);
         assert_eq!(state.cache.counter_value("spend:abc").await, Some(reserved));
         assert_eq!(state.cache.counter_value("parallel:abc").await, Some(0.0));
         tokio::time::timeout(Duration::from_secs(5), source_tx.closed())
@@ -1966,6 +2108,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let secret = "SUPER_SECRET_CONTENT_42_this_must_not_be_logged";
         let mut buffer = format!("data: {secret}\n\n");
@@ -2017,6 +2161,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let chunk = "data: {\"choices\":[]}\n\n";
         let mut buffer = chunk.to_string();
@@ -2064,12 +2210,7 @@ mod tests {
     async fn process_buffer_emits_usage_chunk_before_done_when_include_usage() {
         let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(64);
         let provider = OpenAiProvider;
-        let mut usage: Option<oxllm_core::UsageSummary> = Some(oxllm_core::UsageSummary {
-            prompt_tokens: 10,
-            completion_tokens: 20,
-            total_tokens: 30,
-            ..Default::default()
-        });
+        let mut usage: Option<oxllm_core::UsageSummary> = None;
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: true,
@@ -2077,9 +2218,17 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
-        // A content chunk followed by the [DONE] terminator.
-        let mut buffer = "data: {\"choices\":[{}]}\n\ndata: [DONE]\n\n".to_string();
+        // Usage attached to a content chunk must move to the terminal chunk,
+        // retaining provider-specific usage fields.
+        let mut buffer = concat!(
+            "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":0,\"total_tokens\":10,\"prompt_tokens_details\":{\"text_tokens\":10}}}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30,\"server_tool_use\":{\"web_search_requests\":2}}}\n\n",
+            "data: [DONE]\n\n",
+        )
+        .to_string();
         let mut done_sent = false;
         let mut bytes_sent = false;
         process_buffer(
@@ -2109,6 +2258,15 @@ mod tests {
         assert!(body.contains("\"completion_tokens\":20"), "body: {body}");
         assert!(body.contains("\"total_tokens\":30"), "body: {body}");
         assert!(body.contains("\"choices\":[]"), "body: {body}");
+        assert!(
+            body.contains("\"server_tool_use\":{\"web_search_requests\":2}"),
+            "provider-specific usage fields must survive: {body}"
+        );
+        assert!(
+            body.contains("\"text_tokens\":10"),
+            "complementary fields from the prompt snapshot must survive: {body}"
+        );
+        assert!(body.contains("\"content\":\"hi\""), "body: {body}");
         // It must precede [DONE].
         let usage_pos = body.find("\"prompt_tokens\":10").unwrap();
         let done_pos = body.find("[DONE]").unwrap();
@@ -2134,12 +2292,7 @@ mod tests {
     async fn process_buffer_omits_usage_chunk_when_not_requested() {
         let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(64);
         let provider = OpenAiProvider;
-        let mut usage: Option<oxllm_core::UsageSummary> = Some(oxllm_core::UsageSummary {
-            prompt_tokens: 10,
-            completion_tokens: 20,
-            total_tokens: 30,
-            ..Default::default()
-        });
+        let mut usage: Option<oxllm_core::UsageSummary> = None;
         let mut model = String::new();
         let mut usage_injection = UsageInjection {
             include_usage: false,
@@ -2147,8 +2300,14 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
-        let mut buffer = "data: {\"choices\":[{}]}\n\ndata: [DONE]\n\n".to_string();
+        let mut buffer = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}\n\n",
+            "data: [DONE]\n\n",
+        )
+        .to_string();
         let mut done_sent = false;
         let mut bytes_sent = false;
         process_buffer(
@@ -2173,8 +2332,10 @@ mod tests {
             !body.contains("prompt_tokens"),
             "no usage chunk when include_usage is false: {body}"
         );
+        assert!(body.contains("\"content\":\"hi\""), "body: {body}");
         assert!(body.contains("[DONE]"));
         assert!(!usage_injection.emitted);
+        assert_eq!(usage.expect("usage is still metered").total_tokens, 30);
     }
 
     /// The usage chunk is emitted at most once even if `[DONE]` appears
@@ -2196,6 +2357,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let mut buffer = "data: [DONE]\n\ndata: [DONE]\n\n".to_string();
         let mut done_sent = false;
@@ -2234,6 +2397,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         assert!(build_usage_chunk_if_requested(&inj, None).is_none());
     }
@@ -2253,6 +2418,8 @@ mod tests {
             emitted: true,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         assert!(build_usage_chunk_if_requested(&inj, Some(&usage)).is_none());
     }
@@ -2273,6 +2440,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let chunk = build_usage_chunk_if_requested(&inj, Some(&usage)).expect("some chunk");
         assert!(chunk["choices"].is_array());
@@ -2309,6 +2478,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let chunk = build_usage_chunk_if_requested(&inj, Some(&usage)).expect("some chunk");
         assert_eq!(
@@ -2340,6 +2511,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let chunk = build_usage_chunk_if_requested(&inj, Some(&usage)).expect("some chunk");
         assert_eq!(
@@ -2366,6 +2539,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         // OpenAI o-series emits reasoning_content deltas inline with the
         // other content deltas.
@@ -2420,6 +2595,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         // Final usage chunk from OpenAI streaming: empty choices + usage
         // carrying reasoning tokens.
@@ -2472,6 +2649,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let mut done_sent = false;
         let mut bytes_sent = false;
@@ -2540,6 +2719,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let mut buffer = "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2,\"cost\":0.0023}}\n\n".to_string();
         process_buffer(
@@ -2984,6 +3165,77 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn idle_stream_timeout_is_504_and_does_not_cool_the_deployment() {
+        let mut state = AppState::with_registry(
+            crate::config::types::ProxyConfig {
+                model_list: vec![],
+                oxllm_settings: Default::default(),
+                general_settings: Default::default(),
+                router_settings: crate::config::types::RouterSettings {
+                    routing: crate::config::types::RoutingKnobs {
+                        allowed_fails: Some(0),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                extra: serde_json::Map::new(),
+            },
+            oxllm_providers::default_registry(),
+        )
+        .unwrap();
+        let (spend_tx, mut ledger) = mpsc::channel(8);
+        state.spend_tx = Some(spend_tx);
+        let deployment = Deployment {
+            model_name: "public-alias".into(),
+            oxllm_params: oxllm_core::deployment::OxllmParams {
+                model: "openai/gpt-4o".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let ctx = CallContext::for_test("public-alias");
+        let _ = ctx.token_estimate.set(120);
+        let dep_key = deployment_key(&deployment);
+        let cooldown_key = state.router.cooldown_key(&deployment);
+        let (events, receiver) = mpsc::channel(8);
+        let mut usage = Some(oxllm_core::UsageSummary {
+            prompt_tokens: 100,
+            cache_read_input_tokens: Some(40),
+            ..Default::default()
+        });
+        finalize_stream_exit(
+            &state,
+            &deployment,
+            &ctx,
+            &Default::default(),
+            &ctx.model,
+            &cooldown_key,
+            &dep_key,
+            &events,
+            StreamExit::IdleTimeout,
+            &mut usage,
+            "gpt-4o",
+            true,
+            "partial output",
+            None,
+        )
+        .await;
+        assert!(
+            !state.router.cooldown_store().is_cooling(&cooldown_key),
+            "a slow stream must not count as a connection-health failure"
+        );
+        drop(events);
+        let body = drain_sse_to_string(receiver).await;
+        assert!(body.contains("\"code\":\"upstream_timeout\""), "{body}");
+        assert!(body.contains(STREAM_IDLE_TIMEOUT_MESSAGE), "{body}");
+        let row = ledger.try_recv().expect("estimated partial spend row");
+        assert_eq!(row.status.as_deref(), Some("partial"));
+        assert_eq!(row.prompt_tokens, Some(100));
+        assert!(row.completion_tokens.unwrap() > 0);
+        assert_eq!(usage.unwrap().cache_read_input_tokens, Some(40));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn partial_stream_survives_transient_ledger_backpressure() {
         let mut state = AppState::with_registry(
@@ -3271,6 +3523,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let mut buffer = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
@@ -3324,6 +3578,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let mut buffer = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
@@ -3377,6 +3633,8 @@ mod tests {
             emitted: false,
             reported_cost: None,
             served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
         };
         let mut buffer = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n",

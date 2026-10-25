@@ -20,7 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
-use crate::handlers::chat::chat_completions_inner;
+use crate::handlers::chat::chat_completions_inner_preserving_stream_usage;
 use crate::handlers::convert::responses::{
     ResponsesStreamConverter, chat_to_responses_response, process_openai_sse_event_responses,
     responses_to_chat_request,
@@ -107,8 +107,13 @@ pub async fn responses(
     let chat_bytes = serde_json::to_vec(&chat_body)
         .map_err(|e| ApiError::internal(format!("failed to serialize request: {e}")))?;
 
-    let chat_response =
-        chat_completions_inner(state, &auth, &headers, Bytes::from(chat_bytes)).await?;
+    let chat_response = chat_completions_inner_preserving_stream_usage(
+        state,
+        &auth,
+        &headers,
+        Bytes::from(chat_bytes),
+    )
+    .await?;
 
     if !chat_response.status().is_success() {
         return Ok(chat_response);

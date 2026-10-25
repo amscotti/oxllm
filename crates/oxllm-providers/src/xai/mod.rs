@@ -21,9 +21,9 @@
 //! - **Empty `finish_reason` fixed for tool calls**: xAI returns `""` for
 //!   `finish_reason` when the response carries tool calls; the OpenAI contract
 //!   is `"tool_calls"`.
-//! - **Empty-choices usage chunks normalized**: xAI emits a final stream chunk
-//!   with an empty `choices` array but a populated `usage` object; a dummy
-//!   choice is injected so the orchestrator's usage accumulator processes it.
+//! - **Empty-choices usage chunks preserved**: xAI emits a final stream chunk
+//!   with an empty `choices` array and a populated `usage` object, matching the
+//!   OpenAI `stream_options.include_usage` contract.
 //!
 //! See `docs/adding-a-provider.md`.
 
@@ -34,7 +34,7 @@ use oxllm_core::Result;
 use oxllm_core::deployment::Deployment;
 use oxllm_core::endpoint::Endpoint;
 use oxllm_core::provider::{ChatProvider, Provider, ProviderId, ResolvedCredentials};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// The default xAI OpenAI-compatible base URL.
 pub const DEFAULT_XAI_BASE: &str = "https://api.x.ai/v1";
@@ -109,7 +109,7 @@ fn strip_strict_from_tools(out: &mut Value) {
 /// response body (the output of the shared compat `transform_response`).
 fn apply_xai_response_transforms(out: &mut Value) {
     fix_empty_finish_reason_for_tool_calls(out);
-    fold_reasoning_tokens_into_completion(out);
+    crate::openai_compat::fold_reasoning_tokens_into_completion(out);
 }
 
 /// Set `finish_reason = "tool_calls"` on choices where xAI returned an empty
@@ -145,81 +145,12 @@ fn fix_empty_finish_reason_for_tool_calls(out: &mut Value) {
     }
 }
 
-/// Fold `reasoning_tokens` into `completion_tokens` so the OpenAI subset
-/// invariant `total = prompt + completion` holds (parity with the reference
-/// `_fold_reasoning_tokens_into_completion`). xAI accounts reasoning
-/// additively; without this fold the cost calculator subtracts reasoning
-/// tokens that were never inside `completion_tokens`, mis-pricing the output
-/// bucket. Idempotent and guarded against double-counting.
-fn fold_reasoning_tokens_into_completion(out: &mut Value) {
-    let Some(usage) = out.get_mut("usage").and_then(|u| u.as_object_mut()) else {
-        return;
-    };
-    fold_reasoning_in_usage_object(usage);
-}
-
-/// Shared inner: fold reasoning into completion for one usage object map.
-fn fold_reasoning_in_usage_object(usage: &mut Map<String, Value>) {
-    let reasoning = usage
-        .get("completion_tokens_details")
-        .and_then(|d| d.get("reasoning_tokens"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    if reasoning == 0 {
-        return;
-    }
-    let prompt = usage
-        .get("prompt_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let completion = usage
-        .get("completion_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let total = usage
-        .get("total_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    // Already consistent — nothing to do.
-    if total == prompt.saturating_add(completion) {
-        return;
-    }
-    // Guard against double-counting if xAI changes accounting: only fold when
-    // the additive identity holds exactly.
-    if total != prompt.saturating_add(completion).saturating_add(reasoning) {
-        return;
-    }
-    usage.insert(
-        "completion_tokens".to_string(),
-        Value::Number(serde_json::Number::from(
-            completion.saturating_add(reasoning),
-        )),
-    );
-}
-
 /// Apply xAI-specific stream-chunk transforms to an already-parsed OpenAI
 /// stream chunk (the output of the shared compat `transform_stream_chunk`).
 fn apply_xai_stream_transforms(value: &mut Value) {
-    // Inject a dummy choice when `choices` is empty but `usage` is present, so
-    // the orchestrator's usage accumulator processes the final usage chunk
-    // (parity with the reference xAI streaming chunk parser).
-    let needs_dummy_choice = {
-        let choices_empty = value
-            .get("choices")
-            .and_then(|c| c.as_array())
-            .is_some_and(|c| c.is_empty());
-        let has_usage = value.get("usage").is_some();
-        choices_empty && has_usage
-    };
-    if needs_dummy_choice {
-        let dummy = serde_json::json!({"index": 0, "delta": {}, "finish_reason": null});
-        if let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) {
-            choices.push(dummy);
-        }
-    }
     // Fold reasoning tokens into completion in the usage object.
     if let Some(usage) = value.get_mut("usage").and_then(|u| u.as_object_mut()) {
-        fold_reasoning_in_usage_object(usage);
+        crate::openai_compat::fold_reasoning_in_usage_object(usage);
     }
 }
 

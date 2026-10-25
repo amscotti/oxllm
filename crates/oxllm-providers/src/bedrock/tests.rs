@@ -2325,6 +2325,19 @@ mod converse_tests {
         assert!(ic.get("topP").is_none());
     }
 
+    #[test]
+    fn converse_kimi_k3_clamps_max_tokens_to_provider_floor() {
+        for model in ["moonshotai.kimi-k3", "us.moonshotai.kimi-k3"] {
+            let req = json!({
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 1,
+            });
+            let out = converse::transform_request_converse(&req, model, &empty_extra())
+                .expect("Kimi K3 request");
+            assert_eq!(out["inferenceConfig"]["maxTokens"], 16, "{model}");
+        }
+    }
+
     /// Multi-modal: `image_url` with a `data:` URL becomes a Converse
     /// image block `{image:{format, source:{bytes}}}`. Media type prefix
     /// is stripped (`image/png` → `png`).

@@ -410,6 +410,7 @@ async fn perplexity_streaming_with_usage_chunk() {
             "model": "sonar-reasoning",
             "messages": [{"role": "user", "content": "Hi"}],
             "stream": true,
+            "stream_options": {"include_usage": true},
         }))
         .send()
         .await

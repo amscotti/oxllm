@@ -1,6 +1,6 @@
 //! `LowestCost` strategy — picks the deployment with the cheapest per-token cost.
 
-use crate::cost::lookup_pricing;
+use crate::cost::{deployment_pricing_model, lookup_pricing_with_provider};
 use crate::deployment::Deployment;
 use crate::router::simple_shuffle::SimpleShuffle;
 use crate::router::strategy::{RequestContext, RoutingStrategy};
@@ -49,19 +49,22 @@ impl RoutingStrategy for LowestCost {
                     }
                     sum
                 }
-                _ => match lookup_pricing(&dep.oxllm_params.model) {
-                    Some(pricing) => {
-                        if pricing.is_per_second_priced() {
-                            continue;
+                _ => {
+                    let pricing_model = deployment_pricing_model(dep, &ctx.model);
+                    match lookup_pricing_with_provider(&pricing_model, dep.provider_slug()) {
+                        Some(pricing) => {
+                            if pricing.is_per_second_priced() {
+                                continue;
+                            }
+                            let sum = pricing.input_cost_per_token + pricing.output_cost_per_token;
+                            if !sum.is_finite() {
+                                continue;
+                            }
+                            sum
                         }
-                        let sum = pricing.input_cost_per_token + pricing.output_cost_per_token;
-                        if !sum.is_finite() {
-                            continue;
-                        }
-                        sum
+                        None => continue,
                     }
-                    None => continue,
-                },
+                }
             };
             match &best {
                 None => best = Some((dep, cost)),
@@ -150,6 +153,59 @@ mod tests {
         let refs: Vec<&Deployment> = deps.iter().collect();
         let picked = strategy.pick(&refs, &ctx).expect("should pick");
         assert!(picked.oxllm_params.model.contains("mini"));
+    }
+
+    #[test]
+    fn base_model_prices_opaque_deployment_aliases() {
+        for hint_in_model_info in [true, false] {
+            let mut aliased = make_dep("aliased", "openai/private-alias");
+            if hint_in_model_info {
+                aliased.model_info = Some(crate::deployment::ModelInfo {
+                    base_model: Some("openai/gpt-4o-mini".to_string()),
+                    ..Default::default()
+                });
+            } else {
+                aliased.oxllm_params.extra.insert(
+                    "base_model".to_string(),
+                    serde_json::json!("openai/gpt-4o-mini"),
+                );
+            }
+            let deps = [make_dep("catalog", "openai/gpt-4o"), aliased];
+            let refs: Vec<&Deployment> = deps.iter().collect();
+            let picked = LowestCost
+                .pick(&refs, &RequestContext::new("model"))
+                .expect("base model should price the alias");
+            assert_eq!(picked.model_name, "aliased");
+        }
+    }
+
+    #[test]
+    fn namespaced_base_model_uses_the_serving_provider_catalog() {
+        for provider in ["groq", "deepinfra", "together_ai"] {
+            let mut aliased = make_dep("aliased", &format!("{provider}/private-alias"));
+            aliased.model_info = Some(crate::deployment::ModelInfo {
+                base_model: Some("openai/gpt-oss-120b".to_string()),
+                ..Default::default()
+            });
+            let expected = format!("{provider}/openai/gpt-oss-120b");
+            assert_eq!(deployment_pricing_model(&aliased, "model"), expected);
+            assert!(lookup_pricing_with_provider(&expected, provider).is_some());
+        }
+    }
+
+    #[test]
+    fn non_exact_namespaced_hint_returns_canonical_model_for_overrides() {
+        let mut aliased = make_dep("aliased", "azure_ai/private-alias");
+        aliased.model_info = Some(crate::deployment::ModelInfo {
+            base_model: Some("anthropic/claude-sonnet-5-5".to_string()),
+            ..Default::default()
+        });
+        aliased.oxllm_params.input_cost_per_token = Some(1e-6);
+        let resolved = deployment_pricing_model(&aliased, "model");
+        assert_eq!(resolved, "azure_ai/claude-sonnet-5-5");
+        aliased.oxllm_params.model = resolved;
+        let override_pricing = aliased.oxllm_params.pricing_override().unwrap();
+        assert_eq!(override_pricing.cache_read_input_token_cost, Some(2e-7));
     }
 
     #[test]

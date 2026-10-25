@@ -423,6 +423,7 @@ async fn openai_streaming_with_usage_chunk() {
             "model": "openai/gpt-4o",
             "messages": [{"role": "user", "content": "Hi"}],
             "stream": true,
+            "stream_options": {"include_usage": true},
         }))
         .send()
         .await
@@ -438,6 +439,11 @@ async fn openai_streaming_with_usage_chunk() {
     assert!(
         text.contains("\"total_tokens\":15"),
         "should contain total tokens: {text}"
+    );
+    assert_eq!(
+        text.matches("\"total_tokens\":15").count(),
+        1,
+        "usage must be emitted exactly once: {text}"
     );
 
     upstream.assert_hits(1);

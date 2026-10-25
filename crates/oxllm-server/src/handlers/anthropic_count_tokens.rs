@@ -82,14 +82,31 @@ async fn count_tokens_inner(
     let model = extract_request_model(&body)?;
     let request: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("invalid token-counting JSON"))?;
-    let mut native = oxllm_providers::anthropic::count_tokens::normalize_request(&request, &model)
-        .map_err(ApiError::from)?;
+    let app = state.load_full();
+    let drop_params = app
+        .router
+        .deployments_for_model(&app.deployments, &model)
+        .into_iter()
+        .next()
+        .and_then(|deployment| deployment.oxllm_params.drop_params)
+        .or(app.config.oxllm_settings.drop_params)
+        .unwrap_or(false)
+        || request
+            .get("drop_params")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+    let mut native = oxllm_providers::anthropic::count_tokens::normalize_request_with_drop_params(
+        &request,
+        &model,
+        drop_params,
+    )
+    .map_err(ApiError::from)?;
     if let Some(object) = native.as_object_mut() {
         crate::orchestration::request_controls::copy(&request, object);
     }
     let body = Bytes::from(native.to_string());
     forward_with_mode(
-        &state.load_full(),
+        &app,
         &auth,
         PassthroughMode::HookedRaw {
             upstream_path: "messages/count_tokens".to_string(),

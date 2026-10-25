@@ -107,7 +107,7 @@ fn native_thinking_usage_and_redacted_stream_blocks_survive_translation() {
         .unwrap()
         .unwrap();
     assert_eq!(first["speed"], "standard");
-    let block = json!({"type":"redacted_thinking","data":"opaque-base64"});
+    let block = json!({"type":"redacted_thinking","data":"opaque-base64","index":0});
     let event = format!(
         "data: {}",
         json!({"type":"content_block_start","index":0,"content_block":block})

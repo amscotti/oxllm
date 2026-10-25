@@ -113,6 +113,7 @@ max_output_tokens = 8192
 input_cost_per_token = 2.5000000000e-6
 output_cost_per_token = 7.5000000000e-6
 cache_read_input_token_cost = 5.0000000000e-7
+cache_creation_input_token_cost = 3.125000e-6
 max_input_tokens = 991808
 max_output_tokens = 65536
 ["dashscope/deepseek-v4-flash"]

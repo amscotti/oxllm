@@ -1127,12 +1127,16 @@ input_cost_per_token = 3.500000e-7
 output_cost_per_token = 1.150000e-6
 max_input_tokens = 1000000
 max_output_tokens = 1000000
+input_cost_per_token_batches = 1.750000e-7
+output_cost_per_token_batches = 5.750000e-7
 
 ["vertex_ai/meta/llama-4-scout-17b-128e-instruct-maas"]
 input_cost_per_token = 2.500000e-7
 output_cost_per_token = 7.000000e-7
 max_input_tokens = 10000000
 max_output_tokens = 10000000
+input_cost_per_token_batches = 1.250000e-7
+output_cost_per_token_batches = 3.500000e-7
 
 ["vertex_ai/meta/llama-4-scout-17b-16e-instruct-maas"]
 input_cost_per_token = 2.500000e-7

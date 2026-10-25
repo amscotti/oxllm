@@ -226,6 +226,19 @@ impl ChatProvider for AzureAiProvider {
                                 }
                             }
                         }
+                        if object.get("role").and_then(Value::as_str) == Some("tool") {
+                            if let Some(content) =
+                                object.get_mut("content").and_then(Value::as_array_mut)
+                            {
+                                content.retain(|block| {
+                                    block.get("type").and_then(Value::as_str)
+                                        != Some("tool_reference")
+                                });
+                                if content.is_empty() {
+                                    object.insert("content".into(), json!(""));
+                                }
+                            }
+                        }
                         if let Some(content) = object.get("content").and_then(Value::as_array)
                             && !content.is_empty()
                             && content.iter().all(|block| {
@@ -257,7 +270,16 @@ impl ChatProvider for AzureAiProvider {
                     }
                 }
             }
-            ChatProvider::transform_request(&COMPAT, &sanitized, &resolved)
+            let mut body = ChatProvider::transform_request(&COMPAT, &sanitized, &resolved)?;
+            let model = body
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if crate::openai::is_gpt_6_1_sol(&model) {
+                crate::openai::apply_openai_reasoning_limits(&mut body, &model);
+            }
+            Ok(body)
         }
     }
 
@@ -265,7 +287,9 @@ impl ChatProvider for AzureAiProvider {
         if body.get("type").and_then(Value::as_str) == Some("message") {
             AnthropicProvider.transform_response(body, model)
         } else {
-            ChatProvider::transform_response(&COMPAT, body, model)
+            let mut transformed = ChatProvider::transform_response(&COMPAT, body, model)?;
+            crate::openai_compat::fold_reasoning_tokens_into_completion(&mut transformed);
+            Ok(transformed)
         }
     }
 
@@ -286,7 +310,11 @@ impl ChatProvider for AzureAiProvider {
         if Self::anthropic_chunk(chunk) {
             AnthropicProvider.transform_stream_chunk(chunk)
         } else {
-            COMPAT.transform_stream_chunk(chunk)
+            let mut transformed = COMPAT.transform_stream_chunk(chunk)?;
+            if let Some(value) = &mut transformed {
+                crate::openai_compat::fold_reasoning_tokens_into_completion(value);
+            }
+            Ok(transformed)
         }
     }
 
@@ -299,7 +327,11 @@ impl ChatProvider for AzureAiProvider {
         if Self::anthropic_chunk(chunk) {
             AnthropicProvider.transform_stream_chunk_stateful(chunk, state, request)
         } else {
-            COMPAT.transform_stream_chunk_stateful(chunk, state, request)
+            let mut transformed = COMPAT.transform_stream_chunk_stateful(chunk, state, request)?;
+            if let Some(value) = &mut transformed {
+                crate::openai_compat::fold_reasoning_tokens_into_completion(value);
+            }
+            Ok(transformed)
         }
     }
 

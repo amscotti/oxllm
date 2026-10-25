@@ -1701,6 +1701,7 @@ fn bedrock_rejects_stop_sequences(model: &str) -> bool {
 fn bedrock_requires_min_max_tokens(model: &str) -> bool {
     let lower = model.to_ascii_lowercase();
     lower.contains("xai.grok-")
+        || lower.contains("moonshotai.kimi-k3")
         || lower
             .match_indices("openai.gpt-")
             .any(|(i, needle)| lower[i + needle.len()..].starts_with(|c: char| c.is_ascii_digit()))
@@ -1738,7 +1739,7 @@ fn build_inference_config(request: &Value, model: &str) -> Value {
                 .and_then(crate::anthropic::json_number_as_u64)
         });
     if let Some(mt) = max_tokens {
-        // Converse rejects maxTokens below 16 for OpenAI GPT and xAI Grok.
+        // Converse rejects maxTokens below 16 for OpenAI GPT, xAI Grok and Kimi K3.
         let mt = if bedrock_requires_min_max_tokens(model) {
             mt.max(16)
         } else {
@@ -2671,6 +2672,8 @@ pub(super) struct ConverseStreamState {
     model: String,
     created: u64,
     thinking_blocks: HashMap<u64, Value>,
+    thinking_indexes: HashMap<u64, u64>,
+    next_thinking_index: u64,
     tool_arguments: HashMap<u64, bool>,
 }
 
@@ -2684,8 +2687,20 @@ impl ConverseStreamState {
                 .map(|duration| duration.as_secs())
                 .unwrap_or(0),
             thinking_blocks: HashMap::new(),
+            thinking_indexes: HashMap::new(),
+            next_thinking_index: 0,
             tool_arguments: HashMap::new(),
         }
+    }
+
+    fn thinking_index(&mut self, content_block_index: u64) -> u64 {
+        if let Some(index) = self.thinking_indexes.get(&content_block_index) {
+            return *index;
+        }
+        let index = self.next_thinking_index;
+        self.next_thinking_index = self.next_thinking_index.saturating_add(1);
+        self.thinking_indexes.insert(content_block_index, index);
+        index
     }
 }
 
@@ -2776,7 +2791,7 @@ pub(super) fn transform_stream_chunk_converse_with_state(
             {
                 state.tool_arguments.insert(index, false);
             }
-            handle_block_start(payload, reverse_map)
+            handle_block_start(payload, reverse_map, state)
         }
         "contentBlockDelta" => {
             if let Some(received) = state.tool_arguments.get_mut(&index) {
@@ -2786,6 +2801,7 @@ pub(super) fn transform_stream_chunk_converse_with_state(
                     .is_some_and(|input| !input.is_empty());
             }
             if let Some(reasoning) = payload.pointer("/delta/reasoningContent") {
+                state.thinking_index(index);
                 let block = state
                     .thinking_blocks
                     .entry(index)
@@ -2822,7 +2838,10 @@ pub(super) fn transform_stream_chunk_converse_with_state(
                     json!({"tool_calls":[{"index":index,"function":{"arguments":"{}"}}]}),
                     Value::Null,
                 )))
-            } else if let Some(block) = state.thinking_blocks.remove(&index) {
+            } else if let Some(mut block) = state.thinking_blocks.remove(&index) {
+                let thinking_index = state.thinking_index(index);
+                state.thinking_indexes.remove(&index);
+                block["index"] = json!(thinking_index);
                 Ok(Some(delta_chunk(
                     json!({"thinking_blocks": [block]}),
                     Value::Null,
@@ -2854,6 +2873,7 @@ pub(super) fn transform_stream_chunk_converse_with_state(
 fn handle_block_start(
     payload: &Value,
     reverse_map: &HashMap<String, String>,
+    state: &mut ConverseStreamState,
 ) -> Result<Option<Value>> {
     let Some(start) = payload.get("start") else {
         return Ok(None);
@@ -2889,6 +2909,7 @@ fn handle_block_start(
         )));
     }
     if let Some(rc) = start.get("reasoningContent") {
+        let thinking_index = state.thinking_index(idx as u64);
         if let Some(redacted) = rc.get("redactedContent") {
             return Ok(Some(delta_chunk(
                 json!({
@@ -2896,6 +2917,7 @@ fn handle_block_start(
                     "thinking_blocks": [{
                         "type": "redacted_thinking",
                         "data": redacted.clone(),
+                        "index": thinking_index,
                     }],
                 }),
                 Value::Null,

@@ -531,3 +531,15 @@ input_cost_per_token = 4.000000e-7
 output_cost_per_token = 1.200000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 4.000000e-8
+
+["together_ai/deepseek-ai/DeepSeek-V4.1-Flash-1017"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+cache_read_input_token_cost = 6.000000e-9
+
+["together_ai/MiniMaxAI/MiniMax-M3.1-Flash"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 1048576
+cache_read_input_token_cost = 1.500000e-8

@@ -18,7 +18,7 @@ fn chat_contract_preserves_model_namespace_tools_and_the_modern_token_limit() {
     let model = "baseten/deepseek-ai/DeepSeek-V4.1-Flash-Fast";
     let request = json!({
         "model":"fast","messages":[{"role":"user","content":"hi"}],
-        "max_tokens":10,"max_completion_tokens":20,
+        "max_tokens":10,"max_completion_tokens":20,"reasoning_effort":"high",
         "tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
         "tool_choice":"auto","stream":true,"stream_options":{"include_usage":true},
         "unsupported_control":true
@@ -28,6 +28,7 @@ fn chat_contract_preserves_model_namespace_tools_and_the_modern_token_limit() {
         .unwrap();
     assert_eq!(body["model"], "deepseek-ai/DeepSeek-V4.1-Flash-Fast");
     assert_eq!(body["max_tokens"], 20);
+    assert_eq!(body["reasoning_effort"], "high");
     assert!(body.get("max_completion_tokens").is_none());
     assert!(body.get("unsupported_control").is_none());
     assert_eq!(body["tools"], request["tools"]);

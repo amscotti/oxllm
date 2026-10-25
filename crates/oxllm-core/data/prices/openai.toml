@@ -5003,6 +5003,14 @@ max_input_tokens = 256000
 max_output_tokens = 64000
 cache_read_input_token_cost = 6.000000e-8
 
+["azure_ai/MAI-Code-1.1-Flash"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 256000
+max_output_tokens = 64000
+cache_read_input_token_cost = 2.000000e-8
+mode = "chat"
+
 ["azure_ai/claude-sonnet-5-5"]
 input_cost_per_token = 2.000000e-6
 output_cost_per_token = 1.000000e-5
@@ -5164,3 +5172,111 @@ mode = "chat"
 input_cost_per_token = 1.250000e-5
 output_cost_per_token = 7.500000e-5
 cache_read_input_token_cost = 1.250000e-6
+
+["azure/eu/gpt-4o"]
+input_cost_per_token = 2.750000e-6
+output_cost_per_token = 1.100000e-5
+max_input_tokens = 128000
+max_output_tokens = 16384
+cache_read_input_token_cost = 1.375000e-6
+cache_creation_input_token_cost = 1.380000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_batches = 5.500000e-6
+
+["azure/us/gpt-4o"]
+input_cost_per_token = 2.750000e-6
+output_cost_per_token = 1.100000e-5
+max_input_tokens = 128000
+max_output_tokens = 16384
+cache_read_input_token_cost = 1.375000e-6
+cache_creation_input_token_cost = 1.380000e-6
+input_cost_per_token_batches = 1.375000e-6
+output_cost_per_token_batches = 5.500000e-6
+
+["azure/eu/gpt-4o-mini"]
+input_cost_per_token = 1.650000e-7
+output_cost_per_token = 6.600000e-7
+max_input_tokens = 128000
+max_output_tokens = 16384
+cache_read_input_token_cost = 8.300000e-8
+input_cost_per_token_batches = 8.300000e-8
+
+["azure/us/gpt-4o-mini"]
+input_cost_per_token = 1.650000e-7
+output_cost_per_token = 6.600000e-7
+max_input_tokens = 128000
+max_output_tokens = 16384
+cache_read_input_token_cost = 8.300000e-8
+input_cost_per_token_batches = 8.300000e-8
+
+["azure/eu/o1"]
+input_cost_per_token = 1.650000e-5
+output_cost_per_token = 6.600000e-5
+max_input_tokens = 200000
+max_output_tokens = 100000
+cache_read_input_token_cost = 8.250000e-6
+input_cost_per_token_batches = 8.250000e-6
+output_cost_per_token_batches = 3.300000e-5
+
+["azure/us/o1"]
+input_cost_per_token = 1.650000e-5
+output_cost_per_token = 6.600000e-5
+max_input_tokens = 200000
+max_output_tokens = 100000
+cache_read_input_token_cost = 8.250000e-6
+input_cost_per_token_batches = 8.250000e-6
+output_cost_per_token_batches = 3.300000e-5
+
+["azure/eu/o3"]
+input_cost_per_token = 2.200000e-6
+output_cost_per_token = 8.800000e-6
+max_input_tokens = 200000
+max_output_tokens = 100000
+cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 1.100000e-6
+output_cost_per_token_batches = 4.400000e-6
+
+["azure/us/o3"]
+input_cost_per_token = 2.200000e-6
+output_cost_per_token = 8.800000e-6
+max_input_tokens = 200000
+max_output_tokens = 100000
+cache_read_input_token_cost = 5.500000e-7
+input_cost_per_token_batches = 1.100000e-6
+output_cost_per_token_batches = 4.400000e-6
+
+["azure/eu/o3-mini"]
+input_cost_per_token = 1.210000e-6
+output_cost_per_token = 4.840000e-6
+max_input_tokens = 200000
+max_output_tokens = 100000
+cache_read_input_token_cost = 6.050000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
+
+["azure/us/o3-mini"]
+input_cost_per_token = 1.210000e-6
+output_cost_per_token = 4.840000e-6
+max_input_tokens = 200000
+max_output_tokens = 100000
+cache_read_input_token_cost = 6.050000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
+
+["azure/eu/o4-mini"]
+input_cost_per_token = 1.210000e-6
+output_cost_per_token = 4.840000e-6
+max_input_tokens = 200000
+max_output_tokens = 100000
+cache_read_input_token_cost = 3.030000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6
+
+["azure/us/o4-mini"]
+input_cost_per_token = 1.210000e-6
+output_cost_per_token = 4.840000e-6
+max_input_tokens = 200000
+max_output_tokens = 100000
+cache_read_input_token_cost = 3.030000e-7
+input_cost_per_token_batches = 6.050000e-7
+output_cost_per_token_batches = 2.420000e-6

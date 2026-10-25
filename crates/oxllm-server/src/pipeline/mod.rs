@@ -1035,47 +1035,7 @@ pub(crate) fn is_model_router_fee_entry(model: &str) -> bool {
 /// Published serving-model prices win. An explicit underlying model can price
 /// opaque profiles/deployment aliases without changing their wire identity.
 pub(crate) fn deployment_pricing_model(deployment: &Deployment, requested: &str) -> String {
-    let provider = deployment.provider_slug();
-    let prefix = format!("{provider}/");
-    let configured = &deployment.oxllm_params.model;
-    let model = if configured.contains('*') {
-        format!(
-            "{prefix}{}",
-            requested.strip_prefix(&prefix).unwrap_or(requested)
-        )
-    } else {
-        configured.clone()
-    };
-    if oxllm_core::lookup_pricing_with_provider(&model, provider).is_some() {
-        return model;
-    }
-    let hint = deployment
-        .model_info
-        .as_ref()
-        .and_then(|info| info.base_model.as_deref())
-        .or_else(|| {
-            deployment
-                .oxllm_params
-                .extra
-                .get("base_model")
-                .and_then(Value::as_str)
-        });
-    if let Some(hint) = hint.filter(|hint| !hint.trim().is_empty() && !hint.contains('*')) {
-        let hint = hint
-            .split_once('/')
-            .filter(|(slug, _)| {
-                matches!(
-                    *slug,
-                    "openai" | "azure" | "anthropic" | "bedrock" | "gemini" | "vertex_ai"
-                )
-            })
-            .map_or(hint, |(_, native)| native);
-        let hinted = format!("{prefix}{hint}");
-        if oxllm_core::lookup_pricing_with_provider(&hinted, provider).is_some() {
-            return hinted;
-        }
-    }
-    model
+    oxllm_core::cost::deployment_pricing_model(deployment, requested)
 }
 
 /// Map an [`ApiError`] raised by pipeline limit checks or the orchestrators

@@ -1082,8 +1082,15 @@ async fn try_model_with_retries(
                     message,
                     headers,
                 }) => {
+                    let binding_mismatch_was_requested =
+                        oxllm_providers::anthropic::request_errors_on_thinking_binding_mismatch(
+                            request_body,
+                        ) && oxllm_providers::anthropic::is_thinking_binding_mismatch_error(
+                            &message,
+                        );
                     if status == 400
                         && !thinking_stripped
+                        && !binding_mismatch_was_requested
                         && oxllm_providers::anthropic::is_invalid_thinking_signature_error(&message)
                     {
                         let mut body = stripped_body.take().unwrap_or_else(|| request_body.clone());

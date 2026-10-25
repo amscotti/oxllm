@@ -252,6 +252,10 @@ pub struct CallContext {
     /// Whether any attempt received an upstream HTTP response. Later local
     /// failures must not refund rate-limit occupancy already used upstream.
     pub reached_upstream: bool,
+    /// Keep provider usage on content chunks for a downstream native-response
+    /// converter. Direct OpenAI chat responses leave this false so usage can
+    /// be stripped and emitted only in the terminal usage chunk.
+    pub preserve_stream_usage_for_conversion: bool,
     /// API surface of the cached representation. Native and translated
     /// responses must not collide with unrelated endpoint response shapes.
     pub cache_namespace: Option<String>,
