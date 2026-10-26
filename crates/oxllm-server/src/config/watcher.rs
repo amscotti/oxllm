@@ -454,6 +454,11 @@ mod tests {
     /// config-management test in the same process.
     const WATCHER_REGISTRATION_BUDGET: Duration = Duration::from_secs(120);
 
+    /// Deadline for observing a reload after a file write. This is longer
+    /// than a healthy reload needs so a loaded CI host does not trip the
+    /// assertion and poison `CONFIG_PATH_TEST_LOCK` for later tests.
+    const WATCHER_RELOAD_BUDGET: Duration = Duration::from_secs(60);
+
     #[tokio::test]
     async fn full_watch_queue_requests_a_rescan_without_blocking_registration() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -553,7 +558,7 @@ mod tests {
             let wait_for_model = |name: &'static str| {
                 let shared = shared.clone();
                 async move {
-                    tokio::time::timeout(Duration::from_secs(6), async {
+                    tokio::time::timeout(WATCHER_RELOAD_BUDGET, async {
                         loop {
                             if shared
                                 .load()
@@ -645,7 +650,7 @@ mod tests {
         let new_yaml = serde_yml::to_string(&updated).expect("serialize");
         std::fs::write(&config_path, &new_yaml).expect("write update");
 
-        tokio::time::timeout(Duration::from_secs(6), async {
+        tokio::time::timeout(WATCHER_RELOAD_BUDGET, async {
             while !shared
                 .load()
                 .deployments
