@@ -7,8 +7,12 @@
 > ConverseStream uses binary eventstream framing; the host decodes it before
 > producing client-facing SSE.
 
-## Current State
-oxllm's Bedrock provider (`crates/oxllm-providers/src/bedrock/mod.rs`, 654 lines) uses **InvokeModel** (`/model/{id}/invoke`):
+## Planning-time state (July 2026)
+
+At the time of this proposal, oxllm's Bedrock provider
+(`crates/oxllm-providers/src/bedrock/mod.rs`) used **InvokeModel**
+(`/model/{id}/invoke`). The current provider is substantially larger and also
+implements Converse:
 - Anthropic models: delegates to `AnthropicProvider` + inlines `anthropic_version`
 - Non-Anthropic models: passthrough of OpenAI-shaped body + vendor-specific response parsing
 - Streaming: `invoke-with-response-stream` + binary eventstream decoder
@@ -50,7 +54,7 @@ Eventually make Converse the default once stable.
      - Content blocks: text, tool_use, thinking, citations
      - `usage` → OpenAI usage + thinking tokens
      - `stopReason` → OpenAI `finish_reason`
-   - `transform_stream_chunk`: ConverseStream SSE → OpenAI chunk
+   - `transform_stream_chunk`: decoded ConverseStream event → OpenAI chunk
      - Handle: `messageStart`, `contentBlockDelta`, `contentBlockStop`, `messageStop`, `metadata`
 
 2. Tests: golden round-trip for each model family (Anthropic, Meta, Mistral, Nova)
@@ -64,7 +68,7 @@ Eventually make Converse the default once stable.
 2. In `endpoint_url`: if Converse → `/model/{id}/converse`; if streaming → `/converseStream`
 3. In `transform_request`: if Converse → delegate to `converse.rs`; else existing InvokeModel path
 4. In `transform_response`: same conditional
-5. In `transform_stream_chunk`: Converse uses SSE (JSON lines), InvokeModel uses eventstream — conditional decode
+5. In `transform_stream_chunk`: both ConverseStream and InvokeModel use AWS binary eventstream framing; the host decodes it into client-facing SSE
 
 **Effort**: ~200 lines
 
@@ -99,5 +103,6 @@ After testing with live Bedrock:
 ## Risk Mitigation
 - Dual-path means zero risk to existing InvokeModel users
 - Converse opt-in via config means users test at their own pace
-- Golden tests against LiteLLM's test vectors ensure transform correctness
-- Can test with the live Bedrock account (DeepSeek V3.2 worked via InvokeModel)
+- Golden tests against provider/AWS wire examples ensure transform correctness
+- The live Bedrock suites in `tests/bedrock_live.rs` cover real accounts when
+  AWS credentials are available

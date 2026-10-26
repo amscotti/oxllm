@@ -1,8 +1,8 @@
 # Operating oxllm
 
-This guide describes the source tree's deployment paths. Image builds, a
-registry push, successful cluster admission, and live-provider calls are
-separate checks; a rendered manifest alone does not establish those outcomes.
+This guide covers building, deploying, and operating oxllm. Building an image,
+publishing it, admitting it to a cluster, and verifying live provider calls are
+separate steps; validate each one for your environment.
 
 ## Choose the runtime
 
@@ -245,7 +245,8 @@ opens (`usage.server_tool_use.browser_open_requests`) — a provider-level
 rate that applies to table-priced Groq models but not to all-in deployment
 pricing overrides. Groq's derived counters, search and opens alike, come from
 the aggregated non-streaming response; streamed Groq compound-tool responses
-report no derived bucket, matching the reference's response-level derivation.
+report no derived bucket, because Groq derives these counters at the response
+level.
 
 `general_settings.http_force_ipv4: true` restricts the shared upstream and
 image-download clients to IPv4 through DNS filtering and IPv4 local binding.
@@ -309,9 +310,9 @@ Realtime upstream 409 rejections count as retryable faults; actual upstream
 400/422s count only with an explicit status policy. Local malformed-client,
 configuration and transform errors remain outside those policies. Realtime 424
 failed-dependency observations retain their existing treatment.
-Explicit numeric retry entries win over aliases. Nonzero content-policy
-retry parity is not established by the zero-retry compatibility tests.
-Exhausted deployments are excluded for the remainder of the current request,
+Explicit numeric retry entries win over aliases. Nonzero content-policy retry
+budgets follow the configured status policy. Exhausted deployments are excluded
+for the remainder of the current request,
 even with `cooldown_time: 0`; future requests may reconsider them immediately.
 
 Chat, Messages and Responses requests can override `fallbacks`,
@@ -952,6 +953,8 @@ per-deployment timeout does not automatically enlarge the startup drain; set
 `/health` is liveness. `/health/readiness` reports configured DB/cache health
 and shutdown readiness; use readiness to remove an instance from traffic.
 These probes do not contact every provider or certify provider API keys.
+`/metrics` uses the normal proxy auth stack when auth is configured, so scrape
+it with proxy credentials and keep it on an internal network boundary.
 
 ## Migrations and recovery
 
@@ -1071,8 +1074,8 @@ without its leading `v`. Manual runs accept destination/tag inputs and default
 to build-only (`publish=false`). The job publishes Linux images for its runner
 architecture; it is not a multi-architecture release job.
 
-No registry namespace, hosted GitHub repository, security contact or released
-artifact is established by this local checkout. Configure and verify those
-destinations before relying on automated releases. Version tags in Dockerfiles
-are mutable; use a verified digest if your release policy requires immutable
-base images. No fabricated digest or mandatory signing/SBOM service is supplied.
+This repository does not configure a container-registry destination by default.
+Set and verify the workflow variables and secrets above before relying on
+automated releases. Version tags in Dockerfiles are mutable; use a verified
+digest if your release policy requires immutable base images. The workflow does
+not provide signing or an SBOM unless you add those steps.

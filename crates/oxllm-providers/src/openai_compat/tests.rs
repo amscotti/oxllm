@@ -1,9 +1,8 @@
 //! Twin tests for the shared [`OpenAiCompatProvider`].
 //!
-//! Ported from `/Users/ascotti/code/oxllm/crates/oxllm-providers/src/openai_compatible.rs`
-//! (twin tests for the OpenAI-compatible provider). The source tests exercise
-//! full HTTP round-trips through wiremock; these adapted tests verify the
-//! pure transform/URL/auth surface against the same reference Python contract.
+//! The source tests exercise full HTTP round-trips through wiremock; these
+//! adapted tests verify the pure transform/URL/auth surface against the same
+//! reference Python contract.
 
 use super::*;
 use oxllm_core::Endpoint;

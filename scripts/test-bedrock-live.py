@@ -25,9 +25,8 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
-TEMP_ROOT = Path("/var/folders/95/d0xgc08d0rxc36f8llb8yhtc0000gn/T/opencode")
-if not TEMP_ROOT.is_dir():
-    TEMP_ROOT = Path(tempfile.gettempdir())
+TEMP_ROOT = Path(os.environ.get("OXLLM_TEST_TEMP_DIR", tempfile.gettempdir()))
+TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 MASTER = "sk-bedrock-live-verification-master-00000000"
 RATE_IN, RATE_OUT = 0.000001, 0.000002
 

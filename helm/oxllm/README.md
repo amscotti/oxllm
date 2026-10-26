@@ -96,9 +96,10 @@ The proxy master key comes from `env.OXLLM_MASTER_KEY`, the matching
 `envSecretRefs` entry, or `envFrom`. Set the same key in proxy config. The admin
 uses the proxy Service's port, independently of the proxy container port.
 Alternatively, `admin.sessionSecret` (16+ characters) and `admin.uiPassword`
-create chart-managed secrets. Persistence is needed for keys, teams, users,
-DB-managed models and spend pages; a proxy without a DB has limited management
-functionality. Terminate TLS before exposing the UI and keep secure cookies on.
+create chart-managed secrets. Every management page — keys, teams, users,
+models, and spend — needs a DB-enabled proxy; without persistence only the
+login/health shell is usable. Terminate TLS before exposing the UI and keep
+secure cookies on.
 For local HTTP port-forward testing only, use `admin.cookieSecure=false`.
 
 ## Updates, health and security context

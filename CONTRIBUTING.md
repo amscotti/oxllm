@@ -64,9 +64,11 @@ data files); expect a few minutes.
 
 ## Adding a new provider
 
-Adding a provider is mechanical and intentionally scoped — **one module +
-one feature flag**, no edits to `oxllm-core` or `oxllm-server`. Follow the
-full checklist in [docs/adding-a-provider.md](docs/adding-a-provider.md).
+Adding a provider is mechanical and intentionally scoped — **a provider
+module, a feature flag, and registry wiring**. A new price shard and optional
+passthrough support are data-only edits; no handler or route changes are
+needed. Follow the full checklist in
+[docs/adding-a-provider.md](docs/adding-a-provider.md).
 
 The short version:
 
@@ -77,8 +79,8 @@ The short version:
 3. Wire the module in `crates/oxllm-providers/src/lib.rs` and register it
    in the default registry builder.
 4. Add unit tests + golden files. If the provider is OpenAI-compatible,
-   reuse `openai_compat` and add the feature flag to the `any(...)`
-   `#[cfg]` list documented in the provider guide.
+   reuse `openai_compat` by declaring `"<provider>" = ["openai_compat"]` in
+   the provider crate's features; no separate `cfg(any(...))` list is needed.
 
 ---
 
@@ -115,12 +117,10 @@ cargo doc --locked --no-deps --workspace
 ## Coverage
 
 Coverage is tracked with [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)
-(`cargo install cargo-llvm-cov`). Current measured coverage: **93.6% of lines /
-92.1% of functions** (workspace library tests merged with the high-value
-integration suites; ~90% from unit tests alone). Per crate: core 96.5%,
-db 95.2%, server 93.5%, providers 93.1%, admin 90.5%. Remaining uncovered
-lines are concentrated in startup/shutdown wiring (`app.rs`, `main.rs`) and
-rare error branches.
+(`cargo install cargo-llvm-cov`). CI does not enforce a fixed percentage.
+Measure the current tree and include the commit and date when reporting a
+number; uncovered lines are typically concentrated in startup/shutdown wiring
+and rare error branches.
 
 ```bash
 # Fast signal: library/unit tests only, per-file JSON + terminal summary.
@@ -203,8 +203,7 @@ live tests serialize their calls automatically to avoid harness-induced 429s.
 
 ## Pull request process
 
-1. **Branch from the repository's default branch.** CI covers both `main` and
-   `master`. Keep PRs focused; one logical change per PR.
+1. **Branch from `main`.** Keep PRs focused; one logical change per PR.
 2. **Squash commits on merge.** Write each commit message as if it were the
    only one that would land. Use the
    [Conventional Commits](https://www.conventionalcommits.org/) style —
@@ -249,6 +248,8 @@ area only.
 | `db` | `oxllm-server/db` | Enables SQLite/Postgres persistence: virtual keys, teams, users, spend logs, DB-stored model config and DB-backed management endpoints. Off → no DB; master-key/JWT auth still works. |
 | `otel` | `oxllm-server/otel` | Enables OpenTelemetry OTLP export (`otel_endpoint`, `otel_service_name`). **Requires a full process restart** — these settings are NOT hot-reloadable. |
 | `redis` *(server-internal)* | `oxllm-cache-redis`, `oxllm-server` | DualCache (in-memory + Redis) for multi-replica rate-limit / budget accuracy. Required when `replicas > 1`. |
+| `s3-cache` / `gcs-cache` / `azure-cache` | corresponding cache crate + server | Enables the S3, GCS, or Azure Blob response-cache backend. Without the matching feature, that `cache.type` warns and falls back to memory. |
+| `live-tests` (test config) | root tests | Enables real-provider `e2e_live.rs` cases; without it they compile but are ignored. |
 | `admin` | `oxllm-admin` | Builds the `oxllm-admin` binary and the HTMX admin UI server. Use for the local UI; production deployments usually expose the management REST API directly. |
 | `platform-apis` *(server-internal)* | `oxllm-server/platform-apis` | OpenAI platform endpoints (Batches, Files, Fine-tuning, Assistants, Threads). Off → those routes return 404. |
 

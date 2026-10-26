@@ -2,8 +2,8 @@
 
 How oxllm is put together: crates, dependency rules, and the path of a request.
 
-This doc is for humans and agents working on the codebase. For usage and
-deploy, see the root [README](../README.md). For step-by-step feature work,
+This doc is for contributors working on the codebase. For usage and deploy,
+see the root [README](../README.md). For step-by-step feature work,
 see [adding-a-feature.md](adding-a-feature.md) and
 [adding-a-provider.md](adding-a-provider.md).
 
@@ -32,7 +32,7 @@ oxllm/                          # root package: CLI binaries
 ├── src/bin/oxllm-admin.rs      # optional admin UI binary
 ├── crates/
 │   ├── oxllm-core/             # pure types, traits, router, cost, tokens, limits
-│   ├── oxllm-providers/        # 34 provider transforms (feature-gated)
+│   ├── oxllm-providers/        # 35 provider transforms (feature-gated)
 │   ├── oxllm-server/           # Axum host: routes, hooks, config, HTTP, state
 │   ├── oxllm-cache-redis/      # Redis Cache impl (optional)
 │   ├── oxllm-cache-s3/         # S3-compatible object-storage cache backend (optional)
@@ -56,7 +56,7 @@ inside `oxllm-server`. Providers live as modules inside `oxllm-providers`.
 | Crate | Role | Pure / I/O |
 |-------|------|------------|
 | `oxllm-core` | Types, traits (`Provider`, `ChatProvider`, `Hook`, `Cache`), router, cost, tokens, `limits` (`ScopeLimits`) | **Pure** |
-| `oxllm-providers` | Per-provider request/response/stream transforms, 34 providers selected by feature flags | **Pure** |
+| `oxllm-providers` | Per-provider request/response/stream transforms, 35 providers selected by feature flags | **Pure** |
 | `oxllm-server` | Axum app, handlers, hooks, orchestration, pipeline, state, auth, config, credentials, security, guardrails, cache, `spend_writer`, scheduler, otel, coordination | **I/O (host)** |
 | `oxllm-cache-redis` | Redis implementation of the `Cache` trait | I/O |
 | `oxllm-cache-s3` | S3-compatible object-storage implementation of the `Cache` trait | I/O |
@@ -72,7 +72,7 @@ inside `oxllm-server`. Providers live as modules inside `oxllm-providers`.
 
 | Module | Contents |
 |--------|----------|
-| `provider.rs` | `Provider` super-trait, `ChatProvider` / `EmbeddingProvider` / `RerankProvider`, `ResolvedCredentials` |
+| `provider/` | `Provider` super-trait, `ChatProvider` / `EmbeddingProvider` / `RerankProvider`, `ResolvedCredentials` |
 | `hook.rs` | `Hook` trait, `CallContext`, `ResponseSummary`, `RateLimitInfo` |
 | `router/` | `Router`, 12 strategies, cooldowns, stores, `RouterConfig` |
 | `limits.rs` | `ScopeLimits`, `AllScopeLimits` (grouped per-scope limits) |
@@ -81,10 +81,10 @@ inside `oxllm-server`. Providers live as modules inside `oxllm-providers`.
 | `cache.rs` | `Cache` trait + `IncrResult` |
 | `deployment.rs` / `endpoint.rs` / `registry.rs` / `error.rs` | Core types |
 
-**`oxllm-providers/src/`** — one module per provider, with 34 provider Cargo
+**`oxllm-providers/src/`** — one module per provider, with 35 provider Cargo
 features (all enabled by default): `openai`, `anthropic`, `gemini`, `ollama`, `groq`,
-`together_ai`, `openrouter`, `xai`, `mistral`, `cohere`, `azure`, `bedrock`,
-`bedrock_mantle`, `vertex_ai`, `databricks`, `perplexity`, `sambanova`,
+`together_ai`, `openrouter`, `xai`, `mistral`, `cohere`, `azure`, `azure_ai`,
+`bedrock`, `bedrock_mantle`, `vertex_ai`, `databricks`, `perplexity`, `sambanova`,
 `cloudflare`, `deepseek`, `cerebras`, `ai21`, `fireworks_ai`, `deepinfra`,
 `nvidia_nim`, `voyage`, `jina_ai`, `watsonx`, `huggingface`, `deepgram`,
 `elevenlabs`, `dashscope`, `replicate`, `meta`, `baseten`. Most provider modules
@@ -144,7 +144,7 @@ oxllm-core  ←  oxllm-cache-redis  ←  oxllm-server
 oxllm-core  ←  oxllm-cache-s3     ←  oxllm-server
 oxllm-core  ←  oxllm-cache-gcs    ←  oxllm-server
 oxllm-core  ←  oxllm-cache-azure  ←  oxllm-server
-oxllm-core  ←  oxllm-db           ←  oxllm-server
+oxllm-db    ←  oxllm-server
 oxllm-server  ←  oxllm (binary)
 oxllm-admin   ←  oxllm (admin binary, feature-gated)
 ```
@@ -246,6 +246,7 @@ Credentials are resolved by the host and passed in as
 |---------|---------|
 | `ApiKey { bearer }` | OpenAI, Anthropic, Gemini, most providers |
 | `Azure { api_key }` | Azure OpenAI (`api-key` header) |
+| `AzureAd { token }` | Microsoft Entra ID bearer auth for Azure-hosted endpoints |
 | `AwsSigV4 { access_key, secret_key, session_token, region }` | Bedrock |
 | `GcpBearer { token }` | Vertex AI (pre-exchanged OAuth2 token) |
 | `PreSignedHeaders(HashMap)` | Signing done entirely in the host |
@@ -264,7 +265,7 @@ with the same client `model_name`:
 
 | Strategy | File | Behavior |
 |----------|------|----------|
-| `simple_shuffle` | `simple_shuffle.rs` | Weighted random (default): probability proportional to `oxllm_params.weight`, falling back to `rpm`, then 1 — matching LiteLLM's default behavior |
+| `simple_shuffle` | `simple_shuffle.rs` | Weighted random (default): probability proportional to `oxllm_params.weight`, falling back to `rpm`, then `tpm`, then 1 |
 | `lowest_cost` | `lowest_cost.rs` | Cheapest deployment by price table |
 | `lowest_latency` | `lowest_latency.rs` | Lowest measured latency |
 | `usage_based` | `usage_based.rs` | Least-used (RPM/TPM) deployment |
@@ -275,7 +276,7 @@ with the same client `model_name`:
  `model_info.tags` (subset match, `&tag` require, `!tag` exclude,
  `tag_regex`, `default` deployments as fallback pool) |
 | `quality_router` | `quality.rs` | Configured quality scores |
-| `session_affinity` | `session_affinity.rs` | Sticky via `x-oxllm-session-id`, or `x-litellm-session-id` when that header is absent or empty (consistent hash, no TTL) |
+| `session_affinity` | `session_affinity.rs` | Sticky via `x-oxllm-session-id`, or `x-litellm-session-id` when that header is absent or empty (deterministic modulo hash over a stably sorted candidate list; no TTL) |
 | `complexity_router` | `complexity.rs` | Keyword-classify request complexity → tier model pool |
 | `adaptive_router` | `adaptive.rs` | Thompson-sampling bandit per (request type, deployment); learns from post-call outcomes via `hooks/adaptive_hook.rs`; cold start defers to least-busy |
 | `round_robin` | `round_robin.rs` | Per-model-group rotation within each replica; weighted slots use `weight`, then `rpm`, then `tpm`, then 1; counters survive config reloads |
@@ -356,8 +357,8 @@ Hooks implement `oxllm_core::Hook` (`pre_call`, `post_success`,
 
 ```
 RateLimitHook → CacheHook → BudgetHook → CostTrackingHook → MetricsHook
-  → [AdaptiveHook] → [GenericHttpCallback] → [LangfuseHook] → [LangsmithHook]
-  → [DatadogHook] → [HeliconeHook] → [WandbHook] → [S3LogHook] → [MlflowHook]
+  → [AdaptiveHook] → [GenericHttpCallback] → [LangfuseHook] → [MlflowHook]
+  → [LangsmithHook] → [DatadogHook] → [HeliconeHook] → [WandbHook] → [S3LogHook]
   → [SlackAlertingHook] → [PagerDutyAlertingHook] → [EmailAlertingHook]
   → [AlertingHook]
 ```
@@ -372,10 +373,10 @@ RateLimitHook → CacheHook → BudgetHook → CostTrackingHook → MetricsHook
   configured: `AdaptiveHook` (the `adaptive_router` strategy configured
   globally or for any routing group), `GenericHttpCallback`
   (`success_callback: ["generic"]` + `callback_settings.generic`),
-  `LangfuseHook` (`langfuse_config`), `LangsmithHook` (`langsmith_config`),
-  `DatadogHook` (`datadog_config`), `HeliconeHook` (`helicone_config`),
-  `WandbHook` (`wandb_config`), `S3LogHook` (`s3_log_config`),
-  `MlflowHook` (`mlflow_config`), `SlackAlertingHook`
+  `LangfuseHook` (`langfuse_config`), `MlflowHook` (`mlflow_config`),
+  `LangsmithHook` (`langsmith_config`), `DatadogHook` (`datadog_config`),
+  `HeliconeHook` (`helicone_config`), `WandbHook` (`wandb_config`),
+  `S3LogHook` (`s3_log_config`), `SlackAlertingHook`
   (`slack_alerting_config`), `PagerDutyAlertingHook` (`pagerduty_config`),
   `EmailAlertingHook` (`email_alert_config`), `AlertingHook` (alerting
   config). All of them are post-call observability/callback hooks sitting
@@ -443,9 +444,9 @@ on cache hits.
 ## Guardrails
 
 Ten pre-call content guardrails live in `oxllm-server/src/guardrails/`,
-configured via `general_settings.guardrails` (`GuardrailsConfig`). They run in
-the order listed below (fast/local first, slow/remote last); the first
-`block` wins:
+configured via `general_settings.guardrails` (`GuardrailsConfig`). The table
+below describes their capabilities; the actual execution order is fast/local
+first, slow/remote last, and the first `block` wins:
 
 | Guardrail | Kind | Behavior |
 |-----------|------|----------|
@@ -467,40 +468,42 @@ Injection, AIM, Lakera, Bedrock) are pre-built once at state construction
 `lakera_guardrail`, `bedrock_guardrail`); Model Armor and the Custom/Semantic/MCP
 chain are also built into state and preserved on reload when their config is
 unchanged (`guardrails_config_unchanged`).
-All ten are invoked by the **chat handler** via `apply_guardrails` after the
-request body is parsed and before the orchestrator runs — so the
-masked/redacted body is what gets serialized upstream. Run order: PII →
-Presidio → Injection → AIM → Lakera → Bedrock → Model Armor → Custom →
-Semantic → MCP (fast-local first, slow-remote last).
+Guardrails run after the request body is parsed and before the upstream call,
+so the masked/redacted body is what gets serialized upstream. Run order: PII →
+Injection → local Custom/Semantic → Presidio → AIM → Lakera → Bedrock → Model
+Armor → remote Custom/MCP. The same chain also runs for raw provider
+passthrough inference bodies; embeddings apply PII masking only.
 
 ---
 
 ## Budget hierarchy
 
-Six enforcement levels, checked by `BudgetHook` in this order:
+`BudgetHook` checks these scopes in order:
 
 ```
-key → team → org → project → user → model
+key → team → org → project → user → customer → tag → model
 ```
 
 Each scope has its own spend counter (`spend:{hash}`, `spend:team:{id}`,
 `spend:org:{id}`, `spend:project:{id}`, `spend:user:{id}`,
-`spend:model:{model}` — formats owned by `hooks/spend_keys.rs`) and is only
-checked when the corresponding limit is set. The model scope is a global cap
-per model name (`oxllm_settings.model_max_budget`).
+`spend:customer:{id}`, `spend:tag:{tag}`, `spend:model:{model}` — formats owned
+by `hooks/spend_keys.rs`) and is only checked when the corresponding limit is
+set. The model scope is a global cap per model name
+(`oxllm_settings.model_max_budget`).
 
 The per-scope limits (`max_budget`, `budget_duration`, `rpm`, `tpm`) are
 grouped in **`oxllm-core/src/limits.rs`** as `ScopeLimits` (one scope) and
 `AllScopeLimits` (all five identity scopes: key, team, user, org, project).
-`CallContext` stores them flat but exposes `key_limits()`,
+Customer and tag limits come from their own records rather than
+`AllScopeLimits`. `CallContext` stores them flat but exposes `key_limits()`,
 `team_limits()`, …, `scope_limits()` and `set_scope_limits()` so
 construction/conversion code has one place to expand/collapse — adding a new
-scoped limit no longer means hand-editing every constructor. (Not every scope
-populates every field: user carries only `max_budget`.)
+scoped limit no longer means hand-editing every constructor. Not every scope
+populates every field: user carries `max_budget` and `budget_duration` but no
+RPM/TPM.
 
-Customer and request-tag budgets are also enforced when their records supply a
-budget. In addition, the **routing loop** enforces two
-more budget layers: per-deployment (`oxllm_params.max_budget`, counter
+In addition, the **routing loop** enforces two more budget layers:
+per-deployment (`oxllm_params.max_budget`, counter
 `spend:dep:{deployment_key}`) and per-provider
 (`router_settings.provider_budget_config`, counter `spend:provider:{slug}`).
 A picked deployment at/over its cap is cooled and the router tries the next
@@ -510,7 +513,7 @@ read-only spend snapshot and is not itself a hard enforcement gate. Other
 endpoint paths must opt into the reservation lifecycle explicitly. Cost
 estimates and provider usage still bound billing accuracy; the router-budget
 implementation has a nominal unknown-cost fallback rather than treating every
-unpriced request as free. Check endpoint-specific tests for disconnect/error
+unpriced request as free. Endpoint-specific tests cover disconnect/error
 settlement behavior.
 
 ---
@@ -560,7 +563,7 @@ with no functional loss for single-replica.
 | `otel` (root → server) | OpenTelemetry export and its optional dependencies |
 | `s3-cache` / `gcs-cache` / `azure-cache` (root → server) | Enable the corresponding optional blob-cache backend |
 | `admin` (root) | Build `oxllm-admin` against the management API; enables the separate admin crate, not proxy DB persistence |
-| Provider features | 34 provider flags in `oxllm-providers` (all on by default), plus the shared `openai_compat` helper feature |
+| Provider features | 35 provider flags in `oxllm-providers` (all on by default), plus the shared `openai_compat` helper feature |
 
 The root does not forward provider, `redis`, or `platform-apis` switches, so
 root `--no-default-features` alone does not turn off those dependency defaults.
@@ -581,8 +584,7 @@ cargo deny --locked check
 
 - **Unit tests** live next to code (`#[cfg(test)]` modules).
 - **Integration / e2e** live in workspace `tests/` (mostly httpmock
-  upstreams). Files are named by topic (see
-  [`tests/README.md`](../tests/README.md)), not by historical milestones.
+  upstreams). See [`tests/README.md`](../tests/README.md) for the suite map.
 - **Shared harness**: `tests/common/mod.rs` provides `OxllmHandle`,
   `start_oxllm` (in-process boot), and `proxy_config` helpers — new
   integration tests should opt in via `mod common;`.
@@ -599,8 +601,8 @@ cargo deny --locked check
 - No `unwrap` / `expect` / `panic` on user or provider input — return typed errors.
 - Match OpenAI wire format for client-facing types.
 - Secrets never logged; use `tracing` with redaction.
-- Prefer provider **official API docs** over copying LiteLLM. LiteLLM may live
-  at `../litellm` as a **behavior reference only** — never paste its code.
+- Prefer provider **official API docs** over copying another gateway. LiteLLM
+  is a **behavior reference only** — never paste its code.
 - Comments only when they add non-obvious intent (project prefers little noise).
 
 ---

@@ -3,6 +3,9 @@
 Workspace-level e2e tests (`cargo test --workspace`). Each file boots oxllm
 in-process against [httpmock](https://docs.rs/httpmock) upstreams unless noted.
 
+This is a curated map of the main suites, not an exhaustive inventory; the
+full set is the tracked `tests/*_e2e.rs` files.
+
 | File | What it covers |
 |------|----------------|
 | `chat_e2e.rs` | Chat completions lifecycle |
@@ -65,8 +68,8 @@ regressions. Without it, PostgreSQL cases skip; SQLite contracts still run.
 
 The `*_live.rs` files below call **real** upstream APIs and are not part of
 the httpmock suite. Each one self-skips (early-`return`) unless its provider
-API key is present in the environment — except `e2e_live.rs`, which is
-compiled out entirely unless the `live-tests` feature is enabled.
+API key is present in the environment. `e2e_live.rs` is compiled but ignored
+unless the `live-tests` feature is enabled.
 
 | File | Covers |
 |------|----------------|
@@ -80,6 +83,7 @@ compiled out entirely unless the `live-tests` feature is enabled.
 | `fireworks_live.rs` | Live Fireworks smoke (needs `FIREWORKS_API_KEY`) |
 | `perplexity_live.rs` | Live Perplexity smoke (needs `PERPLEXITY_API_KEY`) |
 | `bedrock_live.rs` | Live Bedrock smoke (env-only AWS credentials: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_REGION`) |
+| `realtime_live.rs` | Live OpenAI/xAI realtime WebSocket smoke (needs `OPENAI_API_KEY` or `XAI_API_KEY`) |
 
 ## Multi-instance stress stack (docker)
 

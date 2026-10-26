@@ -1,6 +1,6 @@
 # Admin UI e2e (Playwright)
 
-Browser tests for the **oxllm-admin** MVP: login, create team/user/key, spend refresh.
+Browser tests for **oxllm-admin**: login, team/user/key management, and spend refresh.
 
 These sit beside Rust workspace e2e (`tests/*_e2e.rs`). Rust covers proxy + admin
 handler contracts; Playwright covers HTMX/Alpine/CSRF in a real browser.

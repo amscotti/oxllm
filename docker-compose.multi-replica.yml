@@ -1,5 +1,5 @@
-# Dual-replica stack for review live validation (not production).
-#   docker compose -f docker-compose.review.yml -p oxllm-review up --build -d
+# Two-replica example stack with shared Redis (not a production deployment).
+#   docker compose -f docker-compose.multi-replica.yml -p oxllm-multi-replica up --build -d
 services:
   redis:
     image: redis:7-alpine
@@ -22,7 +22,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       RUST_LOG: info
     volumes:
-      - ./examples/config.review-live.yaml:/config.yaml:ro
+      - ./examples/config.multi-replica.yaml:/config.yaml:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -41,7 +41,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       RUST_LOG: info
     volumes:
-      - ./examples/config.review-live.yaml:/config.yaml:ro
+      - ./examples/config.multi-replica.yaml:/config.yaml:ro
     depends_on:
       redis:
         condition: service_healthy

@@ -1,5 +1,5 @@
 # Local smoke config: Redis on localhost, placeholder provider keys.
-# Used by scripts/smoke-local.sh (not docker).
+# Local Redis-backed development stack (not Docker).
 
 model_list:
   - model_name: gpt-4o

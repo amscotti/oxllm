@@ -1,8 +1,9 @@
 # Adding a provider to oxllm
 
-Checklist for adding a new LLM provider. It should take minutes, not hours, and
-must **not** require changes to `oxllm-server`. (Adding a new price shard
-requires one line in `oxllm-core/src/cost.rs` — see step 5.)
+Checklist for adding a new LLM provider. A normal chat or embeddings provider
+does **not** require handler or route changes in `oxllm-server`. Optional
+passthrough support adds one base-URL table entry, and a new price shard adds
+one line in `oxllm-core/src/cost.rs` — see steps 5 and 6.
 
 See [architecture.md](architecture.md) for how providers fit into the workspace.
 
@@ -48,18 +49,25 @@ See [architecture.md](architecture.md) for how providers fit into the workspace.
    > Bespoke (non-compat) providers that want the `crate::util` helpers
    > (e.g. `apply_bearer_auth`) hit the one remaining hand-maintained gate:
    > add your feature to the `#[cfg(any(...))]` on `pub(crate) mod util;` in
-   > `lib.rs`. Today only `voyage` and `jina_ai` need this; every other
-   > bespoke consumer implies `openai_compat` already and needs nothing here.
+   > `lib.rs`. The current gate covers `voyage`, `jina_ai`, `anthropic`, and
+   > `bedrock`; every other bespoke consumer implies `openai_compat` already
+   > and needs nothing here.
    >
    > New providers expose a plain module-level const and register it directly:
    >
    > ```rust
    > // crates/oxllm-providers/src/<provider>/mod.rs
-   > pub const PROVIDER: OpenAiCompatProvider = OpenAiCompatProvider::new("<provider>");
+   > pub const PROVIDER: OpenAiCompatProvider =
+   >     OpenAiCompatProvider::new("<provider>", "<default-base>", "<prefix>", false, true, true);
    >
    > // crates/oxllm-providers/src/lib.rs
    > registry.register("<provider>", Arc::new(<provider>::PROVIDER));
    > ```
+   >
+   > The constructor arguments are slug, default base URL, model-prefix to
+   > strip, whether embeddings are supported, whether to publish the shared
+   > supported-params list, and whether auth is required. See the `meta`
+   > provider for a minimal example.
    >
    > (An older convention prefixed the type with `X` and stripped the prefix
    > at registration; that is no longer used — new providers use the plain

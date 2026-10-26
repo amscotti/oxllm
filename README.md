@@ -31,7 +31,8 @@ single native binary with no Python runtime.
  budgets, and rate limits. Hot-reload without restart.
 - **Type-safe.** Every fallible path returns typed errors. No panics on user
  or provider input.
-- **Extensible.** Adding a provider is one module + one feature flag — no core
+- **Extensible.** Adding a provider is a provider module, a feature flag, and a
+  registry entry; price-shard and passthrough entries are optional data-only
   edits. See [docs](docs/).
 
 ---
@@ -173,8 +174,8 @@ curl http://localhost:4000/v1/chat/completions \
 |----------|:----:|:---------:|:----------:|:----------:|:--------------:|
 | OpenAI | ✅ | ✅ | ✅ | ✅ | — |
 | Anthropic | ✅ | ✅ | — | ✅ | ✅ |
-| Gemini | ✅ | ✅ | ✅ | — | — |
-| Ollama | ✅ | ✅ | — | — | — |
+| Gemini | ✅ | ✅ | ✅ | ✅ | — |
+| Ollama | ✅ | ✅ | ✅ | — | — |
 | Groq | ✅ | ✅ | — | ✅ | — |
 | Together AI | ✅ | ✅ | ✅ | ✅ | — |
 | OpenRouter | ✅ | ✅ | ✅ | ✅ | — |
@@ -201,8 +202,9 @@ See [the Foundry sample](examples/config.foundry.yaml)
 and [operations guide](docs/operations.md) for authentication overrides,
 IPv4-only transport, Converse history repairs and background Vertex renewal.
 
-Adding a provider follows a mechanical checklist — one module behind a feature
-flag. No edits to core or server code.
+Adding a provider follows a mechanical checklist: a provider module behind a
+feature flag plus registry wiring. Price-table and optional passthrough entries
+are data-only edits; no handler or route changes are required.
 
 ### Routing
 
@@ -260,9 +262,10 @@ curl http://localhost:4000/v1/chat/completions \
 
 Behavior:
 
-- Same non-empty `x-oxllm-session-id` → same deployment (FNV-1a hash over a
- stable deployment key; works across multi-replica gateways). `x-litellm-session-id`
- is accepted when the oxllm header is absent or empty. The pin has no TTL.
+- Same non-empty `x-oxllm-session-id` → same deployment (stable hash of the
+  normalized session id modulo the stably sorted candidate list; works across
+  multi-replica gateways). `x-litellm-session-id` is accepted when the oxllm
+  header is absent or empty. The pin has no TTL.
 - Missing or empty header → falls back to `simple_shuffle`.
 - Cooldowns still apply: if the sticky deployment is cooling down, the request
  is re-hashed among the remaining available candidates.
@@ -365,9 +368,11 @@ key comparison, and cache invalidation on key deletion.
 - Optional Redis cache for multi-instance deployments (DualCache: read-through,
  write-through).
 - Optional S3 / GCS / Azure blob response cache (`cache.type: s3|gcs|azure`)
-for large shared caches; an in-memory counter layer is added automatically
-so rate limits and budgets keep working (blob stores have no atomic
-counters). Transient errors are retried with backoff; reads stay fail-open.
+for large shared caches; the corresponding `s3-cache`, `gcs-cache`, or
+`azure-cache` build feature is required, otherwise the server logs a warning
+and falls back to memory. An in-memory counter layer is added automatically so
+rate limits and budgets keep working (blob stores have no atomic counters).
+Transient errors are retried with backoff; reads stay fail-open.
 - Live upstream streams are not captured or written to the response cache:
   writes require a buffered response body. Existing matching cache entries can
   be replayed as SSE for streaming requests; streaming and non-streaming
@@ -508,7 +513,9 @@ model_list:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY_BACKUP
 
-  # Wildcard: route any unmatched model to a provider
+  # Wildcard: serve requested `anthropic/<model>` names through this
+  # deployment. The requested provider prefix must match; this does not catch
+  # bare model names or other providers.
   - model_name: "*"
     oxllm_params:
       model: anthropic/*
@@ -571,17 +578,17 @@ have restart-only settings; see the [reload matrix](docs/operations.md#configura
 
 ## Management API
 
-When `database_url` is configured, management endpoints are available
-(master-key only):
+When the proxy is built with `--features db` and `database_url` is configured,
+management endpoints are available (master-key only):
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/key/generate` | POST | Create a virtual API key |
-| `/key/list` | GET | List all keys (hashes redacted) |
+| `/key/list` | GET | List keys, up to 1000 (hashes redacted; check `truncated` for more) |
 | `/key/info` | GET | Get key details |
 | `/key/delete` | POST | Soft-delete a key |
 | `/team/add` | POST | Create a team |
-| `/team/list` | GET | List teams |
+| `/team/list` | GET | List teams, up to 1000 (check `truncated` for more) |
 | `/user/add` | POST | Create a user |
 | `/spend/logs` | GET | Query spend logs (filter: `key_id`, `team_id`, `model`, `tag_name`, `session_id`, dates) |
 | `/spend/total` | GET | Total spend summary |
@@ -610,8 +617,13 @@ When `database_url` is configured, management endpoints are available
 | `GET /v1/models` | List configured models |
 | `GET /health` | Liveness check |
 | `GET /health/readiness` | Readiness check (pings DB + Redis) |
-| `GET /metrics` | Prometheus metrics |
+| `GET /metrics` | Prometheus metrics (proxy auth applies when auth is configured) |
 | `/{provider}/{path}` | Provider passthrough proxy |
+
+`/metrics` is protected by the normal proxy auth stack when a master key,
+virtual key, or JWT is configured; send the same credentials you use for
+protected inference routes. `/health` and `/health/readiness` remain
+unauthenticated for probes.
 
 `/v1/messages` is the Anthropic↔OpenAI translation bridge, even when its upstream
 is Anthropic. For native Anthropic content, streaming events and beta-specific
@@ -673,19 +685,28 @@ oxllm-core ← oxllm-cache-redis ← oxllm-server
 oxllm-core ← oxllm-cache-s3 ← oxllm-server
 oxllm-core ← oxllm-cache-gcs ← oxllm-server
 oxllm-core ← oxllm-cache-azure ← oxllm-server
-oxllm-core ← oxllm-db ← oxllm-server
+oxllm-db ← oxllm-server
 oxllm-server ← oxllm (binary)
 ```
 
-**Adding a provider** = one module in `oxllm-providers` + one feature flag.
-No edits to core or server. See [docs/adding-a-provider.md](docs/adding-a-provider.md).
+`oxllm-db` is intentionally independent of `oxllm-core`; persistence types
+stay in the database crate.
+
+**Adding a provider** = a module in `oxllm-providers`, a feature flag, and
+registry wiring. Price-table and optional passthrough entries are data-only
+edits; no handler or route changes. See
+[docs/adding-a-provider.md](docs/adding-a-provider.md).
 
 ### Documentation
 
 | Doc | Description |
 |-----|-------------|
 | [docs/architecture.md](docs/architecture.md) | Crates, request path, where to change what |
+| [docs/operations.md](docs/operations.md) | Deployment, reload, backups, migrations and cache privacy |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Startup, auth, backend and streaming diagnostics |
+| [docs/adding-a-feature.md](docs/adding-a-feature.md) | Where a change belongs and the steps for each feature kind |
 | [docs/adding-a-provider.md](docs/adding-a-provider.md) | Checklist for a new upstream provider |
+| [helm/oxllm/README.md](helm/oxllm/README.md) | Kubernetes chart values and rollout behavior |
 | [examples/](examples/) | Sample YAML configs |
 
 ---
@@ -830,8 +851,8 @@ performance guarantee):
 ### Coverage
 
 ```bash
-cargo llvm-cov --workspace --html --output-dir /tmp/cov
-open /tmp/cov/html/index.html
+cargo llvm-cov --workspace --all-features --html --output-dir target/cov
+# Open target/cov/html/index.html in your browser.
 ```
 
 ---
@@ -848,7 +869,7 @@ Python SDK). We copy the ideas, not the code.
 | Untyped dicts everywhere | `serde_json::Value` at boundaries; typed traits |
 | GIL-bound | Native async; saturate cores |
 | Prisma ORM | sqlx with runtime SQL for SQLite/Postgres |
-| Adding a provider touches 6 files | One module + one feature flag |
+| Adding a provider touches 6 files | Provider module + feature + registry entry |
 
 ---
 
@@ -857,8 +878,9 @@ Python SDK). We copy the ideas, not the code.
 oxllm supports running multiple instances behind a load balancer with shared
 Redis (cache + rate limits + spend counters) and Postgres (spend logs + model
 management). See the [operations guide](docs/operations.md) for deployment checks
-and [`docs/plans/multi-instance-stress-test-plan.md`](docs/plans/multi-instance-stress-test-plan.md)
-for the historical test plan; historical results are not release certification.
+and the [multi-instance harness](tests/multi-instance/README.md) for the
+reproducible stress-test stack. Historical run results are not release
+certification.
 
 ### Database migration
 

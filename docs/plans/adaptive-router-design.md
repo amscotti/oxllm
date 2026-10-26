@@ -1,17 +1,16 @@
-# Adaptive Router Design (Batch 4)
+# Adaptive Router Design
 
 > **Historical design proposal.** The adaptive router and learning hook now
-> exist. The implemented `BanditStore` is per-process; the distributed delta
-> sync / Redis-atomic tiers proposed below are not a current feature guarantee.
-> See [architecture](../architecture.md#routing), `router/adaptive.rs` and
+> exist. The implemented `BanditStore` is per-process; cross-replica delta sync
+> and Redis-atomic counters are not implemented. See
+> [architecture](../architecture.md#routing), `router/adaptive.rs`, and
 > `hooks/adaptive_hook.rs` for current behavior and tests.
 
 A Thompson-sampling multi-armed bandit that learns which deployment is best
-for each request type, from post-call outcomes. This doc is the design
-contract for Batch 4 of [routing-features-plan.md](routing-features-plan.md);
-it reflects the architecture-review decisions made after Batches 1-3.
+for each request type, from post-call outcomes. This document records the
+design rationale for the implemented adaptive router.
 
-Planned locations:
+Implemented locations:
 
 - `crates/oxllm-core/src/router/adaptive.rs` — the `AdaptiveRouter` strategy
   (pure: no I/O, no async)
@@ -35,22 +34,15 @@ increment `alpha`, failures increment `beta`.
 
 ## Where the state lives
 
-Two tiers, chosen by deployment shape:
+The implemented `BanditStore` is an in-process `Mutex<HashMap>` inside the
+strategy, matching the other router stores (cooldown, health). Post-call
+updates are applied locally.
 
-- **In-memory + DualCache sync (default)**: cells live in a `Mutex<HashMap>`
-  inside the strategy, matching the other router stores (cooldown, health).
-  Post-call updates are applied locally and published as **deltas**
-  (`(cell, alpha_delta, beta_delta)`) through `DualCache` so sibling
-  replicas merge them. Deltas commute, so merge order doesn't matter.
-- **Redis-atomic (when Redis is configured)**: each cell is a counter pair
-  (`bandit:{type}:{key}:alpha` / `:beta`) updated with atomic increments, so
-  no update is lost under cross-replica races. Reads sample from the
-  merged counters.
-
-Decision: implement the DualCache-delta path first — bandits are robust to
-noisy/late feedback, so approximate updates are acceptable and the code
-stays identical for single-replica deployments. The Redis-atomic path is an
-optimization, not a correctness requirement (see *Concurrency semantics*).
+Cross-replica delta sync through `DualCache` and Redis-atomic cell counters
+were considered but are **not implemented**. Multi-replica deployments
+therefore learn independently per replica. This is a known limitation, not a
+current feature guarantee. The sections below describe the original design
+reasoning; they are not a promise of distributed behavior.
 
 ## Post-call learning via Hook
 
@@ -104,15 +96,13 @@ random spraying of production traffic:
 
 ## Concurrency semantics
 
-Approximate updates are acceptable. Beta-cell updates are small, frequent,
-and commutative; a lost or reordered delta only slightly perturbs the
-posterior, and Thompson sampling is explicitly robust to noisy feedback.
-Guarantees we do keep:
+The local store provides these guarantees:
 
-- Local updates are atomic (single `Mutex` acquisition per cell batch).
-- Deltas (not absolute values) cross replicas, so concurrent increments
-  never overwrite each other.
+- Updates are atomic (single `Mutex` acquisition per cell batch).
 - Sampling takes a consistent snapshot of the cells it reads.
+- Cache hits are not recorded, because there was no upstream observation.
+
+No cross-replica merge is performed; replicas may learn different posteriors.
 
 ## Testing strategy
 
@@ -125,9 +115,9 @@ Guarantees we do keep:
   above a loose bound (e.g. >80% over the last 1000 of 5000 picks), with a
   fixed seed.
 - **Regression tests**: cold start (least-busy fallback below N
-  observations), epsilon exploration rate, cache-hit skip, delta merge
-  commutativity, classification sharing (one classification per request),
-  and precedence vs. `complexity_router`.
+  observations), epsilon exploration rate, cache-hit skip, classification
+  sharing (one classification per request), and precedence vs.
+  `complexity_router`.
 - **e2e**: mirror `tests/router_e2e.rs` patterns — httpmock upstreams with
   per-deployment failure rates, config via `router_settings`, asserting
   traffic shifts toward the healthy/high-reward deployment.

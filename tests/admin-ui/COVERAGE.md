@@ -4,8 +4,8 @@ Layers:
 
 | Layer | Tool | What it proves |
 |-------|------|----------------|
-| Handler + template (Rust) | `cargo test -p oxllm-admin` (**195** tests) | Routes, CSRF, proxy mapping, HTML fragments |
-| Browser e2e | Playwright `tests/admin-ui` (**17** tests) | HTMX/Alpine/CSRF/dialogs as a real user |
+| Handler + template (Rust) | `cargo test -p oxllm-admin` (219 tests as of 2026-10-26) | Routes, CSRF, proxy mapping, HTML fragments |
+| Browser e2e | Playwright `tests/admin-ui` (17 tests) | HTMX/Alpine/CSRF/dialogs as a real user |
 
 There is **no Istanbul-style %** for MiniJinja/HTML (not a JS SPA). This matrix is the coverage source of truth.
 
@@ -18,10 +18,10 @@ There is **no Istanbul-style %** for MiniJinja/HTML (not a JS SPA). This matrix 
 | CSRF via `document` listener | yes | yes | covered (regression) |
 | Alpine `initTree` after HTMX | yes (script) | yes (key modal + disable) | covered |
 | Dashboard totals / health | yes | yes | covered |
-| Dashboard activity **bar width** | yes (`bar_pct`) | yes | covered + **bug fixed** |
+| Dashboard activity **bar width** | yes (`bar_pct`) | yes | covered (regression) |
 | Keys create + modal | yes | yes | covered |
-| Keys create **team/user selects** | yes | yes | LiteLLM-style dropdowns |
-| Keys disable (soft-delete) | yes | yes | covered + **bug fixed** |
+| Keys create **team/user selects** | yes | yes | populated dropdowns |
+| Keys disable (soft-delete) | yes | yes | covered (regression) |
 | Teams / users create | yes | yes | covered |
 | Spend list + costs + **key/team labels** | yes | yes | master → `master`; alias join |
 | Spend refresh no-dupe | yes | yes | covered |
@@ -39,11 +39,14 @@ There is **no Istanbul-style %** for MiniJinja/HTML (not a JS SPA). This matrix 
 | Wrong password UI | rate-limit unit | — | gap unless password set |
 | Mobile sidebar | — | — | gap |
 
-## Bugs found in this pass
+## Regression cases pinned by the suite
 
-1. **Dashboard bars always 0%** — MiniJinja loop `{% set max_spend %}` does not update outer scope. Fixed by computing `bar_pct` in Rust.
-2. **Alpine not re-inited after HTMX** — key modal / interactive fragments needed `Alpine.initTree` on `htmx:afterSwap`.
-3. **Key “delete” UX inconsistency** — soft-delete left inactive keys in API list, but HTMX returned empty body so the row vanished until reload, then reappeared as Disabled. Fixed: disable refreshes table; button labeled **Disable**.
+1. Dashboard activity bars render a non-zero width when spend exists
+   (`bar_pct` is computed in Rust, not in the template).
+2. Alpine components are re-initialized after HTMX swaps, so key modals and
+   other interactive fragments remain functional.
+3. Key disable refreshes the table and labels the action **Disable**; a
+   soft-deleted key does not disappear and then reappear as Disabled.
 
 ## Commands
 

@@ -13,8 +13,10 @@ The golden rule: **pure logic goes left (core/providers), I/O goes right
 
 **When:** a new upstream LLM API (chat, embeddings, or rerank).
 
-Providers are pure transforms and must **not** require edits to `oxllm-core`
-or `oxllm-server`. Full checklist: [adding-a-provider.md](adding-a-provider.md).
+Providers are pure transforms. A normal chat or embeddings provider needs no
+handler or route changes; a new price shard and optional passthrough support
+are data-only edits in core/server. Full checklist:
+[adding-a-provider.md](adding-a-provider.md).
 
 Short version:
 
@@ -24,10 +26,12 @@ Short version:
 2. Add `"<provider>" = []` to `[features]` in
    `crates/oxllm-providers/Cargo.toml` (and to `default` if always built).
 3. Wire `pub mod <provider>;` + a `registry.register(...)` arm in
-   `crates/oxllm-providers/src/lib.rs`. OpenAI-compatible providers also add
-   their flag to the `openai_compat` `#[cfg(any(...))]` list.
+   `crates/oxllm-providers/src/lib.rs`. OpenAI-compatible providers declare
+   `"<provider>" = ["openai_compat"]`; there is no `cfg(any(...))` list to
+   edit.
 4. Unit tests in `src/<provider>/tests.rs` (+ `goldens/` when shapes are
-   stable). Price rows in `crates/oxllm-core/data/prices/<provider>.toml` if new.
+   stable). Price rows in `crates/oxllm-core/data/prices/<provider>.toml` if
+   new; register a new shard in `PRICE_SHARDS`.
 
 If the provider needs non-static credentials (cloud signing), that's a host
 concern: add a `CredentialResolver` in `oxllm-server/src/credentials/` keyed
@@ -62,7 +66,7 @@ before/after the upstream call (budgets, rate limits, caching, tracing).
    **Order matters** — document why your hook sits where it does. Current
    order: RateLimit → Cache → Budget → CostTracking → Metrics, then the
    optional post-call hooks (Adaptive → GenericHttpCallback → Langfuse
-   → Langsmith → Datadog → Helicone → Wandb → S3Log → Mlflow → Slack
+   → Mlflow → Langsmith → Datadog → Helicone → Wandb → S3Log → Slack
    → PagerDuty → Email → Alerting) — full chain and config keys in
    [architecture.md](architecture.md#hook-chain).
    - Enforcement that must run even on cache hits goes before `CacheHook`.
@@ -100,7 +104,8 @@ before/after the upstream call (budgets, rate limits, caching, tracing).
    `orchestration/` (chat is the reference).
 4. **Provider support**: if the endpoint is a new *endpoint kind* (like
    rerank), that's a core change: add the capability trait to
-   `oxllm-core/src/provider.rs`, an `Endpoint` variant, and typed accessors.
+   `oxllm-core/src/provider/mod.rs`, an `Endpoint` variant in
+   `oxllm-core/src/endpoint.rs`, and typed accessors.
    Endpoint kinds change rarely and deliberately touch core; providers then
    opt in per-module.
 5. E2E test in `tests/` (see §10).
@@ -180,12 +185,11 @@ Conventions:
   / `x-oxllm-router-decision` response headers (`apply_router_headers` in
   `crates/oxllm-server/src/orchestration/mod.rs`) and the
   `oxllm_router_decisions_total{strategy, model}` counter
-  (`crates/oxllm-server/src/hooks/metrics.rs`); the full standard is in
-  [routing-features-plan.md](plans/routing-features-plan.md). A new variant
-  with a correct `as_str()` gets the right labels for free.
+  (`crates/oxllm-server/src/hooks/metrics.rs`); the contracts are documented in
+  [architecture.md](architecture.md#routing-observability). A new variant with
+  a correct `as_str()` gets the right labels for free.
 - **Logging**: per-pick events at `tracing::debug!`, never `info!` —
-  per-request `info!` floods logs (the complexity-router lesson; the plan
-  doc's `routing_decision` events are debug-level).
+  per-request `info!` floods logs.
 - **Testability**: stochastic strategies take randomness from an injectable
   source — the `AdaptiveRouter::with_rng` seeded-RNG precedent (production
   seeds a `ChaChaRng` from OS entropy; tests inject a seeded RNG) so picks
@@ -232,16 +236,18 @@ Conventions:
 
 ## 6. Adding a new budget scope
 
-**When:** a new enforcement level in the budget/rate-limit hierarchy
-(currently six: key → team → org → project → user → model).
+**When:** a new enforcement level in the budget/rate-limit hierarchy. The
+hook currently checks key → team → org → project → user → customer → tag,
+then the global per-model cap.
 
 This is a cross-crate change — budget scopes touch identity, storage, and
 enforcement:
 
 1. **Core types**: extend `ScopeLimits` usage in
-   `crates/oxllm-core/src/limits.rs` (add the scope to `AllScopeLimits`) and
-   the flat fields + grouped accessors on `CallContext` in
-   `crates/oxllm-core/src/hook.rs` (`<scope>_limits()`,
+   `crates/oxllm-core/src/limits.rs`. `AllScopeLimits` holds the five identity
+   scopes (key, team, user, org, project); customer and tag limits come from
+   their own records. Add the flat fields and grouped accessors on
+   `CallContext` in `crates/oxllm-core/src/hook.rs` (`<scope>_limits()`,
    `scope_limits()`, `set_scope_limits()`).
 2. **Spend key format**: add `<scope>_spend_key` to
    `oxllm-server/src/hooks/spend_keys.rs`. The byte format is a
@@ -269,18 +275,24 @@ semantic similarity, MCP-backed policy).
 
 There are **ten** guardrails today: PII, Presidio, Injection, AIM, Lakera,
 Bedrock, Model Armor, Custom (regex/keyword/json_path/http), Semantic
-(MinHash), and MCP. They run in that fixed order via `apply_guardrails`.
+(MinHash), and MCP. Execution order is PII → Injection → local
+Custom/Semantic → Presidio → AIM → Lakera → Bedrock → Model Armor → remote
+Custom/MCP.
 
-Guardrails are **not** hooks today — they run inside the chat handler via
-`apply_guardrails` before the orchestrator. Follow that pattern:
+Guardrails are **not** hooks today — they run in the request pipeline via
+`apply_guardrails` before the orchestrator. Raw provider passthrough and
+embeddings have their own entry points; wire a new guardrail explicitly where
+it should apply. Follow that pattern:
 
 1. Create `crates/oxllm-server/src/guardrails/<name>.rs`. Masking guardrails
    rewrite the body in place; blocking guardrails return
    `Error::BadRequest` with a client-safe (non-detailed) reason. Remote
    guardrails must be **fail-open** unless configured otherwise.
-2. Add config to `GuardrailsConfig` in `config/types/` (gated on an
-   explicit `enabled: true`; presence alone must not activate it). Validate
-   remote URLs with `config::validate_api_base` (SSRF) at build time.
+2. Add config to `GuardrailsConfig` in `config/types/`. Enablement is
+   guardrail-specific: some require an explicit `enabled: true`, while others
+   activate when their config block is present. Follow the existing type for
+   the guardrail you are adding. Validate remote URLs with
+   `config::validate_api_base` (SSRF) at build time.
 3. Add a field to `AppState` (`state/mod.rs`), build it in
    `guardrails::build_guardrails` (called from `state/build.rs::assemble`),
    and pass it through `apply_guardrails` in the right order — fast/local
@@ -384,8 +396,8 @@ Steps:
    `Vec<Arc<dyn PreCallCheck>>` to `Router::set_pre_call_checks`. `HealthCheck`
    is constructed by the router when health-check routing is enabled.
    Host checks run when their name appears in
-   `router_settings.optional_pre_call_checks` (or the global
-   `oxllm_settings` equivalent), wired in `state/router_config.rs`.
+   `router_settings.optional_pre_call_checks`, wired in
+   `state/router_config.rs`.
 4. **Wire any host-side data** the check needs onto `PreCallData`
    (`strategy.rs`), populated once in the chat orchestration before the
    pick (the `adaptive_request_type` / prompt-token-estimate precedents).

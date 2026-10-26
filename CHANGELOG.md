@@ -3,7 +3,10 @@
 All notable changes to oxllm are documented here.
 Format: Keep a Changelog, adheres to Semantic Versioning.
 
-## [Unreleased]
+Historical entries below describe the tree at their dates. Current behavior is
+defined by the source and tests.
+
+## [0.1.0] - 2026-10-26
 
 ### Native structured outputs and strict tools
 
@@ -84,7 +87,7 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 
 ### Provider and accounting corrections, 2026-10-11
 
-- Close independently reproduced review gaps in receiptless JSON/SSE pricing,
+- Close independently reproduced bugs in receiptless JSON/SSE pricing,
   transient partial-ledger backpressure, dangling-project error status, Mantle
   alias parity, Converse file-data validation, realtime status policies and
   sanitized-zero receipt-only pricing.
@@ -112,7 +115,7 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 - Isolate real filesystem-watcher regressions and wait for directory-registration
   barriers before exercising reload behavior.
 
-### Round-4 functional corrections
+### Functional corrections
 
 - Consume and persist top-level request tags alongside metadata/header tags,
   stripping all gateway tag carriers from provider bodies.
@@ -125,7 +128,7 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 - Record attributed zero-cost failure/denial rows without bodies or duplicate
   terminal/partial entries; expose global cap and tracked unary chat/embedding
   key-spend snapshots.
-- Close review gaps in embedding-cache spend headers, early-denial header tags,
+- Close bugs in embedding-cache spend headers, early-denial header tags,
   rerank/native control validation, corrupt key-policy read-back, inconsistent
   Vertex zero-output usage, and lossless admin model-policy editing. Preserve
   HTTP transport rejection statuses and selected-model failure attribution.
@@ -178,7 +181,7 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 - Resolve Anthropic federation through cached OIDC file/environment grants,
   fail closed on missing federation IDs, and preserve OAuth/client beta flags.
 - Keep caller W3C trace headers ahead of configured defaults across attempts.
-- Correct review regressions in Fireworks priority overlays and Claude 5.5 batch
+- Correct regressions in Fireworks priority overlays and Claude 5.5 batch
   cache/context rates; retain the nominal budget floor alongside Model Router fees.
 - Bound client retry overrides to 10, classify malformed stream preludes as
   retryable 502s, honor overload-status policies, and release startup reservations
@@ -224,9 +227,9 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 - Integration coverage in `tests/session_affinity_e2e.rs` (chat stickiness,
   spread across sessions, shuffle fallback, embeddings header plumbing).
 
-### Post-Phase-8 — P0 fixes + benchmarks
+### Early hardening and benchmarks
 
-- **P0 security fixes**:
+- **Security fixes**:
   - Passthrough routes now require auth when `master_key` is set.
   - SSRF validation: `api_base` checked for private IPs / non-HTTP schemes at
     config load; `redirect::Policy::none()` on shared client.
@@ -240,7 +243,7 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
   - `oxllm-providers/benches/anthropic_bench.rs` — request/response/stream transforms.
   - Run with `cargo bench --workspace`.
 
-### Phase 8 — Hardening + realtime + advanced auth
+### Realtime, advanced auth and hardening
 
 - **Realtime WebSocket** (`GET /v1/realtime`): transparent bidirectional proxy
   to a provider's realtime API (OpenAI `wss://api.openai.com/v1/realtime`).
@@ -272,16 +275,16 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
     and truncates error bodies to 500 chars (+ellipsis).
 - **Performance**: shared `reqwest` client now sets `pool_max_idle_per_host(20)`,
   `pool_idle_timeout(90s)`, `tcp_nodelay`, and `tcp_keepalive(60s)`.
-- **Deployment**: multi-stage distroless `Dockerfile`, `docker-compose.yml`,
-  `.dockerignore`, and a minimal Helm chart (`helm/oxllm/` with Deployment,
-  Service, ConfigMap+Secret).
+- **Deployment**: multi-stage `Dockerfile`, `docker-compose.yml`,
+  `.dockerignore`, and a Helm chart (`helm/oxllm/` with Deployment, Service,
+  ConfigMap and Secret templates).
 - New config fields: `jwt_secret`, `jwt_algorithm`, `jwt_audience`,
   `max_request_body_size_mb`, `otel_endpoint`, `otel_service_name`,
   `quality_scores`.
 - New workspace deps: `tokio-tungstenite`, `jsonwebtoken`, `opentelemetry`,
   `opentelemetry_sdk`, `opentelemetry-otlp`, `tracing-opentelemetry`.
 
-### Phase 3 — More providers + more endpoints
+### Additional providers and endpoints
 
 - `oxllm-core`: added `EmbeddingProvider` trait, `Provider::embeddings()`
   accessor, and `ChatProvider::supported_params()` for `drop_params` handling.
@@ -323,11 +326,11 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
   keys are logged at `debug` level and passed through unchanged.
 - Golden-file parity tests for Anthropic (request, response, tools) under
   `crates/oxllm-providers/src/anthropic/goldens/`.
-- 183 tests passing (81 new: 31 Anthropic, 12 Gemini, 12 Ollama, 6 registry,
-  3 chat-handler unit, 3 completions-handler unit, 11 new E2E, 3 OpenAI
-  test updates).
+- Test count at the time: 183 (81 new: 31 Anthropic, 12 Gemini, 12 Ollama,
+  6 registry, 3 chat-handler unit, 3 completions-handler unit, 11 new E2E,
+  3 OpenAI test updates).
 
-### Phase 2 — Routing
+### Routing foundation
 
 - `oxllm-core::router`: pure routing module with `Router`, `RoutingStrategy`
   trait, `SimpleShuffle` strategy, `CooldownStore`, and `RequestContext`.
@@ -348,13 +351,14 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
   via `tokio::time::timeout`.
 - `/v1/models` deduplicates model names when multiple deployments share a
   `model_name`.
-- 101 tests passing (37 new: 23 unit tests in core, 8 integration tests, 6
-  state/config tests).
+- Test count at the time: 101 (37 new: 23 unit tests in core, 8 integration
+  tests, 6 state/config tests).
 
-### Phase 0 — Foundation
-- Cargo workspace with 5 crates: `oxllm-core`, `oxllm-providers`,
-  `oxllm-server`, `oxllm-cache-redis`, `oxllm-db`.
-- Root binary (`oxllm`) with `clap` CLI: `serve`, `validate`, `keygen` stubs.
+### Initial foundation
+- Initial Cargo workspace: `oxllm-core`, `oxllm-providers`, `oxllm-server`,
+  `oxllm-cache-redis`, and `oxllm-db`.
+- Root binary (`oxllm`) with the initial `clap` CLI (`serve`, `validate`,
+  `keygen`); `migrate` was added later.
 - `oxllm-core`: `Endpoint` enum, `Error`/`Result` types, `Provider`/
   `ChatProvider` traits, `ResolvedCredentials`.
 - `oxllm-providers`: `openai` feature with `OpenAiProvider` (identity transform).
@@ -365,52 +369,51 @@ Format: Keep a Changelog, adheres to Semantic Versioning.
 - Docs: `docs/architecture.md`, `docs/adding-a-provider.md`, `README.md`,
   `examples/config.example.yaml`.
 
-## Fixed
+### Fixed — early hardening
 
-Comprehensive bug-fix batch — all 55 findings from `REVIEW_TODO.md` (review
-batches 1–8) resolved.
+Comprehensive bug-fix batch — all 55 findings resolved.
 
-### Streaming / budget metering
+#### Streaming / budget metering
 - Streaming chat injects `stream_options.include_usage` so budget/TPM/spend
   accounting applies to streams; realtime reservations roll back on disconnect
   and partial usage is accounted on client disconnect.
 
-### Providers
+#### Providers
 - Anthropic cache-read cost no longer double-subtracted; `-YYYYMMDD` dated
   model suffixes now resolve pricing. Cohere embed sends a valid `input_type`
   and `p` instead of `top_p`. OpenRouter mid-stream error chunks detected;
   Azure API version updated.
 
-### Auth
+#### Auth
 - JWT budget/rate-limit/cache buckets keyed off `sub` (token refresh no longer
   resets limits); X-Forwarded-For trusted right-to-left; admin console refuses
   non-loopback bind without a password; hot reload enforces require-auth and
   preserves the auth brake.
 
-### Routing
+#### Routing
 - Wildcard deployments are provider-scoped (`openai/*` no longer matches every
   unmatched model); tag-based routing plumbed end to end; `least_busy`
   reserves at pick to avoid races; credential failover fixed.
 
-### Config
+#### Config
 - Explicit-null config blocks accepted; `router_settings` precedence corrected;
   K8s ConfigMap watcher fires real debounced reloads; Postgres uses
   `DOUBLE PRECISION` and correct column aliases.
 
-### API
+#### API
 - `/v1/responses` and `/v1/messages` streaming forward tool calls and report
   real usage; legacy completions schema fixed and completions streaming no
   longer 501s.
 
-### SSE
+#### SSE
 - UTF-8 framer skips hard-invalid bytes instead of stalling; parser is
   spec-compliant (comments, event/id/retry lines, mixed framing).
 
-### Cache
+#### Cache
 - Stream flag included in the cache key (no more malformed cached streams);
   cache entry shape confusion fixed.
 
-### Misc
+#### Misc
 - AuthBrake/counter maps evicted periodically; passthrough paths validated
   against traversal and response body reads capped; pricing table expanded;
   tokenizer updated for newer models.

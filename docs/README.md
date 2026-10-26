@@ -1,6 +1,6 @@
 # oxllm documentation
 
-Guides for people and agents working on or extending oxllm.
+Guides for operators and contributors working on or extending oxllm.
 
 | Doc | Audience |
 |-----|----------|
@@ -9,8 +9,10 @@ Guides for people and agents working on or extending oxllm.
 | [Adding a provider](adding-a-provider.md) | Adding a new upstream LLM provider |
 | [Operations](operations.md) | Deployment, reload/restart rules, backups, migrations and cache privacy |
 | [Helm chart](../helm/oxllm/README.md) | Images, secrets, Postgres, Redis and rollout settings |
-| [Admin UI operations](admin-production.md) | Running oxllm-admin; original planning notes retained below |
+| [Admin UI operations](admin-production.md) | Running oxllm-admin |
 | [Troubleshooting](troubleshooting.md) | Startup, auth, backend health and streaming diagnostics |
 | [Examples](../examples/) | Sample YAML configs (Docker, Redis, multi-provider LB) |
+| [Adaptive router design](plans/adaptive-router-design.md) | Historical design rationale for the adaptive router |
+| [Bedrock Converse design](plans/bedrock-converse-plan.md) | Historical design rationale for the dual InvokeModel/Converse path |
 
 Start with **architecture** if you are new to the repo.

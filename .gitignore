@@ -66,5 +66,5 @@ tests/admin-ui/playwright/.cache/
 # fixture the compose file mounts).
 /config.yaml
 
-# gaggle/review harness runtime state (scripts/review-loop.sh recreates it)
+# Local review/audit scratch state
 .review/

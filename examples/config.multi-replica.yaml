@@ -1,8 +1,8 @@
 # Multi-deploy load-balancing example: one model name ("multi-chat") routed
 # across OpenAI, Anthropic and xAI deployments, plus single-provider aliases,
 # embeddings and a wildcard entry. Secrets via .env (os.environ/…).
-# Consumed by docker-compose.review.yml, which runs two replicas against the
-# shared Redis-backed cache configured below.
+# Consumed by docker-compose.multi-replica.yml, which runs two replicas against
+# the shared Redis-backed cache configured below.
 
 model_list:
   # Multi-deploy chat: OpenAI + Anthropic + xAI under one client model name
@@ -53,7 +53,7 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
       timeout: 60
 
-  # Wildcard for 429-vs-404 coverage of unmatched openai/* shapes
+  # Provider-scoped wildcard for unmatched openai/* model names
   - model_name: "*"
     oxllm_params:
       model: openai/*
@@ -64,7 +64,7 @@ oxllm_settings:
   num_retries: 2
   request_timeout: 90
   routing_strategy: simple_shuffle
-  # Shared Redis (the `redis` service in docker-compose.review.yml) so
+  # Shared Redis (the `redis` service in docker-compose.multi-replica.yml) so
   # rate limits, budgets, key revocation and cache invalidation are
   # coordinated across both replicas instead of per-process memory.
   cache:

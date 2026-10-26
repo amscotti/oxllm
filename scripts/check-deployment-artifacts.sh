@@ -170,7 +170,7 @@ if compose_available:
     check("admin waits for proxy health and restarts", admin["depends_on"]["oxllm"]["condition"] == "service_healthy" and admin["restart"] == "unless-stopped")
     result = compose(admin_files + ["docker-compose.ci.yml"], {**env, "ADMIN_SESSION_SECRET": "validation-session-secret", "ADMIN_UI_PASSWORD": "validation-password"})
     check("runtime CI Compose overlay uses locally built images", result.returncode == 0 and json.loads(result.stdout)["services"]["oxllm"]["image"] == "oxllm:ci" and json.loads(result.stdout)["services"]["oxllm-admin"]["image"] == "oxllm-admin:ci")
-    check("review stack parses without local .env", compose(["docker-compose.review.yml"], {**env, "OPENAI_API_KEY": "validation", "ANTHROPIC_API_KEY": "validation", "XAI_API_KEY": "validation"}).returncode == 0)
+    check("multi-replica example parses without local .env", compose(["docker-compose.multi-replica.yml"], {**env, "OPENAI_API_KEY": "validation", "ANTHROPIC_API_KEY": "validation", "XAI_API_KEY": "validation"}).returncode == 0)
 else:
     check("Docker Compose available", not required)
     print("SKIP: Compose checks (plugin unavailable)")

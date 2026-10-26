@@ -63,7 +63,8 @@ Check whether the response is a proxy limit/budget rejection or an upstream
 provider 429. Caller RPM/TPM and budgets can come from virtual keys and associated
 scope records; per-deployment limits are in `oxllm_params`. Inspect management
 records, response rate-limit headers and `/metrics` rather than assuming every
-429 means an upstream outage.
+429 means an upstream outage. When auth is configured, `/metrics` requires the
+same proxy credentials as protected inference routes.
 
 Budget hooks reserve estimated cost before the call and settle against usage
 after it; they are not merely post-call counters. Unknown pricing or upstream
@@ -86,8 +87,9 @@ retryable.
   It takes precedence over `host`/`port`. `cache.password` and `cache.pool_size`
   are not supported connection knobs in this config type.
 - Use `rediss://` for a TLS Redis endpoint and check certificate trust. Include
-  Redis's port and DNS in any Kubernetes egress policy; the chart's default
-  NetworkPolicy permits HTTPS/DNS, not arbitrary backend ports.
+  Redis's port and DNS in any Kubernetes egress policy. The chart does not
+  create a NetworkPolicy by default; when `networkPolicy.enabled=true`, its
+  default egress allows HTTPS and DNS, not arbitrary backend ports.
 - Response-cache reads/writes can tolerate errors. **Atomic Redis counter
   operations do not silently fall back to local counters:** they return errors
   to the enforcement hooks. Inspect the actual response and readiness status

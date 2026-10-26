@@ -1,15 +1,13 @@
 # Multi-instance stress test stack
 
 Three oxllm instances behind nginx, sharing Redis + Postgres, with a mock
-OpenAI upstream and Prometheus/Grafana. The plan and the full invariant list
-live in [`../../docs/plans/multi-instance-stress-test-plan.md`](../../docs/plans/multi-instance-stress-test-plan.md).
+OpenAI upstream and Prometheus/Grafana.
 
-This directory is test infrastructure. The original plan's `round_robin`
-strategy, cross-replica DB-model propagation and SQLite startup diagnostic are
-implemented. The checked-in stack uses `session_affinity` inside oxllm and
-nginx round-robin across replicas; session-less requests fall back to shuffle.
-Prometheus distinguishes replicas by its scrape-target `instance` label.
-The historical plan and run notes are not evidence that a current run passed.
+This directory is test infrastructure. The checked-in stack uses
+`session_affinity` inside oxllm and nginx round-robin across replicas;
+session-less requests fall back to shuffle. Prometheus distinguishes replicas
+by its scrape-target `instance` label. The checks below describe the current
+harness, not a certification of any past run.
 
 ## Layout
 
@@ -50,8 +48,8 @@ Endpoints after `up`:
 | oxllm-c | http://127.0.0.1:4002 | direct |
 | Prometheus | http://localhost:9090 | all three instances scraped, `instance` label splits A/B/C |
 | Grafana | http://localhost:3000 | anonymous admin; add Prometheus datasource |
-| Redis | localhost:6379 | `docker compose exec redis redis-cli` |
-| Postgres | localhost:5432 | `docker compose exec postgres psql -U postgres oxllm` |
+| Redis | localhost:6379 | `docker compose -f tests/multi-instance/docker-compose.yml exec redis redis-cli` |
+| Postgres | localhost:5432 | `docker compose -f tests/multi-instance/docker-compose.yml exec postgres psql -U postgres oxllm` |
 | mock-llm | http://localhost:9000 | `?latency_ms=...`, `?status=503`, `?fail_after=N` for fault injection |
 
 Master key for all oxllm calls: `sk-stress-master-key` (≥16 bytes; the production master-key length guard rejects shorter values).
@@ -113,8 +111,8 @@ propagation or cancellation failure fails the test.
 
 - `tests/cross_replica_model_propagation_e2e.rs` boots two in-process replicas
   sharing Redis and an in-memory SQLite DB to exercise model add/delete/burst
-  propagation through the production subscriber. This is implemented and
-  Redis-opt-in, not blocked on plan §7.2; it is not part of `scenarios.py`.
+  propagation through the production subscriber. It is Redis-opt-in and is not
+  part of `scenarios.py`.
 - `tests/redis_invalidation_e2e.rs` exercises the production cache-invalidation
   loop, its subscription-readiness probe and shutdown signal.
 - `crates/oxllm-core/src/router/round_robin.rs` pins per-group rotation, weights
@@ -122,7 +120,7 @@ propagation or cancellation failure fails the test.
 - SQLite has a startup diagnostic; this stack uses Postgres for persistence.
 
 The short `make soak` target sends 10,000 non-streaming chat requests. It does
-not implement the plan's timed mixed-workload soak or its full failure matrix.
+not implement a timed mixed-workload soak or a full failure matrix.
 
 ## Fault injection
 
