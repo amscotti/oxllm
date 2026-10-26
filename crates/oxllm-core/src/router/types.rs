@@ -29,7 +29,7 @@ pub enum RoutingStrategyKind {
     /// Pick the deployment with the fewest in-flight requests. Falls back to
     /// `SimpleShuffle` when no in-flight data is present.
     LeastBusy,
-    /// Stick a session to one deployment via a consistent hash of
+    /// Stick a session to one deployment via a deterministic hash of
     /// `RequestContext::session_id` (typically from the `x-oxllm-session-id`
     /// header). Keeps provider-side prompt caches warm across multi-turn
     /// conversations when multiple deployments share a model group. Falls

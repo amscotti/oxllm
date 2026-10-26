@@ -220,7 +220,7 @@ only *calls* them.
 
 ## Provider trait
 
-Contracts live in `oxllm-core/src/provider.rs`. All transform methods are
+Contracts live in `oxllm-core/src/provider/mod.rs`. All transform methods are
 **synchronous pure functions** — no network, no async.
 
 ```rust
