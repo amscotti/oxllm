@@ -113,7 +113,8 @@ pub async fn responses(
         &headers,
         Bytes::from(chat_bytes),
     )
-    .await?;
+    .await
+    .map_err(crate::handlers::chat::openai_route_error)?;
 
     if !chat_response.status().is_success() {
         return Ok(chat_response);

@@ -300,13 +300,8 @@ pub(crate) async fn attempt_upstream_with_context(
         let mut betas = transformed
             .get("anthropic_beta")
             .and_then(Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
+            .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .map(oxllm_providers::vertex_ai::filter_vertex_body_betas)
             .unwrap_or_default();
         let mut supplied = headers
             .remove("anthropic-beta")
@@ -323,12 +318,37 @@ pub(crate) async fn attempt_upstream_with_context(
         if let Ok(client_betas) = CLIENT_ANTHROPIC_BETAS.try_with(Clone::clone) {
             supplied.extend(client_betas);
         }
+        let beta_model = body_model
+            .as_deref()
+            .unwrap_or(&deployment.oxllm_params.model);
+        let auto_compact =
+            oxllm_providers::anthropic::collect_beta_headers(request_body, beta_model)
+                .into_iter()
+                .any(|beta| beta == oxllm_providers::anthropic::BETA_COMPACT_2026_09_04);
+        let mut header_only_betas: Vec<String> = Vec::new();
+        if auto_compact {
+            header_only_betas.push(oxllm_providers::anthropic::BETA_COMPACT_2026_09_04.to_string());
+        }
         for beta in supplied {
-            if !betas.contains(&beta) {
-                betas.push(beta);
+            if oxllm_providers::vertex_ai::is_vertex_header_only_beta(&beta) {
+                if !header_only_betas.contains(&beta) {
+                    header_only_betas.push(beta);
+                }
+            } else if let Some(mapped) = oxllm_providers::vertex_ai::map_vertex_body_beta(&beta) {
+                let mapped = mapped.to_string();
+                if !betas.contains(&mapped) {
+                    betas.push(mapped);
+                }
             }
         }
-        if !betas.is_empty() {
+        if !header_only_betas.is_empty() {
+            merge_anthropic_beta_headers(&mut headers, header_only_betas);
+        }
+        if betas.is_empty() {
+            if let Some(obj) = transformed.as_object_mut() {
+                obj.remove("anthropic_beta");
+            }
+        } else {
             transformed["anthropic_beta"] = serde_json::json!(betas);
         }
     }
@@ -697,7 +717,10 @@ fn normalize_document_parts(
         ));
     }
     let mut normalized = request.clone();
-    for message in normalized["messages"].as_array_mut().unwrap() {
+    let Some(messages) = normalized.get_mut("messages").and_then(Value::as_array_mut) else {
+        return Ok(None);
+    };
+    for message in messages {
         let Some(parts) = message.get_mut("content").and_then(Value::as_array_mut) else {
             continue;
         };

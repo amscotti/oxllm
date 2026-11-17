@@ -181,7 +181,7 @@ impl Hook for CostTrackingHook {
         if !ctx.claim_spend_record() {
             return;
         }
-        let (provider, model) = ctx
+        let (provider, deployment_model) = ctx
             .deployment_model
             .as_deref()
             .map(|model| match model.split_once('/') {
@@ -190,6 +190,10 @@ impl Hook for CostTrackingHook {
                 None => ("openai", model),
             })
             .unwrap_or(("", ctx.model.as_str()));
+        let model = ctx
+            .upstream_reported_model
+            .as_deref()
+            .unwrap_or(deployment_model);
         let tags = tags_json(&ctx.request_tags);
         tracing::info!(event = "spend", status = "failure", cost = 0.0,
             error_type = crate::pipeline::error_type_label(err), request_id = %ctx.request_id,

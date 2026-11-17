@@ -6140,3 +6140,356 @@ fn strip_qwen_tokens_noop_when_no_framing_present() {
     let s = strip_qwen_tokens("plain");
     assert_eq!(s, "plain");
 }
+
+#[test]
+fn strip_cross_region_prefix_recognizes_ca_and_in_and_new_vendors() {
+    assert_eq!(
+        strip_cross_region_prefix("ca.anthropic.claude-sonnet-4-5-v1:0"),
+        "anthropic.claude-sonnet-4-5-v1:0"
+    );
+    assert_eq!(
+        strip_cross_region_prefix("in.amazon.nova-pro-v1:0"),
+        "amazon.nova-pro-v1:0"
+    );
+    assert_eq!(
+        detect_bedrock_provider("moonshotai.kimi-k2.5"),
+        BedrockVendor::MoonshotAi
+    );
+    assert_eq!(
+        detect_bedrock_provider("moonshot.kimi-k2-thinking"),
+        BedrockVendor::MoonshotAi
+    );
+    assert_eq!(
+        detect_bedrock_provider("openai.gpt-oss-120b-1:0"),
+        BedrockVendor::OpenAi
+    );
+    assert_eq!(detect_bedrock_provider("zai.glm-4.5"), BedrockVendor::Zai);
+}
+
+fn bedrock_converse_deployment(model: &str) -> Deployment {
+    let mut dep = bedrock_deployment(model);
+    dep.oxllm_params
+        .extra
+        .insert("use_converse_api".into(), json!(true));
+    dep
+}
+
+#[test]
+fn converse_reasoning_effort_none_disables_thinking_on_optional_default_claude_models() {
+    let p = BedrockProvider;
+    for model in [
+        "bedrock/anthropic.claude-opus-5",
+        "bedrock/anthropic.claude-sonnet-5",
+        "bedrock/anthropic.claude-haiku-5-5",
+    ] {
+        let dep = bedrock_converse_deployment(model);
+        let out = p
+            .transform_request(
+                &json!({
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "reasoning_effort": "none"
+                }),
+                &dep,
+            )
+            .expect(model);
+        assert_eq!(
+            out["additionalModelRequestFields"]["thinking"],
+            json!({"type": "disabled"}),
+            "{model}: {out}"
+        );
+    }
+}
+
+#[test]
+fn converse_s3_uri_media_and_bucket_owner_validation() {
+    let p = BedrockProvider;
+    let dep = bedrock_deployment("bedrock/amazon.nova-pro-v1:0");
+    let out = p
+        .transform_request(
+            &json!({
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "inspect"},
+                        {"type": "image_url", "image_url": {"url": "s3://my-bucket/pic.png", "bucket_owner": "123456789012"}},
+                        {"type": "image_url", "image_url": {"url": "s3://my-bucket/spec.pdf"}},
+                        {"type": "file", "file": {"file_id": "s3://my-bucket/clip.mp4", "bucketOwner": "999888777666"}}
+                    ]
+                }]
+            }),
+            &dep,
+        )
+        .expect("s3 media ok");
+    let content = out["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(content[0], json!({"text": "inspect"}));
+    assert_eq!(
+        content[1],
+        json!({"image": {"format": "png", "source": {"s3Location": {"uri": "s3://my-bucket/pic.png", "bucketOwner": "123456789012"}}}})
+    );
+    assert_eq!(content[2]["document"]["format"], "pdf");
+    assert_eq!(
+        content[2]["document"]["source"],
+        json!({"s3Location": {"uri": "s3://my-bucket/spec.pdf"}})
+    );
+    assert_eq!(
+        content[3],
+        json!({"video": {"format": "mp4", "source": {"s3Location": {"uri": "s3://my-bucket/clip.mp4", "bucketOwner": "999888777666"}}}})
+    );
+
+    let bad_owner = p
+        .transform_request(
+            &json!({
+                "messages": [{
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "s3://my-bucket/pic.png", "bucket_owner": ""}}]
+                }]
+            }),
+            &dep,
+        )
+        .expect_err("empty bucket_owner must reject with 400");
+    assert!(matches!(bad_owner, oxllm_core::Error::BadRequest(_)));
+
+    let numeric_owner = p
+        .transform_request(
+            &json!({
+                "messages": [{
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "s3://my-bucket/pic.png", "bucket_owner": 12345}}]
+                }]
+            }),
+            &dep,
+        )
+        .expect_err("non-string bucket_owner must reject with 400");
+    assert!(matches!(numeric_owner, oxllm_core::Error::BadRequest(_)));
+
+    let tool_with_s3_video = p
+        .transform_request(
+            &json!({
+                "messages": [
+                    {"role": "assistant", "content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "get_vid", "arguments": "{}"}}]},
+                    {"role": "tool", "tool_call_id": "c1", "content": [{"type": "image_url", "image_url": {"url": "s3://my-bucket/clip.mp4"}}]}
+                ]
+            }),
+            &dep,
+        )
+        .expect("toolResult S3 video allowed");
+    assert_eq!(
+        tool_with_s3_video["messages"][1]["content"][0]["toolResult"]["content"][0]["video"]["source"]
+            ["s3Location"]["uri"],
+        "s3://my-bucket/clip.mp4"
+    );
+}
+
+#[test]
+fn converse_drops_signed_thinking_for_non_claude_targets_and_keeps_opaque_arns() {
+    let p = BedrockProvider;
+    let nova = bedrock_deployment("bedrock/amazon.nova-pro-v1:0");
+    let req = json!({
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": "answer",
+                "thinking_blocks": [
+                    {"type": "thinking", "thinking": "unsigned reasoning"},
+                    {"type": "thinking", "thinking": "signed reasoning", "signature": "sig-abc"},
+                    {"type": "redacted_thinking", "data": "AA=="}
+                ]
+            },
+            {"role": "user", "content": "next"}
+        ]
+    });
+    let nova_out = p.transform_request(&req, &nova).expect("nova ok");
+    let assistant_content = nova_out["messages"][1]["content"].as_array().unwrap();
+    assert_eq!(
+        assistant_content,
+        &vec![
+            json!({"reasoningContent": {"reasoningText": {"text": "unsigned reasoning"}}}),
+            json!({"text": "answer"})
+        ]
+    );
+
+    let opaque_arn = bedrock_converse_deployment(
+        "bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/custom-profile",
+    );
+    let arn_out = p
+        .transform_request(&req, &opaque_arn)
+        .expect("opaque arn ok");
+    let arn_content = arn_out["messages"][1]["content"].as_array().unwrap();
+    assert_eq!(arn_content.len(), 4);
+}
+
+#[test]
+fn convert_image_url_blocks_reverts_document_url_source_alongside_image() {
+    let mut body = json!({
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "document", "source": {"type": "url", "url": "https://example.com/a.pdf"}},
+                {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+            ]
+        }]
+    });
+    convert_image_url_blocks(&mut body);
+    assert_eq!(
+        body["messages"][0]["content"][0],
+        json!({"type": "image_url", "image_url": {"url": "https://example.com/a.pdf"}})
+    );
+    assert_eq!(
+        body["messages"][0]["content"][1],
+        json!({"type": "image_url", "image_url": {"url": "https://example.com/a.png"}})
+    );
+}
+
+#[test]
+fn invoke_forwards_compaction_with_compact_beta_and_strips_safeguards() {
+    let provider = BedrockProvider;
+    let dep = bedrock_deployment("bedrock/anthropic.claude-sonnet-4-6");
+    let req = json!({
+        "model": "bedrock/anthropic.claude-sonnet-4-6",
+        "messages": [{"role": "user", "content": "hi"}],
+        "compaction": {"type": "auto", "max_tokens": 50000},
+        "safeguards": {"enabled": true},
+    });
+    let out = provider.transform_request(&req, &dep).expect("invoke ok");
+    assert_eq!(
+        out["compaction"],
+        json!({"type": "auto", "max_tokens": 50000})
+    );
+    assert!(
+        out.get("safeguards").is_none(),
+        "bedrock invoke must drop unsupported safeguards: {out}"
+    );
+    let betas: Vec<&str> = out["anthropic_beta"]
+        .as_array()
+        .expect("anthropic_beta array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        betas.contains(&crate::anthropic::BETA_COMPACT_2026_09_04),
+        "missing compact-2026-09-04 beta: {betas:?}"
+    );
+}
+
+#[test]
+fn invoke_emits_compact_beta_when_message_contains_compaction_block() {
+    let provider = BedrockProvider;
+    let dep = bedrock_deployment("bedrock/anthropic.claude-sonnet-4-6");
+    let req = json!({
+        "model": "bedrock/anthropic.claude-sonnet-4-6",
+        "messages": [{
+            "role": "assistant",
+            "content": [{"type": "compaction", "content": "summary"}]
+        }],
+    });
+    let out = provider.transform_request(&req, &dep).expect("invoke ok");
+    let betas: Vec<&str> = out["anthropic_beta"]
+        .as_array()
+        .expect("anthropic_beta array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        betas.contains(&crate::anthropic::BETA_COMPACT_2026_09_04),
+        "missing compact-2026-09-04 beta for compaction block: {betas:?}"
+    );
+}
+
+#[test]
+fn invoke_drops_non_object_compaction_without_adding_beta() {
+    let provider = BedrockProvider;
+    let dep = bedrock_deployment("bedrock/anthropic.claude-sonnet-4-6");
+    let req = json!({
+        "model": "bedrock/anthropic.claude-sonnet-4-6",
+        "messages": [{"role": "user", "content": "hi"}],
+        "compaction": "invalid",
+    });
+    let out = provider.transform_request(&req, &dep).expect("invoke ok");
+    assert!(out.get("compaction").is_none());
+    assert!(
+        out.get("anthropic_beta")
+            .and_then(|v| v.as_array())
+            .is_none_or(|arr| !arr
+                .iter()
+                .any(|b| b.as_str() == Some(crate::anthropic::BETA_COMPACT_2026_09_04))),
+    );
+}
+
+#[test]
+fn converse_inference_profile_arn_recognizes_moonshot_base_model() {
+    let provider = BedrockProvider;
+    let mut dep = bedrock_deployment(
+        "bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/kimi-profile",
+    );
+    dep.oxllm_params
+        .extra
+        .insert("base_model".into(), json!("bedrock/moonshotai.kimi-k2.5"));
+    let req = json!({
+        "model": dep.model_name,
+        "messages": [{"role": "user", "content": "hi"}],
+    });
+    let out = provider
+        .transform_request(&req, &dep)
+        .expect("moonshot arn ok");
+    assert!(out.get("messages").is_some());
+
+    dep.oxllm_params.extra.insert(
+        "base_model".into(),
+        json!("bedrock/moonshot.kimi-k2-thinking"),
+    );
+    let out2 = provider
+        .transform_request(&req, &dep)
+        .expect("moonshot legacy arn ok");
+    assert!(out2.get("messages").is_some());
+}
+
+#[test]
+fn bedrock_embed_merges_extra_body_and_protects_inputs() {
+    let cohere_dep = bedrock_deployment("bedrock/cohere.embed-english-v3");
+    let cohere_req = json!({
+        "input": ["hello"],
+        "extra_body": {
+            "texts": ["evil"],
+            "input_type": "classification",
+            "truncate": "NONE",
+            "embedding_types": ["float", "int8"],
+        },
+    });
+    let cohere_out =
+        super::embed::transform_request(&cohere_req, &cohere_dep).expect("cohere embed ok");
+    assert_eq!(cohere_out["texts"], json!(["hello"]));
+    assert_eq!(cohere_out["input_type"], "classification");
+    assert_eq!(cohere_out["truncate"], "NONE");
+    assert_eq!(cohere_out["embedding_types"], json!(["float", "int8"]));
+
+    // Explicit top-level parameters must override defaults AND extra_body.
+    let explicit_req = json!({
+        "input": ["hello"],
+        "input_type": "search_query",
+        "dimensions": 256,
+        "extra_body": {
+            "input_type": "classification",
+            "output_dimension": 512,
+        },
+    });
+    let explicit_out =
+        super::embed::transform_request(&explicit_req, &cohere_dep).expect("cohere explicit ok");
+    assert_eq!(explicit_out["input_type"], "search_query");
+    assert_eq!(explicit_out["output_dimension"], 256);
+
+    let titan_dep = bedrock_deployment("bedrock/amazon.titan-embed-text-v2:0");
+    let titan_req = json!({
+        "input": "hello titan",
+        "extra_body": {
+            "inputText": "evil",
+            "normalize": true,
+            "dimensions": 512,
+        },
+    });
+    let titan_out =
+        super::embed::transform_request(&titan_req, &titan_dep).expect("titan embed ok");
+    assert_eq!(titan_out["inputText"], "hello titan");
+    assert_eq!(titan_out["normalize"], true);
+    assert_eq!(titan_out["dimensions"], 512);
+}

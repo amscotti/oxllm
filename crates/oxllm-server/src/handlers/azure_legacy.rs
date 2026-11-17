@@ -41,7 +41,9 @@ pub async fn deployments_chat_completions(
 ) -> Result<Response, ApiError> {
     let state = shared.load_full();
     let body = inject_model(body, &model)?;
-    chat_completions_inner(state, &auth, &headers, body).await
+    chat_completions_inner(state, &auth, &headers, body)
+        .await
+        .map_err(crate::handlers::chat::openai_route_error)
 }
 
 /// `POST /engines/{model}/chat/completions`
@@ -54,7 +56,9 @@ pub async fn engines_chat_completions(
 ) -> Result<Response, ApiError> {
     let state = shared.load_full();
     let body = inject_model(body, &model)?;
-    chat_completions_inner(state, &auth, &headers, body).await
+    chat_completions_inner(state, &auth, &headers, body)
+        .await
+        .map_err(crate::handlers::chat::openai_route_error)
 }
 
 /// `POST /openai/deployments/{model}/embeddings`

@@ -242,10 +242,15 @@ where
         let dep_key = oxllm_core::router::deployment_key(deployment);
         let cooldown_key = state.router.cooldown_key(deployment);
 
+        // Reserve the in-flight slot immediately after picking, before any await,
+        // so concurrent LeastBusy callers observe the live selection (#47484).
+        state.router.record_in_flight(&cooldown_key, 1);
+
         if let Err(error) =
             crate::pipeline::prepare_deployment_pricing(state, call_ctx, deployment, request_body)
                 .await
         {
+            state.router.record_in_flight(&cooldown_key, -1);
             ctx.pre_call
                 .excluded_deployment_keys
                 .push(cooldown_key.clone());
@@ -259,7 +264,6 @@ where
             last_err = Some(rejection);
             continue;
         }
-        state.router.record_in_flight(&cooldown_key, 1);
 
         if let Err(e) = check_deployment_limits(state, deployment, &dep_key).await {
             state.router.record_in_flight(&cooldown_key, -1);

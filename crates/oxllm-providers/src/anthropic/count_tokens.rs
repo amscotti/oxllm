@@ -80,11 +80,20 @@ pub fn normalize_request_with_drop_params(
         ));
     }
     let mut messages = messages.clone();
-    for message in &mut messages {
-        if !message.is_object() {
+    for (index, message) in messages.iter_mut().enumerate() {
+        let Some(obj) = message.as_object() else {
             return Err(Error::BadRequest(
                 "count_tokens messages must contain objects".into(),
             ));
+        };
+        if obj
+            .get("role")
+            .and_then(Value::as_str)
+            .is_none_or(|role| role.trim().is_empty())
+        {
+            return Err(Error::BadRequest(format!(
+                "messages[{index}] must have a non-empty string 'role' field"
+            )));
         }
         if let Some(content) = message.get_mut("content") {
             normalize_content(content)?;
@@ -95,10 +104,21 @@ pub fn normalize_request_with_drop_params(
     if let Some(system) = system {
         body["system"] = system;
     }
-    for field in ["tools", "thinking", "tool_choice", "output_config"] {
+    for field in ["thinking", "tool_choice", "output_config"] {
         if let Some(value) = request.get(field).filter(|value| !value.is_null()) {
             body[field] = value.clone();
         }
+    }
+    if let Some(tools) = request.get("tools").filter(|value| !value.is_null()) {
+        body["tools"] = if let Some(arr) = tools.as_array() {
+            Value::Array(
+                arr.iter()
+                    .map(|tool| super::sanitize_tool_custom_field(tool, true, drop_params))
+                    .collect(),
+            )
+        } else {
+            tools.clone()
+        };
     }
     Ok(body)
 }
@@ -175,10 +195,18 @@ fn normalize_content(content: &mut Value) -> Result<()> {
                         .or_else(|| image.get("url").and_then(Value::as_str))
                 })
                 .ok_or_else(|| Error::BadRequest("count_tokens image_url requires a URL".into()))?;
+            let format = block.pointer("/image_url/format").and_then(Value::as_str);
             let image = crate::util::data_url_to_anthropic_image(url)
                 .or_else(|| {
-                    (url.starts_with("https://") || url.starts_with("http://"))
-                        .then(|| json!({"type":"image", "source":{"type":"url", "url":url}}))
+                    (url.starts_with("https://") || url.starts_with("http://")).then(|| {
+                        if format.is_some_and(crate::util::is_pdf_media_type)
+                            || super::is_pdf_http_url(url)
+                        {
+                            json!({"type": "document", "source": {"type": "url", "url": url}})
+                        } else {
+                            json!({"type": "image", "source": {"type": "url", "url": url}})
+                        }
+                    })
                 })
                 .ok_or_else(|| {
                     Error::BadRequest(

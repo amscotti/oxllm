@@ -339,6 +339,7 @@ pub(crate) async fn handle_stream_success(
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: !call_ctx.preserve_stream_usage_for_conversion,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         // Tracks whether the OpenAI `[DONE]` terminator has already been
         // emitted (either inline via `process_buffer` when the upstream
@@ -489,6 +490,10 @@ pub(crate) async fn handle_stream_success(
                         response_model = m.to_string();
                     }
                     accumulate_completion_text(&mut completion_text, &value);
+                    normalize_tool_call_finish_reason(
+                        &mut value,
+                        &mut usage_injection.seen_tool_call_choices,
+                    );
                     normalize_stream_chunk(&mut value, &original_request, &usage_injection);
                     if usage_injection.strip_content_usage {
                         strip_usage_from_content_chunk(&mut value);
@@ -844,16 +849,24 @@ async fn finalize_stream_exit(
             // `stream: true`. The status is synthesized first
             // (out-of-range -> 502) so the derived `type`/`code` track
             // what the client would see on the non-streaming path.
-            let error_code = if idle_timeout {
-                Some(crate::error::UPSTREAM_TIMEOUT_CODE)
+            let (error_type, error_code) = if !idle_timeout && status == 529 {
+                if call_ctx.is_anthropic_route {
+                    ("overloaded_error", None)
+                } else {
+                    ("service_unavailable_error", Some("server_is_overloaded"))
+                }
             } else {
-                crate::error::code_for_upstream_status(synthesized.as_u16())
+                let code = if idle_timeout {
+                    Some(crate::error::UPSTREAM_TIMEOUT_CODE)
+                } else {
+                    crate::error::code_for_upstream_status(synthesized.as_u16())
+                };
+                (
+                    crate::error::error_type_for_status(synthesized.as_u16()),
+                    code,
+                )
             };
-            let error_obj = crate::error::error_envelope_object(
-                message,
-                crate::error::error_type_for_status(synthesized.as_u16()),
-                error_code,
-            );
+            let error_obj = crate::error::error_envelope_object(message, error_type, error_code);
             let error_event = serde_json::json!({ "error": error_obj });
             match send_event(tx, Event::default().data(error_event.to_string())).await {
                 ClientSend::Sent => {}
@@ -1362,6 +1375,10 @@ async fn process_buffer(
                     *response_model = m.to_string();
                 }
                 accumulate_completion_text(completion_text, &value);
+                normalize_tool_call_finish_reason(
+                    &mut value,
+                    &mut usage_injection.seen_tool_call_choices,
+                );
                 normalize_stream_chunk(&mut value, original_request, usage_injection);
                 if usage_injection.strip_content_usage {
                     strip_usage_from_content_chunk(&mut value);
@@ -1438,6 +1455,53 @@ async fn process_buffer(
 /// `include_usage` is captured once at the start of the stream task from the
 /// request body; `emitted` guards against emitting the synthesized chunk more
 /// than once (defensive — `[DONE]` normally appears exactly once).
+/// Tracks choices that emitted tool calls and rewrites a spurious `"stop"`
+/// terminal `finish_reason` to `"tool_calls"` (#49388).
+fn normalize_tool_call_finish_reason(
+    chunk: &mut serde_json::Value,
+    seen_tool_call_choices: &mut std::collections::HashSet<u64>,
+) {
+    let Some(choices) = chunk
+        .get_mut("choices")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for choice in choices {
+        let index = choice
+            .get("index")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let has_tool_call = choice
+            .get("delta")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|delta| {
+                delta
+                    .get("tool_calls")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|calls| !calls.is_empty())
+                    || delta
+                        .get("function_call")
+                        .is_some_and(|call| !call.is_null())
+            });
+        if has_tool_call {
+            seen_tool_call_choices.insert(index);
+        }
+        if seen_tool_call_choices.contains(&index)
+            && choice
+                .get("finish_reason")
+                .and_then(serde_json::Value::as_str)
+                == Some("stop")
+            && let Some(obj) = choice.as_object_mut()
+        {
+            obj.insert(
+                "finish_reason".to_string(),
+                serde_json::Value::String("tool_calls".to_string()),
+            );
+        }
+    }
+}
+
 struct UsageInjection {
     public_model: Option<String>,
     /// Whether the client requested `stream_options.include_usage: true`.
@@ -1455,6 +1519,7 @@ struct UsageInjection {
     /// Whether content/finish chunks should have usage removed for a direct
     /// OpenAI client. Native converters keep the metadata for their own events.
     strip_content_usage: bool,
+    seen_tool_call_choices: std::collections::HashSet<u64>,
 }
 
 fn normalize_stream_chunk(
@@ -1787,6 +1852,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let mut done = false;
         process_buffer(
@@ -2110,6 +2176,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let secret = "SUPER_SECRET_CONTENT_42_this_must_not_be_logged";
         let mut buffer = format!("data: {secret}\n\n");
@@ -2163,6 +2230,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let chunk = "data: {\"choices\":[]}\n\n";
         let mut buffer = chunk.to_string();
@@ -2220,6 +2288,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         // Usage attached to a content chunk must move to the terminal chunk,
         // retaining provider-specific usage fields.
@@ -2302,6 +2371,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let mut buffer = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}\n\n",
@@ -2359,6 +2429,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let mut buffer = "data: [DONE]\n\ndata: [DONE]\n\n".to_string();
         let mut done_sent = false;
@@ -2399,6 +2470,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         assert!(build_usage_chunk_if_requested(&inj, None).is_none());
     }
@@ -2420,6 +2492,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         assert!(build_usage_chunk_if_requested(&inj, Some(&usage)).is_none());
     }
@@ -2442,6 +2515,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let chunk = build_usage_chunk_if_requested(&inj, Some(&usage)).expect("some chunk");
         assert!(chunk["choices"].is_array());
@@ -2480,6 +2554,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let chunk = build_usage_chunk_if_requested(&inj, Some(&usage)).expect("some chunk");
         assert_eq!(
@@ -2513,6 +2588,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let chunk = build_usage_chunk_if_requested(&inj, Some(&usage)).expect("some chunk");
         assert_eq!(
@@ -2541,6 +2617,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         // OpenAI o-series emits reasoning_content deltas inline with the
         // other content deltas.
@@ -2597,6 +2674,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         // Final usage chunk from OpenAI streaming: empty choices + usage
         // carrying reasoning tokens.
@@ -2651,6 +2729,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let mut done_sent = false;
         let mut bytes_sent = false;
@@ -2721,6 +2800,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let mut buffer = "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2,\"cost\":0.0023}}\n\n".to_string();
         process_buffer(
@@ -3525,6 +3605,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let mut buffer = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
@@ -3580,6 +3661,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let mut buffer = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
@@ -3635,6 +3717,7 @@ mod tests {
             served_service_tier: None,
             reported_usage: None,
             strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
         };
         let mut buffer = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n",
@@ -3700,5 +3783,99 @@ mod tests {
         // Neither prompt nor completion → None (nothing to bill).
         let ctx3 = CallContext::for_test("gpt-4o");
         assert!(estimate_stream_usage(&ctx3, "gpt-4o", "").is_none());
+    }
+
+    #[tokio::test]
+    async fn process_buffer_rewrites_stop_to_tool_calls_after_delta_tool_calls() {
+        let parse_chunks = |sse: &str| -> Vec<serde_json::Value> {
+            sse.lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .filter(|data| *data != "[DONE]")
+                .filter_map(|data| serde_json::from_str::<serde_json::Value>(data).ok())
+                .collect()
+        };
+
+        let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(16);
+        let provider = OpenAiProvider;
+        let original_request = serde_json::json!({"model": "gpt-4o", "stream": true});
+        let mut usage_injection = UsageInjection {
+            include_usage: false,
+            public_model: Some("gpt-4o".to_string()),
+            emitted: false,
+            reported_cost: None,
+            served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
+        };
+        let mut accumulated_usage = None;
+        let mut response_model = "gpt-4o".to_string();
+        let mut completion_text = String::new();
+        let mut bytes_sent = false;
+        let mut done_sent = false;
+        let mut buffer = concat!(
+            "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{}\"}}]},\"finish_reason\":null},{\"index\":1,\"delta\":{\"content\":\"plain\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"},{\"index\":1,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        )
+        .to_string();
+
+        process_buffer(
+            &mut buffer,
+            &provider,
+            &tx,
+            &mut accumulated_usage,
+            &mut response_model,
+            &mut usage_injection,
+            &mut bytes_sent,
+            &mut done_sent,
+            &mut None,
+            &original_request,
+            &mut completion_text,
+            &mut false,
+        )
+        .await
+        .expect("process_buffer ok");
+        drop(tx);
+        let rendered = drain_sse_to_string(rx).await;
+        let chunks = parse_chunks(&rendered);
+        assert!(done_sent);
+        let finish_chunk = chunks.last().expect("finish chunk");
+        assert_eq!(finish_chunk["choices"][0]["finish_reason"], "tool_calls");
+        assert_eq!(finish_chunk["choices"][1]["finish_reason"], "stop");
+
+        // Empty `delta.tool_calls` without prior tool calls must preserve `"stop"`.
+        let (tx2, rx2) = mpsc::channel::<Result<Event, std::convert::Infallible>>(8);
+        let mut inj2 = UsageInjection {
+            include_usage: false,
+            public_model: Some("gpt-4o".to_string()),
+            emitted: false,
+            reported_cost: None,
+            served_service_tier: None,
+            reported_usage: None,
+            strip_content_usage: true,
+            seen_tool_call_choices: std::collections::HashSet::new(),
+        };
+        let mut buffer2 = "data: {\"id\":\"c2\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[]},\"finish_reason\":\"stop\"}]}\n\n".to_string();
+        process_buffer(
+            &mut buffer2,
+            &provider,
+            &tx2,
+            &mut None,
+            &mut response_model,
+            &mut inj2,
+            &mut false,
+            &mut false,
+            &mut None,
+            &original_request,
+            &mut String::new(),
+            &mut false,
+        )
+        .await
+        .expect("empty tool_calls stays stop");
+        drop(tx2);
+        let rendered2 = drain_sse_to_string(rx2).await;
+        let chunks2 = parse_chunks(&rendered2);
+        assert_eq!(chunks2[0]["choices"][0]["finish_reason"], "stop");
     }
 }

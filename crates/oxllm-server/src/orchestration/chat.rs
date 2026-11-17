@@ -625,6 +625,12 @@ async fn try_model_with_retries(
         let dep_key = deployment_key(deployment);
         let cooldown_key = state.router.cooldown_key(deployment);
 
+        // Reserve the in-flight slot immediately after picking this deployment
+        // — BEFORE pricing, limit checks, provider resolution, or any other
+        // await that would yield to another request (#47484).
+        let mut in_flight =
+            super::lifecycle::InFlightGuard::new(state.router.clone(), &cooldown_key);
+
         // Stash the deployment's pricing override (if any) so the cost hooks
         // (CostTrackingHook, BudgetHook) and the cost header compute spend
         // using the deployment-specific rates. Reset on each iteration so a
@@ -634,6 +640,7 @@ async fn try_model_with_retries(
             crate::pipeline::prepare_deployment_pricing(state, call_ctx, deployment, request_body)
                 .await
         {
+            in_flight.release();
             pick_ctx
                 .pre_call
                 .excluded_deployment_keys
@@ -689,24 +696,6 @@ async fn try_model_with_retries(
                 .to_string(),
             );
         }
-
-        // Reserve the in-flight slot immediately after picking this deployment
-        // — BEFORE limit checks, provider resolution, or any other await that
-        // would yield to another request. The previous ordering (increment
-        // inside the retry loop, after `check_deployment_limits`) left a window
-        // in which N concurrent requests could all observe count=0 and pick the
-        // same "idle" deployment before any increment landed (#24).
-        //
-        // This narrows the race but does not fully close it: a complete
-        // reserve-at-pick fix would atomically increment inside
-        // `pick_deployment_index` itself (a router-level change). Here we
-        // ensure the counter is visible to the next `pick_deployment_index`
-        // caller as soon as we commit to a deployment.
-        //
-        // The owner releases synchronously on cancellation. Retries re-reserve
-        // the same slot; a prepared stream transfers it to the detached pump.
-        let mut in_flight =
-            super::lifecycle::InFlightGuard::new(state.router.clone(), &cooldown_key);
 
         if let Err(e) = check_deployment_limits(state, deployment, &dep_key).await {
             in_flight.release();

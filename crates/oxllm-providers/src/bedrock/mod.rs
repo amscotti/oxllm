@@ -101,8 +101,14 @@ pub enum BedrockVendor {
     Cohere,
     /// DeepSeek models (`deepseek.*`).
     DeepSeek,
+    /// Moonshot AI models (`moonshot.*`, `moonshotai.*`).
+    MoonshotAi,
+    /// OpenAI models on Bedrock (`openai.*`).
+    OpenAi,
     /// Qwen models (`qwen.*`).
     Qwen,
+    /// Z.ai models (`zai.*`).
+    Zai,
     /// Vendor could not be determined from the model id.
     Unknown,
 }
@@ -381,6 +387,28 @@ impl ChatProvider for BedrockProvider {
             if let Value::Object(map) = &mut body {
                 map.insert("anthropic_version".to_string(), json!(ANTHROPIC_VERSION));
                 map.remove("stream");
+                // Bedrock Invoke does not support `safeguards` yet and rejects
+                // unknown top-level inputs.
+                map.remove("safeguards");
+                let has_compaction_param = map.get("compaction").is_some_and(Value::is_object);
+                if !has_compaction_param {
+                    map.remove("compaction");
+                }
+                let has_compaction_block = map
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .is_some_and(|msgs| {
+                        msgs.iter().any(|msg| {
+                            msg.get("content")
+                                .and_then(Value::as_array)
+                                .is_some_and(|blocks| {
+                                    blocks.iter().any(|block| {
+                                        block.get("type").and_then(Value::as_str)
+                                            == Some("compaction")
+                                    })
+                                })
+                        })
+                    });
                 // InvokeModel carries beta selectors in the native body. Keep
                 // explicit tool betas alongside any message-config beta.
                 let mut betas = match request
@@ -401,11 +429,16 @@ impl ChatProvider for BedrockProvider {
                     }
                     None => Vec::new(),
                 };
-                if message_config_used {
-                    let beta = crate::anthropic::BETA_MID_CONVERSATION_OUTPUT_CONFIG;
+                let mut push_beta = |beta: &str| {
                     if !betas.iter().any(|value| value.as_str() == Some(beta)) {
                         betas.push(json!(beta));
                     }
+                };
+                if message_config_used {
+                    push_beta(crate::anthropic::BETA_MID_CONVERSATION_OUTPUT_CONFIG);
+                }
+                if has_compaction_param || has_compaction_block {
+                    push_beta(crate::anthropic::BETA_COMPACT_2026_09_04);
                 }
                 if !betas.is_empty() {
                     map.insert("anthropic_beta".to_string(), Value::Array(betas));
@@ -853,7 +886,7 @@ impl Provider for BedrockProvider {
 /// treated as `us.` — that would leave `east-1.anthropic…` and miss the
 /// Anthropic detector. Arbitrary two-letter custom prefixes are not geo ids.
 pub(super) fn strip_cross_region_prefix(model: &str) -> &str {
-    for prefix in ["us.", "eu.", "apac.", "global.", "jp.", "au."] {
+    for prefix in ["us.", "eu.", "apac.", "global.", "jp.", "au.", "ca.", "in."] {
         if let Some(rest) = model.strip_prefix(prefix) {
             if !rest.starts_with('-') {
                 return rest;
@@ -934,8 +967,17 @@ pub fn detect_bedrock_provider(model: &str) -> BedrockVendor {
     if base.contains("deepseek") {
         return BedrockVendor::DeepSeek;
     }
+    if base.starts_with("moonshot.") || base.starts_with("moonshotai.") {
+        return BedrockVendor::MoonshotAi;
+    }
+    if base.starts_with("openai.") {
+        return BedrockVendor::OpenAi;
+    }
     if base.contains("qwen") {
         return BedrockVendor::Qwen;
+    }
+    if base.starts_with("zai.") {
+        return BedrockVendor::Zai;
     }
     BedrockVendor::Unknown
 }
@@ -1093,15 +1135,17 @@ fn convert_image_url_blocks(body: &mut Value) {
             None => continue,
         };
         for block in content.iter_mut() {
-            // Revert URL-source image blocks (produced by the Anthropic
+            // Revert URL-source image/document blocks (produced by the Anthropic
             // transform's HTTP URL conversion) back to OpenAI image_url
             // blocks — Bedrock cannot fetch remote URLs.
-            if block.get("type").and_then(Value::as_str) == Some("image")
-                && block
-                    .get("source")
-                    .and_then(|s| s.get("type"))
-                    .and_then(Value::as_str)
-                    == Some("url")
+            if matches!(
+                block.get("type").and_then(Value::as_str),
+                Some("image" | "document")
+            ) && block
+                .get("source")
+                .and_then(|s| s.get("type"))
+                .and_then(Value::as_str)
+                == Some("url")
             {
                 let url = block
                     .get("source")

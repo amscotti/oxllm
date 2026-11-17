@@ -594,3 +594,107 @@ fn supported_params_published() {
     assert!(params.contains(&"temperature"));
     assert!(params.contains(&"tools"));
 }
+
+#[test]
+fn json_object_joins_multi_text_blocks_on_hosted_non_claude_last_turn() {
+    let dep = Deployment {
+        model_name: "llama-maverick".to_string(),
+        oxllm_params: OxllmParams {
+            model: "databricks/databricks-meta-llama-3-3-70b-instruct".to_string(),
+            api_key: Some("databricks-key".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let req = json!({
+        "model": "databricks/databricks-meta-llama-3-3-70b-instruct",
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Earlier part 1. "},
+                    {"type": "text", "text": "Earlier part 2."}
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Respond in "},
+                    {"type": "text", "text": "json please."}
+                ]
+            },
+            {
+                "role": "assistant",
+                "thinking_blocks": [{"type": "thinking", "thinking": "internal"}],
+                "content": ""
+            }
+        ]
+    });
+    let out = ChatProvider::transform_request(&DatabricksProvider, &req, &dep).unwrap();
+    let msgs = out["messages"].as_array().unwrap();
+    assert_eq!(
+        msgs.len(),
+        2,
+        "bare thinking assistant turn must be dropped"
+    );
+    assert!(msgs[0]["content"].is_array(), "earlier turn stays an array");
+    assert_eq!(msgs[1]["content"], "Respond in json please.");
+}
+
+#[test]
+fn json_object_skips_join_on_external_endpoint_and_respects_drop_params_cache_control() {
+    // External endpoint (non-databricks-*/non-system.ai.*) keeps array form.
+    let ext_req = json!({
+        "model": "databricks/my-external-model",
+        "response_format": {"type": "json_object"},
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Hello "},
+                {"type": "text", "text": "json"}
+            ]
+        }]
+    });
+    let ext_out =
+        ChatProvider::transform_request(&DatabricksProvider, &ext_req, &deployment()).unwrap();
+    assert!(ext_out["messages"][0]["content"].is_array());
+
+    // Hosted model with cache_control joins only when drop_params is true.
+    let mut hosted_dep = deployment();
+    hosted_dep.oxllm_params.model = "databricks/system.ai.gpt-oss".to_string();
+    let cached_req = json!({
+        "model": "databricks/system.ai.gpt-oss",
+        "response_format": {"type": "json_object"},
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Return ", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "json"}
+            ]
+        }]
+    });
+    let no_drop =
+        ChatProvider::transform_request(&DatabricksProvider, &cached_req, &hosted_dep).unwrap();
+    assert!(no_drop["messages"][0]["content"].is_array());
+
+    hosted_dep.oxllm_params.drop_params = Some(true);
+    let dropped =
+        ChatProvider::transform_request(&DatabricksProvider, &cached_req, &hosted_dep).unwrap();
+    assert_eq!(dropped["messages"][0]["content"], "Return json");
+}
+
+#[test]
+fn rejects_non_string_text_block_at_request_boundary() {
+    let req = json!({
+        "model": "databricks/databricks-meta-llama-3-3-70b-instruct",
+        "messages": [{
+            "role": "user",
+            "content": [{"type": "text", "text": 42}]
+        }]
+    });
+    assert!(matches!(
+        ChatProvider::transform_request(&DatabricksProvider, &req, &deployment()),
+        Err(oxllm_core::Error::BadRequest(msg)) if msg.contains("string 'text'")
+    ));
+}

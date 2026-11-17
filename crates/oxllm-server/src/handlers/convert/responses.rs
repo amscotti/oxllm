@@ -207,7 +207,14 @@ pub(crate) fn responses_to_chat_request(req: &Value) -> oxllm_core::Result<Value
             out.insert("stream".to_string(), stream.clone());
         }
     }
-    for key in ["metadata", "user", "service_tier", "prompt_cache_options"] {
+    for key in [
+        "metadata",
+        "user",
+        "service_tier",
+        "prompt_cache_options",
+        "prompt_cache_key",
+        "prompt_cache_retention",
+    ] {
         if let Some(value) = req.get(key).filter(|value| !value.is_null()) {
             out.insert(key.to_string(), value.clone());
         }
@@ -3042,5 +3049,18 @@ mod tests {
                 "sequence_number must be strictly increasing: {all_seq:?}"
             );
         }
+    }
+
+    #[test]
+    fn responses_to_chat_forwards_prompt_cache_retention_and_key() {
+        let req = json!({
+            "model": "gpt-5.5",
+            "input": "hello",
+            "prompt_cache_retention": "24h",
+            "prompt_cache_key": "cache-key-123"
+        });
+        let chat = responses_to_chat_request(&req);
+        assert_eq!(chat["prompt_cache_retention"], "24h");
+        assert_eq!(chat["prompt_cache_key"], "cache-key-123");
     }
 }

@@ -309,6 +309,15 @@ pub struct CallContext {
     /// Public identity of the selected deployment, distinct from credential-
     /// bearing internal routing fingerprints. Replaced on every serving pick.
     pub deployment_id: Option<String>,
+    /// Model label reported by an upstream passthrough target via
+    /// `x-oxllm-upstream-model` (or `x-litellm-upstream-model`). Label-only for
+    /// spend attribution: never triggers catalog pricing or marks the request as
+    /// upstream-priced.
+    pub upstream_reported_model: Option<String>,
+    /// True only for native Anthropic `/v1/messages` conversion requests so
+    /// mid-stream 529 overloads emit Anthropic `overloaded_error` instead of
+    /// OpenAI `service_unavailable_error` / `server_is_overloaded`.
+    pub is_anthropic_route: bool,
     /// Public model group selected for the serving attempt.
     pub serving_model_group: Option<String>,
     /// Selected deployment's provider/model selector, independent of rate-card hints.

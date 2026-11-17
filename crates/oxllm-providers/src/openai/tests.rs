@@ -2036,6 +2036,9 @@ fn supports_none_classification() {
         "gpt-5.6-sol",
         "gpt-6-luna",
         "gpt-6-sol",
+        "gpt-6.1-terra",
+        "gpt-6.1-terra-2026-10-20",
+        "gpt-5.3-codex",
         "gpt-6-luna-2026-09-22",
         "gpt-5.1-2025-11-13",
         "gpt-5.4-2026-03-05",
@@ -2054,6 +2057,8 @@ fn supports_none_classification() {
         "gpt-5.1-codex",
         "gpt-5.1-codex-mini",
         "gpt-5.1-codex-max",
+        "gpt-5.2-codex",
+        "gpt-5.3-codex-spark",
         "gpt-5.2-pro",
         "gpt-5.4-pro",
         "gpt-5.5-pro",
@@ -2083,11 +2088,13 @@ fn supports_none_classification() {
         );
     }
     for model in [
+        "gpt-5.3-codex",
         "gpt-5.5",
         "gpt-5.6",
         "gpt-5.6-luna",
         "gpt-6-luna",
         "gpt-6-sol",
+        "gpt-6.1-terra",
         "gpt-6-astra",
         "gpt-5",
     ] {
@@ -2452,4 +2459,54 @@ fn provider_supports_raw_openai_surface_endpoints() {
     assert!(p.supports(Endpoint::AudioTranscriptions));
     assert!(p.supports(Endpoint::Moderations));
     assert!(!p.supports(Endpoint::Rerank));
+}
+
+#[test]
+fn gpt_6_1_terra_and_gpt_5_3_codex_accept_none_reasoning_effort_preserving_sampling() {
+    let p = OpenAiProvider;
+    for model in ["gpt-6.1-terra", "gpt-5.3-codex"] {
+        let dep = deployment_with(model);
+        let with_none = json!({
+            "model": model,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "none",
+            "temperature": 0.4,
+            "top_p": 0.85,
+            "logprobs": true,
+        });
+        let out_none = ChatProvider::transform_request(&p, &with_none, &dep).expect("ok");
+        assert_eq!(
+            out_none["temperature"], 0.4,
+            "{model} with reasoning_effort=none must keep temperature"
+        );
+        assert_eq!(out_none["top_p"], 0.85);
+        assert_eq!(out_none["logprobs"], true);
+
+        let omitted = json!({
+            "model": model,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "temperature": 0.4,
+            "top_p": 0.85,
+            "logprobs": true,
+        });
+        let out_omitted = ChatProvider::transform_request(&p, &omitted, &dep).expect("ok");
+        assert!(
+            out_omitted.get("temperature").is_none(),
+            "{model} defaults to reasoning on when effort is omitted"
+        );
+        assert!(out_omitted.get("top_p").is_none());
+        assert!(out_omitted.get("logprobs").is_none());
+    }
+
+    let spark_dep = deployment_with("gpt-5.3-codex-spark");
+    let spark_req = json!({
+        "model": "gpt-5.3-codex-spark",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "reasoning_effort": "none",
+        "temperature": 0.4,
+        "top_p": 0.85,
+    });
+    let out_spark = ChatProvider::transform_request(&p, &spark_req, &spark_dep).expect("ok");
+    assert!(out_spark.get("temperature").is_none());
+    assert!(out_spark.get("top_p").is_none());
 }

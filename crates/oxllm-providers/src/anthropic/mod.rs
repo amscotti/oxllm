@@ -58,6 +58,16 @@ pub const BETA_ADVISOR_TOOL: &str = "advisor-tool-2026-03-01";
 pub const BETA_EFFORT: &str = "effort-2025-11-24";
 /// Beta tag for output configuration attached to individual conversation messages.
 pub const BETA_MID_CONVERSATION_OUTPUT_CONFIG: &str = "mid-conversation-output-config-2026-07-01";
+/// Beta tag for native compaction control and compaction blocks.
+pub const BETA_COMPACT_2026_09_04: &str = "compact-2026-09-04";
+/// Beta tag for streamed thinking display updates (`thinking.display == "updates"`).
+pub const BETA_THINKING_DISPLAY_UPDATES: &str = "thinking-display-updates-2026-08-18";
+/// Beta tag for mid-conversation `tool_addition` / `tool_removal` blocks.
+pub const BETA_MID_CONVERSATION_TOOL_CHANGES: &str = "mid-conversation-tool-changes-2026-07-01";
+/// Beta tag for `safeguards` dangerous-tool-use checks.
+pub const BETA_DANGEROUS_TOOL_USE: &str = "dangerous-tool-use-2026-09-03";
+/// Beta tag for the `computer_20251124` hosted computer-use tool.
+pub const BETA_COMPUTER_USE_2025_11_24: &str = "computer-use-2025-11-24";
 
 /// Historical JSON-helper name. It is no longer reserved: explicitly supplied
 /// tools with this name remain ordinary tool calls.
@@ -607,15 +617,15 @@ impl ChatProvider for AnthropicProvider {
         } else if let Some(effort) = request.get("reasoning_effort").and_then(|v| v.as_str()) {
             // Map OpenAI `reasoning_effort` to Anthropic thinking config when
             // the caller didn't set `thinking` directly (feature #4). For
-            // pre-4.6 models this emits `{"type": "enabled", "budget_tokens":
-            // N}` with budgets matching the reference
-            // `DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET` constants
-            // (`constants.py:183-189`); `none` skips thinking entirely.
-            // For adaptive-thinking models (4.6+/5+) the model self-sizes its
-            // budget, so we emit `{"type": "adaptive"}` and additionally set
-            // `output_config.effort` (the stable API) — mirroring the reference
-            // `_map_reasoning_effort` + `REASONING_EFFORT_TO_OUTPUT_CONFIG_EFFORT`.
-            if is_known_effort(effort) && effort != "none" {
+            // models whose thinking defaults ON (`claude-opus-5`,
+            // `claude-sonnet-5`, `claude-haiku-5-5`) while still allowing
+            // opt-out, `none` must emit `{"type": "disabled"}`; other models
+            // skip thinking when `none`.
+            if effort == "none" {
+                if crate::util::is_optional_default_thinking_anthropic_model(model) {
+                    out.insert("thinking".to_string(), json!({"type": "disabled"}));
+                }
+            } else if is_known_effort(effort) {
                 if is_adaptive_thinking_model(model) {
                     let thinking = json!({"type": "adaptive"});
                     out.insert("thinking".to_string(), thinking);
@@ -639,7 +649,7 @@ impl ChatProvider for AnthropicProvider {
             }
         }
 
-        for key in &["top_k", "metadata"] {
+        for key in &["top_k", "metadata", "compaction", "safeguards"] {
             if let Some(val) = request.get(*key) {
                 if !val.is_null() {
                     out.insert(key.to_string(), val.clone());
@@ -846,6 +856,14 @@ impl ChatProvider for AnthropicProvider {
                 "compaction_blocks".to_string(),
                 Value::Array(compaction_blocks),
             );
+        }
+        if body.get("stop_reason").and_then(Value::as_str) == Some("refusal")
+            && let Some(explanation) = body
+                .pointer("/stop_details/explanation")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+        {
+            message.insert("refusal".to_string(), json!(explanation));
         }
 
         let finish_reason = body
@@ -1114,6 +1132,8 @@ impl ChatProvider for AnthropicProvider {
             // `type: "mcp"` entries; advertising the top-level field keeps
             // `drop_params` from stripping a caller-supplied `mcp_servers`.
             "mcp_servers",
+            "compaction",
+            "safeguards",
         ])
     }
 }
@@ -1950,10 +1970,20 @@ fn convert_content_block_to_anthropic(block: &Value) -> Value {
             .and_then(|iu| iu.get("url"))
             .and_then(Value::as_str)
             .unwrap_or("");
+        let format = block.pointer("/image_url/format").and_then(Value::as_str);
         if let Some(converted) = crate::util::data_url_to_anthropic_image(url) {
             return converted;
         }
         if is_http_url(url) {
+            if format.is_some_and(crate::util::is_pdf_media_type) || is_pdf_http_url(url) {
+                return json!({
+                    "type": "document",
+                    "source": {
+                        "type": "url",
+                        "url": url
+                    }
+                });
+            }
             return http_url_to_anthropic_image(url);
         }
     }
@@ -1975,6 +2005,12 @@ fn http_url_to_anthropic_image(url: &str) -> Value {
 /// Does this URL use an `http` or `https` scheme?
 fn is_http_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
+}
+
+/// Whether an HTTP(S) URL's path (ignoring query/fragment) ends in `.pdf`.
+fn is_pdf_http_url(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or("");
+    path.len() >= 4 && path[path.len() - 4..].eq_ignore_ascii_case(".pdf")
 }
 
 /// Extended thinking, including adaptive thinking, accepts only temperature 1.
@@ -2450,6 +2486,7 @@ fn map_tool_to_anthropic(tool: &Value) -> Result<Option<Value>> {
         if let Some(mut hosted) = map_hosted_tool(tool) {
             if let Some(object) = hosted.as_object_mut() {
                 object.remove("function");
+                object.remove("custom");
                 if object.get("cache_control").is_some_and(Value::is_null) {
                     object.remove("cache_control");
                 }
@@ -2457,9 +2494,20 @@ fn map_tool_to_anthropic(tool: &Value) -> Result<Option<Value>> {
                 // carrier values. Unknown native options are provider-owned.
                 if let Some(native) = tool.as_object() {
                     for (field, value) in native {
-                        if field != "function" && !(field == "cache_control" && value.is_null()) {
+                        if field != "function"
+                            && field != "custom"
+                            && !(field == "cache_control" && value.is_null())
+                        {
                             object.insert(field.clone(), value.clone());
                         }
+                    }
+                    if let Some(defer) = tool
+                        .pointer("/custom/defer_loading")
+                        .and_then(Value::as_bool)
+                    {
+                        object
+                            .entry("defer_loading".to_string())
+                            .or_insert(json!(defer));
                     }
                 }
                 // Explicit native null clears a legacy annotation. Do not
@@ -2542,7 +2590,11 @@ fn map_tool_to_anthropic(tool: &Value) -> Result<Option<Value>> {
     // (function tools); hosted tools handle their own pass-through above.
     let defer_loading = function
         .get("defer_loading")
-        .or_else(|| tool.get("defer_loading"));
+        .or_else(|| tool.get("defer_loading"))
+        .or_else(|| {
+            tool.pointer("/custom/defer_loading")
+                .filter(|v| v.is_boolean())
+        });
     if let Some(dl) = defer_loading {
         if !dl.is_null() {
             out.insert("defer_loading".to_string(), dl.clone());
@@ -2980,6 +3032,7 @@ pub fn collect_beta_headers(request: &Value, model: &str) -> Vec<String> {
                 let deferred = t
                     .get("defer_loading")
                     .or_else(|| t.get("function").and_then(|f| f.get("defer_loading")))
+                    .or_else(|| t.pointer("/custom/defer_loading"))
                     .and_then(Value::as_bool)
                     == Some(true);
                 ie.map(|v| v.is_array()).unwrap_or(false)
@@ -3021,7 +3074,110 @@ pub fn collect_beta_headers(request: &Value, model: &str) -> Vec<String> {
         }
     }
 
+    // Compaction control (`compaction` param) or any replayed compaction block.
+    let has_compaction_block = request
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|msgs| {
+            msgs.iter().any(|msg| {
+                msg.get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            part.get("type").and_then(Value::as_str) == Some("compaction")
+                        })
+                    })
+            })
+        });
+    if request.get("compaction").is_some_and(|v| !v.is_null()) || has_compaction_block {
+        betas.push(BETA_COMPACT_2026_09_04.to_string());
+    }
+
+    // Thinking display updates (`thinking.display == "updates"`).
+    if request.pointer("/thinking/display").and_then(Value::as_str) == Some("updates") {
+        betas.push(BETA_THINKING_DISPLAY_UPDATES.to_string());
+    }
+
+    // Mid-conversation tool changes (`tool_addition` / `tool_removal` blocks).
+    let has_tool_change_block = request
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|msgs| {
+            msgs.iter().any(|msg| {
+                msg.get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            matches!(
+                                part.get("type").and_then(Value::as_str),
+                                Some("tool_addition" | "tool_removal")
+                            )
+                        })
+                    })
+            })
+        });
+    if has_tool_change_block {
+        betas.push(BETA_MID_CONVERSATION_TOOL_CHANGES.to_string());
+    }
+
+    // Safeguards (`dangerous-tool-use-2026-09-03`).
+    if request.get("safeguards").is_some_and(|v| !v.is_null()) {
+        betas.push(BETA_DANGEROUS_TOOL_USE.to_string());
+    }
+
+    // Computer use 2025-11-24 (`computer_20251124`).
+    if tools_arr.is_some_and(|arr| {
+        arr.iter()
+            .any(|t| t.get("type").and_then(Value::as_str) == Some("computer_20251124"))
+    }) {
+        betas.push(BETA_COMPUTER_USE_2025_11_24.to_string());
+    }
+
     betas
+}
+
+/// Sanitize a native Anthropic tool definition carrying the non-spec `custom`
+/// wrapper object (`custom.defer_loading` -> top-level `defer_loading`).
+pub fn sanitize_tool_custom_field(
+    tool: &Value,
+    hoist_defer_loading: bool,
+    drop_custom: bool,
+) -> Value {
+    let Some(tool_obj) = tool.as_object() else {
+        return tool.clone();
+    };
+    let Some(custom_val) = tool_obj.get("custom") else {
+        return tool.clone();
+    };
+    let hoisted = if hoist_defer_loading && !tool_obj.contains_key("defer_loading") {
+        custom_val
+            .as_object()
+            .and_then(|c| c.get("defer_loading"))
+            .and_then(Value::as_bool)
+    } else {
+        None
+    };
+    let mut out: Map<String, Value> = tool_obj
+        .iter()
+        .filter(|(k, _)| k.as_str() != "custom")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if let Some(defer) = hoisted {
+        out.insert("defer_loading".to_string(), json!(defer));
+        if !drop_custom && let Some(custom_map) = custom_val.as_object() {
+            let remaining: Map<String, Value> = custom_map
+                .iter()
+                .filter(|(k, _)| k.as_str() != "defer_loading")
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if !remaining.is_empty() {
+                out.insert("custom".to_string(), Value::Object(remaining));
+            }
+        }
+    } else if !drop_custom {
+        out.insert("custom".to_string(), custom_val.clone());
+    }
+    Value::Object(out)
 }
 
 /// Whether any conversation message carries an active output configuration.
@@ -3604,7 +3760,7 @@ fn extract_assistant_content(
 fn map_stop_reason_to_openai(reason: &str) -> Value {
     match reason {
         "end_turn" | "stop_sequence" => json!("stop"),
-        "max_tokens" | "model_context_window_exceeded" => json!("length"),
+        "max_tokens" | "model_context_window_exceeded" | "pause_turn" => json!("length"),
         "tool_use" => json!("tool_calls"),
         "guardrail_intervention" | "refusal" => json!("content_filter"),
         _ => json!("stop"),
@@ -4162,11 +4318,21 @@ fn build_finish_chunk(value: &Value, meta: &Option<StreamMeta>) -> Value {
         .and_then(|v| v.as_str());
     let finish_reason = stop_reason.map(map_stop_reason_to_openai);
 
+    let mut delta = Map::new();
+    if stop_reason == Some("refusal")
+        && let Some(explanation) = value
+            .pointer("/delta/stop_details/explanation")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    {
+        delta.insert("refusal".to_string(), json!(explanation));
+    }
+
     let mut chunk = json!({
     "object": "chat.completion.chunk",
     "choices": [{
     "index": 0,
-    "delta": {},
+    "delta": Value::Object(delta),
     "finish_reason": finish_reason,
     }],
     });

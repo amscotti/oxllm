@@ -187,9 +187,9 @@ fn supported_params_includes_reasoning_effort() {
 #[test]
 fn request_maps_reasoning_effort_to_thinking() {
     // DeepSeek's native thinking control is `{"type": "enabled"|"disabled"}`.
-    // An OpenAI-style `reasoning_effort` is mapped to it ("none" → disabled,
-    // anything else → enabled) and consumed — never forwarded verbatim (parity
-    // with the reference DeepSeek parameter mapping).
+    // When thinking resolves to `enabled` and `reasoning_effort` is a valid
+    // non-sentinel effort level (`low`/`medium`/`high`/etc.), forward it so the
+    // caller can bound reasoning effort (#38736).
     let p = DeepSeekProvider;
     let req = json!({
         "model": "deepseek/deepseek-reasoner",
@@ -198,10 +198,18 @@ fn request_maps_reasoning_effort_to_thinking() {
     });
     let out = p.transform_request(&req, &deployment()).expect("ok");
     assert_eq!(out["thinking"]["type"], "enabled");
-    assert!(
-        out.get("reasoning_effort").is_none(),
-        "reasoning_effort must be consumed, not forwarded"
-    );
+    assert_eq!(out["reasoning_effort"], "high");
+
+    // Non-level strings (e.g. "default", "bogus") still toggle thinking enabled
+    // without forwarding an invalid effort string.
+    let bogus = json!({
+        "model": "deepseek/deepseek-v3.2",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "reasoning_effort": "bogus",
+    });
+    let bogus_out = p.transform_request(&bogus, &deployment()).expect("ok");
+    assert_eq!(bogus_out["thinking"]["type"], "enabled");
+    assert!(bogus_out.get("reasoning_effort").is_none());
 }
 
 #[test]

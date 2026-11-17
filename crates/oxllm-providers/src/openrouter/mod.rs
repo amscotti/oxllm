@@ -162,24 +162,23 @@ impl ChatProvider for OpenRouterProvider {
     }
 
     fn transform_stream_chunk(&self, chunk: &str) -> Result<Option<Value>> {
-        let mut value = match crate::openai_compat::sse::parse_openai_stream_chunk(chunk)? {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-        // M6: OpenRouter emits assistant reasoning under `delta.reasoning`
-        // rather than the OpenAI `delta.reasoning_content`. Normalize so
-        // downstream consumers see one field name regardless of upstream.
-        if let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) {
-            for choice in choices.iter_mut() {
-                let Some(delta) = choice.get_mut("delta").and_then(|d| d.as_object_mut()) else {
-                    continue;
-                };
-                rename_reasoning_to_reasoning_content(delta);
-            }
+        let mut state = OpenRouterStreamState::default();
+        transform_openrouter_stream_chunk(chunk, &mut state)
+    }
+
+    fn transform_stream_chunk_stateful(
+        &self,
+        chunk: &str,
+        state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+        _original_request: &Value,
+    ) -> Result<Option<Value>> {
+        let stream_state = state.get_or_insert_with(|| Box::new(OpenRouterStreamState::default()));
+        if let Some(s) = stream_state.downcast_mut::<OpenRouterStreamState>() {
+            transform_openrouter_stream_chunk(chunk, s)
+        } else {
+            let mut fallback = OpenRouterStreamState::default();
+            transform_openrouter_stream_chunk(chunk, &mut fallback)
         }
-        crate::openai::sanitize_null_tokens(&mut value);
-        crate::openai_compat::map_generic_error_finish_reason(&mut value);
-        Ok(Some(value))
     }
 
     fn supported_params(&self) -> Option<Vec<&str>> {
@@ -309,6 +308,79 @@ fn resolve_openrouter_model(request: &Value, configured: &str) -> String {
     } else {
         stripped.to_string()
     }
+}
+
+#[derive(Default)]
+struct OpenRouterStreamState {
+    seen_finish_reason: bool,
+}
+
+fn openrouter_value_has_payload(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|v| v != 0.0),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+    }
+}
+
+fn openrouter_choice_carries_payload(choice: &Value) -> bool {
+    if choice.get("logprobs").is_some_and(|v| !v.is_null()) {
+        return true;
+    }
+    choice
+        .get("delta")
+        .and_then(Value::as_object)
+        .is_some_and(|delta| {
+            delta
+                .iter()
+                .any(|(key, value)| key != "role" && openrouter_value_has_payload(value))
+        })
+}
+
+fn transform_openrouter_stream_chunk(
+    chunk: &str,
+    state: &mut OpenRouterStreamState,
+) -> Result<Option<Value>> {
+    let mut value = match crate::openai_compat::sse::parse_openai_stream_chunk(chunk)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    // M6: OpenRouter emits assistant reasoning under `delta.reasoning`
+    // rather than the OpenAI `delta.reasoning_content`. Normalize so
+    // downstream consumers see one field name regardless of upstream.
+    if let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) {
+        for choice in choices.iter_mut() {
+            let Some(delta) = choice.get_mut("delta").and_then(|d| d.as_object_mut()) else {
+                continue;
+            };
+            rename_reasoning_to_reasoning_content(delta);
+        }
+    }
+    crate::openai::sanitize_null_tokens(&mut value);
+    crate::openai_compat::map_generic_error_finish_reason(&mut value);
+    // #50210: OpenRouter can follow the finish_reason chunk with an accounting
+    // trailer carrying `usage` and a repeated empty choice (role/content="").
+    // Drop only payload-less choices on post-finish usage trailers so clients see
+    // content, finish, then usage (while preserving any audio/thinking/logprobs).
+    if state.seen_finish_reason
+        && value.get("usage").is_some_and(|u| !u.is_null())
+        && let Some(choices) = value.get_mut("choices").and_then(Value::as_array_mut)
+    {
+        choices.retain(openrouter_choice_carries_payload);
+    }
+    state.seen_finish_reason |=
+        value
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_some_and(|choices| {
+                choices
+                    .iter()
+                    .any(|choice| choice.get("finish_reason").is_some_and(|r| !r.is_null()))
+            });
+    Ok(Some(value))
 }
 
 #[cfg(test)]
@@ -471,5 +543,69 @@ mod swarm_tests {
                 .get("reasoning_content")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn openrouter_suppresses_empty_post_finish_trailer_choice() {
+        let p = OpenRouterProvider;
+        let mut state = None;
+        let req = json!({});
+
+        let content = p
+            .transform_stream_chunk_stateful(
+                r#"data: {"id":"x","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}"#,
+                &mut state,
+                &req,
+            )
+            .expect("ok")
+            .expect("chunk");
+        assert_eq!(content["choices"][0]["delta"]["content"], "Hi");
+
+        let finish = p
+            .transform_stream_chunk_stateful(
+                r#"data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+                &mut state,
+                &req,
+            )
+            .expect("ok")
+            .expect("chunk");
+        assert_eq!(finish["choices"].as_array().unwrap().len(), 1);
+        assert_eq!(finish["choices"][0]["finish_reason"], "stop");
+
+        let trailer = p
+            .transform_stream_chunk_stateful(
+                r#"data: {"id":"x","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}"#,
+                &mut state,
+                &req,
+            )
+            .expect("ok")
+            .expect("chunk");
+        assert_eq!(trailer["choices"], json!([]));
+        assert_eq!(trailer["usage"]["total_tokens"], 5);
+    }
+
+    #[test]
+    fn openrouter_preserves_post_finish_trailer_choice_with_payload() {
+        let p = OpenRouterProvider;
+        let mut state = None;
+        let req = json!({});
+
+        p.transform_stream_chunk_stateful(
+            r#"data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+            &mut state,
+            &req,
+        )
+        .expect("ok");
+
+        let trailer = p
+            .transform_stream_chunk_stateful(
+                r#"data: {"id":"x","choices":[{"index":0,"delta":{"role":"assistant","reasoning":"extra"},"finish_reason":null,"logprobs":null}],"usage":{"total_tokens":5}}"#,
+                &mut state,
+                &req,
+            )
+            .expect("ok")
+            .expect("chunk");
+        assert_eq!(trailer["choices"].as_array().unwrap().len(), 1);
+        assert_eq!(trailer["choices"][0]["delta"]["reasoning_content"], "extra");
     }
 }

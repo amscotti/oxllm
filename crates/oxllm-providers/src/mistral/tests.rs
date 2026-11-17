@@ -634,7 +634,7 @@ fn supported_params_is_shared_list_minus_excluded_plus_random_seed() {
         .iter()
         .copied()
         .filter(|p| !params_excluded_from_mistral(p))
-        .chain(["random_seed", "safe_prompt", "thinking"])
+        .chain(["prompt_cache_key", "random_seed", "safe_prompt", "thinking"])
         .collect();
     expected.sort_unstable();
     let mut got: Vec<&str> = params.clone();
@@ -962,10 +962,7 @@ fn request_strips_empty_name_from_tool_message() {
 }
 
 #[test]
-fn magistral_reasoning_effort_injects_system_prompt() {
-    // MEDIUM: for magistral models, reasoning_effort triggers injection of
-    // Mistral's recommended reasoning system prompt and is itself not
-    // forwarded.
+fn magistral_reasoning_effort_sends_native_level_without_system_prompt() {
     let p = MistralProvider;
     let req = json!({
         "model": "mistral/magistral-medium-latest",
@@ -973,50 +970,58 @@ fn magistral_reasoning_effort_injects_system_prompt() {
         "reasoning_effort": "medium",
     });
     let out = ChatProvider::transform_request(&p, &req, &magistral_deployment()).expect("ok");
-    assert!(
-        out.get("reasoning_effort").is_none(),
-        "reasoning_effort must not be forwarded"
-    );
+    assert_eq!(out["reasoning_effort"], "high");
     let messages = out["messages"].as_array().expect("messages present");
-    assert_eq!(messages[0]["role"], "system");
-    let sys = messages[0]["content"]
-        .as_str()
-        .expect("system content string");
-    assert!(sys.contains("[SYSTEM_PROMPT]"));
-    assert!(sys.contains("<think>"));
-    assert!(
-        sys.contains("Solve this.")
-            || messages.iter().any(|m| m["content"]
-                .as_str()
-                .is_some_and(|c| c.contains("Solve this.")))
+    assert_eq!(
+        messages.len(),
+        1,
+        "no reasoning system prompt should be injected"
     );
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["content"], "Solve this.");
 }
 
 #[test]
-fn magistral_reasoning_effort_prepends_to_existing_system_message() {
-    // If a system message already exists, the reasoning prompt is prepended to
-    // its content rather than inserting a new message.
+fn magistral_reasoning_effort_none_and_default_handling() {
     let p = MistralProvider;
-    let req = json!({
+    let none_req = json!({
         "model": "mistral/magistral-medium-latest",
         "messages": [
             {"role": "system", "content": "Be concise."},
             {"role": "user", "content": "Hi"},
         ],
-        "reasoning_effort": "high",
+        "reasoning_effort": "none",
     });
-    let out = ChatProvider::transform_request(&p, &req, &magistral_deployment()).expect("ok");
-    let messages = out["messages"].as_array().expect("messages present");
-    assert_eq!(messages.len(), 2, "no new message should be inserted");
-    assert_eq!(messages[0]["role"], "system");
-    let content = messages[0]["content"].as_str().expect("string content");
-    assert!(content.starts_with("<s>[SYSTEM_PROMPT]"));
-    assert!(content.contains("Be concise."));
+    let none_out =
+        ChatProvider::transform_request(&p, &none_req, &magistral_deployment()).expect("ok");
+    assert_eq!(none_out["reasoning_effort"], "none");
+    assert_eq!(none_out["messages"][0]["content"], "Be concise.");
+
+    let default_req = json!({
+        "model": "mistral/magistral-medium-latest",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "reasoning_effort": "default",
+    });
+    let default_out =
+        ChatProvider::transform_request(&p, &default_req, &magistral_deployment()).expect("ok");
+    assert!(default_out.get("reasoning_effort").is_none());
+
+    let invalid_req = json!({
+        "model": "mistral/magistral-medium-latest",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "reasoning_effort": "bogus",
+    });
+    assert!(ChatProvider::transform_request(&p, &invalid_req, &magistral_deployment()).is_err());
+
+    let mut drop_dep = magistral_deployment();
+    drop_dep.oxllm_params.drop_params = Some(true);
+    let dropped_out = ChatProvider::transform_request(&p, &invalid_req, &drop_dep).expect("ok");
+    assert!(dropped_out.get("reasoning_effort").is_none());
 }
 
 #[test]
 fn magistral_null_reasoning_effort_does_not_inject_prompt() {
-    // A null reasoning_effort is dropped but does not trigger injection.
+    // A null reasoning_effort is dropped and does not inject a system prompt.
     let p = MistralProvider;
     let req = json!({
         "model": "mistral/magistral-medium-latest",
@@ -1107,10 +1112,7 @@ fn mistral_maps_unknown_tool_choice_string_to_any() {
 // --- Phase 2 review fixes (round 2) ---
 
 #[test]
-fn magistral_reasoning_effort_preserves_list_content_system_message() {
-    // HIGH: a system message whose `content` is the multimodal array form must
-    // not be overwritten by the reasoning prompt. Both the prompt and the
-    // original text must reach upstream.
+fn magistral_preserves_list_content_system_message_and_forwards_high_effort() {
     let p = MistralProvider;
     let req = json!({
         "model": "mistral/magistral-medium-latest",
@@ -1121,56 +1123,42 @@ fn magistral_reasoning_effort_preserves_list_content_system_message() {
         "reasoning_effort": "high",
     });
     let out = ChatProvider::transform_request(&p, &req, &magistral_deployment()).expect("ok");
-    assert!(
-        out.get("reasoning_effort").is_none(),
-        "reasoning_effort must not be forwarded"
-    );
+    assert_eq!(out["reasoning_effort"], "high");
     let messages = out["messages"].as_array().expect("messages present");
     assert_eq!(messages[0]["role"], "system");
     let content = messages[0]["content"]
         .as_array()
         .expect("array content shape must be preserved");
-    // The first block carries the reasoning prompt.
-    let first = &content[0];
-    assert_eq!(first["type"], "text");
-    let prompt_text = first["text"].as_str().expect("prompt text");
-    assert!(prompt_text.contains("[SYSTEM_PROMPT]"));
-    assert!(prompt_text.ends_with("\n\n"));
-    // The original system text is preserved as the second block.
-    assert_eq!(content[1]["type"], "text");
-    assert_eq!(content[1]["text"], "Be nice.");
-    assert_eq!(content.len(), 2);
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0]["text"], "Be nice.");
 }
 
 #[test]
-fn magistral_thinking_param_injects_system_prompt() {
-    // MEDIUM: `thinking` is an alternative trigger for the magistral reasoning
-    // system prompt (parity with the reference, which treats both `reasoning_effort`
-    // and `thinking` as triggers).
+fn magistral_thinking_param_maps_to_native_reasoning_effort() {
     let p = MistralProvider;
-    let req = json!({
+    let enabled_req = json!({
         "model": "mistral/magistral-medium-latest",
         "messages": [{"role": "user", "content": "Solve this."}],
-        "thinking": true,
+        "thinking": {"type": "enabled", "budget_tokens": 2048},
     });
-    let out = ChatProvider::transform_request(&p, &req, &magistral_deployment()).expect("ok");
-    assert!(
-        out.get("thinking").is_none(),
-        "thinking must not be forwarded"
-    );
-    let messages = out["messages"].as_array().expect("messages present");
-    assert_eq!(messages[0]["role"], "system");
-    let sys = messages[0]["content"]
-        .as_str()
-        .expect("system content string");
-    assert!(sys.contains("[SYSTEM_PROMPT]"));
-    assert!(sys.contains("<think>"));
+    let out =
+        ChatProvider::transform_request(&p, &enabled_req, &magistral_deployment()).expect("ok");
+    assert!(out.get("thinking").is_none());
+    assert_eq!(out["reasoning_effort"], "high");
+
+    let disabled_req = json!({
+        "model": "mistral/magistral-medium-latest",
+        "messages": [{"role": "user", "content": "Solve this."}],
+        "thinking": {"type": "disabled"},
+    });
+    let disabled_out =
+        ChatProvider::transform_request(&p, &disabled_req, &magistral_deployment()).expect("ok");
+    assert!(disabled_out.get("thinking").is_none());
+    assert_eq!(disabled_out["reasoning_effort"], "none");
 }
 
 #[test]
 fn magistral_thinking_param_not_forwarded() {
-    // MEDIUM complement: even when injection is a no-op (null thinking), the
-    // field is stripped from the upstream body.
     let p = MistralProvider;
     let req = json!({
         "model": "mistral/magistral-medium-latest",
@@ -1179,6 +1167,7 @@ fn magistral_thinking_param_not_forwarded() {
     });
     let out = ChatProvider::transform_request(&p, &req, &magistral_deployment()).expect("ok");
     assert!(out.get("thinking").is_none());
+    assert!(out.get("reasoning_effort").is_none());
     let messages = out["messages"].as_array().expect("messages present");
     assert!(
         !messages.iter().any(|m| m["role"] == "system"),
@@ -1187,22 +1176,89 @@ fn magistral_thinking_param_not_forwarded() {
 }
 
 #[test]
-fn magistral_thinking_and_reasoning_effort_both_trigger_injection() {
-    // MEDIUM: either field triggers injection; sending both does not double-
-    // inject.
+fn magistral_explicit_reasoning_effort_takes_precedence_over_thinking() {
     let p = MistralProvider;
     let req = json!({
         "model": "mistral/magistral-medium-latest",
         "messages": [{"role": "user", "content": "Hi"}],
         "reasoning_effort": "low",
-        "thinking": true,
+        "thinking": {"type": "disabled"},
     });
     let out = ChatProvider::transform_request(&p, &req, &magistral_deployment()).expect("ok");
-    assert!(out.get("reasoning_effort").is_none());
+    assert_eq!(out["reasoning_effort"], "high");
     assert!(out.get("thinking").is_none());
-    let messages = out["messages"].as_array().expect("messages present");
-    let system_count = messages.iter().filter(|m| m["role"] == "system").count();
-    assert_eq!(system_count, 1, "exactly one system message expected");
+    assert_eq!(out["messages"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn magistral_replays_assistant_reasoning_as_think_chunk_and_strips_on_non_reasoning() {
+    let p = MistralProvider;
+    let req = json!({
+        "model": "mistral/magistral-medium-latest",
+        "messages": [
+            {"role": "user", "content": "2+2?"},
+            {
+                "role": "assistant",
+                "content": "4",
+                "reasoning_content": "adding two plus two"
+            },
+            {"role": "user", "content": "and +1?"},
+        ],
+    });
+    let out = ChatProvider::transform_request(&p, &req, &magistral_deployment()).expect("ok");
+    let assistant = &out["messages"][1];
+    assert!(assistant.get("reasoning_content").is_none());
+    let blocks = assistant["content"]
+        .as_array()
+        .expect("think chunk content");
+    assert_eq!(blocks[0]["type"], "thinking");
+    assert_eq!(blocks[0]["thinking"][0]["text"], "adding two plus two");
+    assert_eq!(blocks[0]["closed"], true);
+    assert_eq!(blocks[1]["type"], "text");
+    assert_eq!(blocks[1]["text"], "4");
+
+    // On a non-reasoning model, native think chunks are also stripped so upstream does not 400.
+    let non_reasoning_req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": [{"type": "text", "text": "thought"}]},
+                    {"type": "text", "text": "4"}
+                ]
+            }
+        ],
+    });
+    let non_out =
+        ChatProvider::transform_request(&p, &non_reasoning_req, &deployment()).expect("ok");
+    let blocks = non_out["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["text"], "4");
+}
+
+#[test]
+fn mistral_prompt_cache_key_validation_and_forwarding() {
+    let p = MistralProvider;
+    let req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "prompt_cache_key": "sess-123",
+    });
+    let out = ChatProvider::transform_request(&p, &req, &deployment()).expect("ok");
+    assert_eq!(out["prompt_cache_key"], "sess-123");
+
+    let bad_req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "prompt_cache_key": "café",
+    });
+    assert!(ChatProvider::transform_request(&p, &bad_req, &deployment()).is_err());
+
+    let mut drop_dep = deployment();
+    drop_dep.oxllm_params.drop_params = Some(true);
+    let dropped = ChatProvider::transform_request(&p, &bad_req, &drop_dep).expect("ok");
+    assert!(dropped.get("prompt_cache_key").is_none());
 }
 
 #[test]
@@ -1345,4 +1401,53 @@ fn mistral_drops_a_reasoning_only_assistant_turn_after_stripping() {
     let messages = out["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 1, "emptied turn dropped");
     assert_eq!(messages[0]["content"], "hi");
+}
+
+#[test]
+fn mistral_sanitizes_object_tool_choice_and_strips_strict() {
+    let p = MistralProvider;
+    let req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {"name": "get_weather", "parameters": {"type": "object"}}
+        }],
+        "tool_choice": {
+            "type": "function",
+            "strict": true,
+            "function": {"name": "get_weather", "strict": true}
+        },
+    });
+    let out = ChatProvider::transform_request(&p, &req, &deployment()).expect("ok");
+    assert_eq!(
+        out["tool_choice"],
+        json!({"type": "function", "function": {"name": "get_weather"}})
+    );
+}
+
+#[test]
+fn mistral_rejects_or_drops_malformed_object_tool_choice() {
+    let p = MistralProvider;
+    let req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {"name": "get_weather", "parameters": {"type": "object"}}
+        }],
+        "tool_choice": {"type": "function", "strict": true},
+    });
+    assert!(
+        ChatProvider::transform_request(&p, &req, &deployment()).is_err(),
+        "malformed object tool_choice must 400 unless drop_params"
+    );
+
+    let mut drop_dep = deployment();
+    drop_dep.oxllm_params.drop_params = Some(true);
+    let out = ChatProvider::transform_request(&p, &req, &drop_dep).expect("drop_params ok");
+    assert!(
+        out.get("tool_choice").is_none(),
+        "malformed object tool_choice must be dropped under drop_params: {out}"
+    );
 }

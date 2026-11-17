@@ -330,9 +330,13 @@ impl BedrockRealtimeAdapter {
                 msg = upstream.next() => match msg {
                     Some(Ok(TungsteniteMessage::Close(close))) => {
                         let end = super::upstream_close_end(close.as_ref());
-                        break if matches!(end, SessionEnd::UpstreamError(_)) { end } else { decoder.end() };
+                        break if matches!(end, SessionEnd::UpstreamError(_)) {
+                            end
+                        } else {
+                            decoder.unexpected_end()
+                        };
                     }
-                    None => break decoder.end(),
+                    None => break decoder.unexpected_end(),
                     Some(Err(_)) => break SessionEnd::UpstreamError(oxllm_core::Error::Network("bedrock realtime upstream read failed".into())),
                     Some(Ok(message)) => {
                         let texts = match decoder.decode(message) {
@@ -456,6 +460,19 @@ impl UpstreamDecoder {
             SessionEnd::UpstreamError(oxllm_core::Error::Network(
                 "bedrock realtime ended with an incomplete eventstream frame".into(),
             ))
+        }
+    }
+
+    /// Unexpected stream end before client disconnect or shutdown: even when no
+    /// incomplete eventstream frame is buffered, treat it as a 503 failure so
+    /// the client closes with 1011 instead of 1000.
+    fn unexpected_end(&self) -> SessionEnd {
+        match self.end() {
+            SessionEnd::UpstreamClosed => SessionEnd::UpstreamError(oxllm_core::Error::Upstream {
+                status: 503,
+                message: "bedrock realtime upstream stream ended before the session closed".into(),
+            }),
+            error => error,
         }
     }
 
@@ -1024,7 +1041,7 @@ mod tests {
         use tokio::sync::{Notify, oneshot};
         use tokio_tungstenite::tungstenite::handshake::client::Request;
 
-        let (socket, _client, server) = client_socket_pair().await;
+        let (socket, mut client, server) = client_socket_pair().await;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let release = Arc::new(Notify::new());
@@ -1074,13 +1091,95 @@ mod tests {
             "/proxy/base/model/amazon.nova-sonic-v1%3A0/invoke-with-bidirectional-stream?"
         ));
         assert!(uri.contains("X-Amz-Signature="));
+        client.close(None).await.unwrap();
         release.notify_one();
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(3), session)
             .await
             .unwrap()
             .unwrap()
             .unwrap();
-        assert!(matches!(outcome.end, SessionEnd::UpstreamClosed));
+        assert!(matches!(outcome.end, SessionEnd::ClientDisconnected));
+        peer.await.unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn upstream_close_1000_before_client_disconnect_fails_with_1011() {
+        use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+
+        let (socket, mut client, server) = client_socket_pair().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/", listener.local_addr().unwrap());
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            ws.close(Some(CloseFrame {
+                code: CloseCode::Normal,
+                reason: "done".into(),
+            }))
+            .await
+            .unwrap();
+        });
+        let (upstream, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            test_adapter().pump(socket, upstream, SessionMeter::default()),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                outcome.end,
+                SessionEnd::UpstreamError(oxllm_core::Error::Upstream { status: 503, .. })
+            ),
+            "unexpected Close(1000) before client disconnect must fail, got {:?}",
+            outcome.end
+        );
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(frame, TungsteniteMessage::Close(Some(close)) if u16::from(close.code) == 1011)
+        );
+        peer.await.unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn upstream_eof_none_before_client_disconnect_fails_with_1011() {
+        use tokio::io::AsyncWriteExt;
+
+        let (socket, mut client, server) = client_socket_pair().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/", listener.local_addr().unwrap());
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let mut tcp = ws.into_inner();
+            let _ = tcp.shutdown().await;
+        });
+        let (upstream, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            test_adapter().pump(socket, upstream, SessionMeter::default()),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(outcome.end, SessionEnd::UpstreamError(_)),
+            "unexpected EOF before client disconnect must fail, got {:?}",
+            outcome.end
+        );
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(frame, TungsteniteMessage::Close(Some(close)) if u16::from(close.code) == 1011)
+        );
         peer.await.unwrap();
         server.abort();
     }

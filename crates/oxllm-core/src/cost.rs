@@ -405,14 +405,13 @@ impl ModelPricing {
             }
         }
         // Fireworks publishes a 50% cache-read discount when a model row has
-        // no cache-read rate. The discount is taken off the base input rate
-        // (a context tier overrides it only when that tier publishes its own
-        // cache-read rate). Every other provider still bills a missing
-        // cache-read rate at zero.
-        let cache_read_rate = cache_read.unwrap_or(if self.provider == "fireworks_ai" {
-            self.input_cost_per_token * 0.5
-        } else {
-            0.0
+        // no cache-read rate. Perplexity bills cached prompt tokens at the full
+        // input rate when no separate cache-read rate is published (#51669).
+        // Every other provider still bills a missing cache-read rate at zero.
+        let cache_read_rate = cache_read.unwrap_or(match self.provider.as_str() {
+            "fireworks_ai" => self.input_cost_per_token * 0.5,
+            "perplexity" => input,
+            _ => 0.0,
         });
         TokenRates {
             input,
@@ -1813,6 +1812,36 @@ mod tests {
             ),
             (2e-7, 2e-7)
         );
+    }
+
+    #[test]
+    fn perplexity_missing_cache_read_rate_falls_back_to_input_rate() {
+        let mut u = usage(1_000, 100);
+        u.cache_read_input_tokens = Some(800);
+        let with_cached = calculate_cost_with_provider("perplexity/sonar", &u, "perplexity")
+            .expect("sonar priced");
+        let without_cached =
+            calculate_cost_with_provider("perplexity/sonar", &usage(1_000, 100), "perplexity")
+                .expect("sonar priced");
+        assert!(
+            (with_cached - without_cached).abs() < 1e-12,
+            "missing cache_read rate on perplexity/sonar must bill cached tokens at input rate: {with_cached} vs {without_cached}"
+        );
+
+        let mut discounted = usage(1_000, 0);
+        discounted.cache_read_input_tokens = Some(800);
+        let third_party = calculate_cost_with_provider(
+            "perplexity/anthropic/claude-haiku-5-5",
+            &discounted,
+            "perplexity",
+        )
+        .expect("explicit cache_read rate priced");
+        let pricing =
+            lookup_pricing_with_provider("perplexity/anthropic/claude-haiku-5-5", "perplexity")
+                .unwrap();
+        let expected = 200.0 * pricing.input_cost_per_token
+            + 800.0 * pricing.cache_read_input_token_cost.unwrap();
+        assert!((third_party - expected).abs() < 1e-12);
     }
 
     #[test]

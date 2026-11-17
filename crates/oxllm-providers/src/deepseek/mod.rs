@@ -99,7 +99,9 @@ fn apply_deepseek_request_transforms(out: &mut Value, request: &Value) {
 /// the reference DeepSeek parameter mapping). An explicit `thinking`
 /// dict with a recognized `type` always wins; otherwise `reasoning_effort`
 /// (`"none"` → disabled, anything else → enabled) is consumed.
-/// `reasoning_effort` is never forwarded verbatim.
+/// When thinking resolves to `enabled` and `reasoning_effort` names a valid
+/// effort level (excluding `"none"`), forward `reasoning_effort` alongside
+/// `thinking` so the model's reasoning effort can be bounded.
 fn map_thinking_param(obj: &mut Map<String, Value>, request: &Value) {
     let explicit = request
         .get("thinking")
@@ -110,16 +112,27 @@ fn map_thinking_param(obj: &mut Map<String, Value>, request: &Value) {
         .filter(|ty| *ty == "enabled" || *ty == "disabled");
 
     let reasoning_effort = obj.remove("reasoning_effort").filter(|v| !v.is_null());
-    let mapped = reasoning_effort.and_then(|eff| {
-        eff.as_str()
-            .map(|s| if s == "none" { "disabled" } else { "enabled" })
-    });
+    let effort_str = reasoning_effort.as_ref().and_then(Value::as_str);
+    let mapped = effort_str.map(|s| if s == "none" { "disabled" } else { "enabled" });
 
     let thinking_type = explicit.or(mapped);
     if let Some(ty) = thinking_type {
         let mut t = Map::new();
         t.insert("type".to_string(), Value::String(ty.to_string()));
         obj.insert("thinking".to_string(), Value::Object(t));
+        if ty == "enabled"
+            && let Some(effort) = effort_str.filter(|s| {
+                matches!(
+                    *s,
+                    "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+                )
+            })
+        {
+            obj.insert(
+                "reasoning_effort".to_string(),
+                Value::String(effort.to_string()),
+            );
+        }
     }
 }
 

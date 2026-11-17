@@ -66,8 +66,11 @@ pub(crate) fn resolve_cost(
         return Some(0.0);
     }
     let tier = ctx.billable_service_tier(body);
+    // An upstream-reported label (`x-oxllm-upstream-model`) identifies spend rows
+    // for model-less passthroughs without ever selecting a catalog price entry.
+    let primary_model = (ctx.upstream_reported_model.as_deref() != Some(model)).then_some(model);
     let models = [
-        Some(model),
+        primary_model,
         ctx.pricing_model.as_deref(),
         Some(ctx.model.as_str()),
         ctx.deployment_model.as_deref(),
