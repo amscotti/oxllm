@@ -89,7 +89,7 @@ max_input_tokens = 16000
 ["voyage/voyage-lite-01"]
 input_cost_per_token = 1.000000e-7
 output_cost_per_token = 0.0
-max_input_tokens = 4096
+max_input_tokens = 4000
 
 ["voyage/voyage-lite-02-instruct"]
 input_cost_per_token = 1.000000e-7

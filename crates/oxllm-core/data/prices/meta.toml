@@ -71,3 +71,15 @@ max_input_tokens = 1048576
 max_output_tokens = 131072
 cache_read_input_token_cost = 2.000000e-7
 search_queries_cost_per_query = 2.500000e-3
+
+["meta/muse-ember-1.0"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 524288
+mode = "chat"
+cache_read_input_token_cost = 4.000000e-9
+search_queries_cost_per_query = 2.500000e-03
+input_cost_per_token_above_200k_tokens = 3.000000e-7
+output_cost_per_token_above_200k_tokens = 1.500000e-6
+cache_read_input_token_cost_above_200k_tokens = 1.200000e-8

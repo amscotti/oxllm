@@ -159,7 +159,7 @@ input_cost_per_token = 5.000000e-7
 output_cost_per_token = 2.150000e-6
 max_input_tokens = 163840
 max_output_tokens = 163840
-cache_read_input_token_cost = 4.000000e-7
+cache_read_input_token_cost = 3.500000e-7
 
 ["deepinfra/deepseek-ai/DeepSeek-R1-0528-Turbo"]
 input_cost_per_token = 1.000000e-6
@@ -203,7 +203,7 @@ input_cost_per_token = 2.500000e-7
 output_cost_per_token = 9.500000e-7
 max_input_tokens = 163840
 max_output_tokens = 163840
-cache_read_input_token_cost = 2.160000e-7
+cache_read_input_token_cost = 1.300000e-7
 
 ["deepinfra/deepseek-ai/DeepSeek-V3.1-Terminus"]
 input_cost_per_token = 2.700000e-7
@@ -339,7 +339,7 @@ max_input_tokens = 16384
 max_output_tokens = 16384
 
 ["deepinfra/mistralai/Mistral-Nemo-Instruct-2407"]
-input_cost_per_token = 1.900000e-8
+input_cost_per_token = 2.900000e-8
 output_cost_per_token = 3.000000e-8
 max_input_tokens = 131072
 max_output_tokens = 131072
@@ -415,307 +415,360 @@ input_cost_per_token = 2.500000e-7
 output_cost_per_token = 2.000000e-6
 max_input_tokens = 256000
 cache_read_input_token_cost = 5.000000e-8
+max_output_tokens = 256000
 
 ["deepinfra/ByteDance/Seed-2.0-code"]
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 3.000000e-6
 max_input_tokens = 256000
 cache_read_input_token_cost = 1.000000e-7
+max_output_tokens = 256000
 
 ["deepinfra/ByteDance/Seed-2.0-mini"]
 input_cost_per_token = 1.000000e-7
 output_cost_per_token = 4.000000e-7
 max_input_tokens = 256000
 cache_read_input_token_cost = 2.000000e-8
+max_output_tokens = 256000
 
 ["deepinfra/ByteDance/Seed-2.0-pro"]
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 3.000000e-6
 max_input_tokens = 256000
 cache_read_input_token_cost = 1.000000e-7
+max_output_tokens = 256000
 
 ["deepinfra/MiniMaxAI/MiniMax-M2.7"]
 input_cost_per_token = 2.500000e-7
 output_cost_per_token = 1.000000e-6
 max_input_tokens = 196608
 cache_read_input_token_cost = 5.000000e-8
+max_output_tokens = 196608
 
 ["deepinfra/MiniMaxAI/MiniMax-M2.7-Turbo"]
 input_cost_per_token = 3.800000e-7
 output_cost_per_token = 1.700000e-6
 max_input_tokens = 196608
 cache_read_input_token_cost = 7.000000e-8
+max_output_tokens = 196608
 
 ["deepinfra/MiniMaxAI/MiniMax-M3"]
 input_cost_per_token = 2.800000e-7
 output_cost_per_token = 1.100000e-6
 max_input_tokens = 524288
 cache_read_input_token_cost = 5.600000e-8
+max_output_tokens = 524288
 
 ["deepinfra/Qwen/Qwen3-Max"]
 input_cost_per_token = 1.200000e-6
 output_cost_per_token = 6.000000e-6
 max_input_tokens = 256000
 cache_read_input_token_cost = 2.400000e-7
+max_output_tokens = 256000
 
 ["deepinfra/Qwen/Qwen3-Max-Thinking"]
 input_cost_per_token = 1.200000e-6
 output_cost_per_token = 6.000000e-6
 max_input_tokens = 256000
 cache_read_input_token_cost = 2.400000e-7
+max_output_tokens = 256000
 
 ["deepinfra/Qwen/Qwen3-VL-235B-A22B-Instruct"]
 input_cost_per_token = 2.000000e-7
 output_cost_per_token = 8.800000e-7
 max_input_tokens = 262144
 cache_read_input_token_cost = 1.100000e-7
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3-VL-30B-A3B-Instruct"]
 input_cost_per_token = 1.500000e-7
 output_cost_per_token = 6.000000e-7
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.5-122B-A10B"]
 input_cost_per_token = 2.900000e-7
 output_cost_per_token = 2.400000e-6
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.5-27B"]
 input_cost_per_token = 2.600000e-7
 output_cost_per_token = 2.600000e-6
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.5-35B-A3B"]
 input_cost_per_token = 1.400000e-7
 output_cost_per_token = 1.000000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 5.000000e-8
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.5-397B-A17B"]
 input_cost_per_token = 4.500000e-7
 output_cost_per_token = 3.000000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 2.200000e-7
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.5-9B"]
 input_cost_per_token = 1.000000e-7
 output_cost_per_token = 1.500000e-7
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.6-27B"]
 input_cost_per_token = 3.200000e-7
 output_cost_per_token = 3.200000e-6
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.6-35B-A3B"]
 input_cost_per_token = 1.000000e-7
 output_cost_per_token = 9.500000e-7
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.7-Max"]
 input_cost_per_token = 2.500000e-6
 output_cost_per_token = 7.500000e-6
 max_input_tokens = 256000
 cache_read_input_token_cost = 5.000000e-7
+max_output_tokens = 256000
 
 ["deepinfra/Qwen/Qwen3.8-2.4T-A95B"]
 input_cost_per_token = 2.000000e-6
 output_cost_per_token = 6.000000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 2.000000e-7
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.8-27B"]
 input_cost_per_token = 4.000000e-7
 output_cost_per_token = 3.000000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 4.000000e-8
+max_output_tokens = 262144
 
 ["deepinfra/Qwen/Qwen3.8-Max"]
 input_cost_per_token = 1.650000e-6
 output_cost_per_token = 4.951000e-6
 max_input_tokens = 256000
 cache_read_input_token_cost = 2.060000e-7
+max_output_tokens = 256000
 
 ["deepinfra/XiaomiMiMo/MiMo-V2.5"]
 input_cost_per_token = 4.000000e-7
 output_cost_per_token = 2.000000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 8.000000e-8
+max_output_tokens = 262144
 
 ["deepinfra/XiaomiMiMo/MiMo-V2.5-Pro"]
 input_cost_per_token = 1.000000e-6
 output_cost_per_token = 3.000000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 2.000000e-7
+max_output_tokens = 1048576
 
 ["deepinfra/anthropic/claude-fable-5"]
 input_cost_per_token = 1.000000e-5
 output_cost_per_token = 5.000000e-5
 max_input_tokens = 1000000
 prompt_cache_min_tokens = 512
+max_output_tokens = 1000000
 
 ["deepinfra/anthropic/claude-haiku-4-5"]
 input_cost_per_token = 1.000000e-6
 output_cost_per_token = 5.000000e-6
 max_input_tokens = 200000
 prompt_cache_min_tokens = 4096
+max_output_tokens = 200000
 
 ["deepinfra/anthropic/claude-opus-4-7"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 2.500000e-5
 max_input_tokens = 1000000
 prompt_cache_min_tokens = 2048
+max_output_tokens = 1000000
 
 ["deepinfra/anthropic/claude-opus-4-8"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 2.500000e-5
 max_input_tokens = 1000000
 prompt_cache_min_tokens = 1024
+max_output_tokens = 1000000
 
 ["deepinfra/anthropic/claude-opus-5"]
 input_cost_per_token = 5.000000e-6
 output_cost_per_token = 2.500000e-5
 max_input_tokens = 1000000
 prompt_cache_min_tokens = 512
+max_output_tokens = 1000000
 
 ["deepinfra/anthropic/claude-sonnet-4-6"]
 input_cost_per_token = 3.000000e-6
 output_cost_per_token = 1.500000e-5
 max_input_tokens = 1000000
 prompt_cache_min_tokens = 1024
+max_output_tokens = 1000000
 
 ["deepinfra/anthropic/claude-sonnet-5"]
-input_cost_per_token = 2.000000e-6
-output_cost_per_token = 1.000000e-5
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
 max_input_tokens = 1000000
 prompt_cache_min_tokens = 1024
+max_output_tokens = 1000000
 
 ["deepinfra/deepseek-ai/DeepSeek-V3.2"]
 input_cost_per_token = 2.600000e-7
 output_cost_per_token = 3.800000e-7
 max_input_tokens = 163840
 cache_read_input_token_cost = 1.300000e-7
+max_output_tokens = 163840
 
 ["deepinfra/deepseek-ai/DeepSeek-V4-Flash"]
 input_cost_per_token = 9.000000e-8
 output_cost_per_token = 1.800000e-7
 max_input_tokens = 1048576
 cache_read_input_token_cost = 1.800000e-8
+max_output_tokens = 1048576
 
 ["deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"]
-input_cost_per_token = 8.000000e-8
+input_cost_per_token = 6.000000e-8
 output_cost_per_token = 1.800000e-7
 max_input_tokens = 1048576
-cache_read_input_token_cost = 1.600000e-8
+cache_read_input_token_cost = 1.500000e-8
+max_output_tokens = 1048576
 
 ["deepinfra/deepseek-ai/DeepSeek-V4-Pro"]
 input_cost_per_token = 1.300000e-6
 output_cost_per_token = 2.600000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 1.000000e-7
+max_output_tokens = 1048576
 
 ["deepinfra/deepseek-ai/DeepSeek-V4-Pro-0813"]
 input_cost_per_token = 1.300000e-6
 output_cost_per_token = 2.600000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 1.000000e-7
+max_output_tokens = 1048576
 
 ["deepinfra/google/gemini-3.1-flash-lite"]
 input_cost_per_token = 2.500000e-7
 output_cost_per_token = 1.500000e-6
 max_input_tokens = 1000000
+max_output_tokens = 1000000
 
 ["deepinfra/google/gemini-3.1-pro"]
 input_cost_per_token = 2.000000e-6
 output_cost_per_token = 1.200000e-5
 max_input_tokens = 1000000
+max_output_tokens = 1000000
 
 ["deepinfra/google/gemini-3.5-flash"]
 input_cost_per_token = 1.500000e-6
 output_cost_per_token = 9.000000e-6
 max_input_tokens = 1000000
+max_output_tokens = 1000000
 
 ["deepinfra/google/gemini-3.7-flash"]
 input_cost_per_token = 7.500000e-7
 output_cost_per_token = 3.750000e-6
 max_input_tokens = 1000000
+max_output_tokens = 1000000
 
 ["deepinfra/google/gemma-4-26B-A4B-it"]
 input_cost_per_token = 7.000000e-8
 output_cost_per_token = 3.400000e-7
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/google/gemma-4-31B-it"]
-input_cost_per_token = 1.300000e-7
-output_cost_per_token = 3.800000e-7
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 4.000000e-7
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/google/gemma-4-31B-it-Ultra"]
 input_cost_per_token = 2.700000e-7
 output_cost_per_token = 7.600000e-7
 max_input_tokens = 131072
+max_output_tokens = 131072
 
 ["deepinfra/google/gemma-4-31B-it-turbo"]
 input_cost_per_token = 9.000000e-8
 output_cost_per_token = 3.400000e-7
 max_input_tokens = 262144
 cache_read_input_token_cost = 5.000000e-8
+max_output_tokens = 262144
 
 ["deepinfra/google/gemma-4-E4B-it"]
 input_cost_per_token = 2.000000e-8
 output_cost_per_token = 1.000000e-7
 max_input_tokens = 131072
+max_output_tokens = 131072
 
 ["deepinfra/inclusionAI/Ling-3.0-flash"]
 input_cost_per_token = 6.000000e-8
 output_cost_per_token = 1.800000e-7
 max_input_tokens = 131072
 cache_read_input_token_cost = 1.200000e-8
+max_output_tokens = 131072
 
 ["deepinfra/meta-models/Muse-Glimmer-30B"]
 input_cost_per_token = 3.000000e-7
 output_cost_per_token = 1.200000e-6
 max_input_tokens = 131072
 cache_read_input_token_cost = 4.000000e-8
+max_output_tokens = 131072
 
 ["deepinfra/moonshotai/Kimi-K2.5"]
 input_cost_per_token = 4.500000e-7
 output_cost_per_token = 2.250000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 7.000000e-8
+max_output_tokens = 262144
 
 ["deepinfra/moonshotai/Kimi-K2.6"]
 input_cost_per_token = 7.500000e-7
 output_cost_per_token = 3.500000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 1.500000e-7
+max_output_tokens = 262144
 
 ["deepinfra/moonshotai/Kimi-K2.7-Code"]
 input_cost_per_token = 6.800000e-7
 output_cost_per_token = 3.400000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 1.360000e-7
+max_output_tokens = 262144
 
 ["deepinfra/moonshotai/Kimi-K3"]
 input_cost_per_token = 2.850000e-6
 output_cost_per_token = 1.425000e-5
 max_input_tokens = 1048576
 cache_read_input_token_cost = 2.850000e-7
+max_output_tokens = 1048576
 
 ["deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B"]
-input_cost_per_token = 8.500000e-8
+input_cost_per_token = 7.500000e-8
 output_cost_per_token = 4.000000e-7
 max_input_tokens = 262144
+max_output_tokens = 262144
 
 ["deepinfra/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"]
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 2.200000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 1.000000e-7
+max_output_tokens = 262144
 
 ["deepinfra/nvidia/NVIDIA-Nemotron-3.5-Lightning"]
-input_cost_per_token = 8.000000e-8
-output_cost_per_token = 2.000000e-7
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 1.600000e-7
 max_input_tokens = 262144
 cache_read_input_token_cost = 4.000000e-8
 
@@ -724,81 +777,95 @@ input_cost_per_token = 5.000000e-8
 output_cost_per_token = 2.000000e-7
 max_input_tokens = 262144
 cache_read_input_token_cost = 2.500000e-8
+max_output_tokens = 262144
 
 ["deepinfra/nvidia/Nemotron-Content-Safety-3.5"]
 input_cost_per_token = 2.000000e-7
 output_cost_per_token = 2.000000e-7
 max_input_tokens = 131072
+max_output_tokens = 131072
 
 ["deepinfra/openai/gpt-oss-120b-Turbo"]
 input_cost_per_token = 1.500000e-7
 output_cost_per_token = 6.000000e-7
 max_input_tokens = 131072
+max_output_tokens = 131072
 
 ["deepinfra/openai/gpt-oss-120b-Ultra"]
 input_cost_per_token = 2.000000e-7
 output_cost_per_token = 9.500000e-7
 max_input_tokens = 131072
+max_output_tokens = 131072
 
 ["deepinfra/stepfun-ai/Step-3.7-Flash"]
 input_cost_per_token = 2.000000e-7
 output_cost_per_token = 1.150000e-6
 max_input_tokens = 262144
 cache_read_input_token_cost = 4.000000e-8
+max_output_tokens = 262144
 
 ["deepinfra/tencent/Hy3"]
 input_cost_per_token = 1.400000e-7
 output_cost_per_token = 5.800000e-7
 max_input_tokens = 262144
 cache_read_input_token_cost = 3.500000e-8
+max_output_tokens = 262144
 
 ["deepinfra/thinkingmachines/Inkling"]
 input_cost_per_token = 9.500000e-7
 output_cost_per_token = 4.050000e-6
 max_input_tokens = 524288
 cache_read_input_token_cost = 1.600000e-7
+max_output_tokens = 524288
 
 ["deepinfra/thinkingmachines/Inkling-Small"]
 input_cost_per_token = 4.500000e-7
 output_cost_per_token = 1.200000e-6
 max_input_tokens = 524288
 cache_read_input_token_cost = 1.000000e-7
+max_output_tokens = 524288
 
 ["deepinfra/zai-org/GLM-4.6"]
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 2.000000e-6
 max_input_tokens = 202752
 cache_read_input_token_cost = 1.000000e-7
+max_output_tokens = 202752
 
 ["deepinfra/zai-org/GLM-4.7"]
 input_cost_per_token = 4.000000e-7
 output_cost_per_token = 1.750000e-6
 max_input_tokens = 202752
 cache_read_input_token_cost = 8.000000e-8
+max_output_tokens = 202752
 
 ["deepinfra/zai-org/GLM-4.7-Flash"]
 input_cost_per_token = 6.000000e-8
 output_cost_per_token = 4.000000e-7
 max_input_tokens = 202752
 cache_read_input_token_cost = 1.000000e-8
+max_output_tokens = 202752
 
 ["deepinfra/zai-org/GLM-5"]
 input_cost_per_token = 6.000000e-7
 output_cost_per_token = 2.080000e-6
 max_input_tokens = 202752
 cache_read_input_token_cost = 1.200000e-7
+max_output_tokens = 202752
 
 ["deepinfra/zai-org/GLM-5.1"]
 input_cost_per_token = 1.050000e-6
 output_cost_per_token = 3.500000e-6
 max_input_tokens = 202752
 cache_read_input_token_cost = 2.050000e-7
+max_output_tokens = 202752
 
 ["deepinfra/zai-org/GLM-5.2"]
 input_cost_per_token = 7.500000e-7
 output_cost_per_token = 2.400000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 1.400000e-7
+max_output_tokens = 1048576
 
 ["deepinfra/deepseek-ai/DeepSeek-V4.1-Flash"]
 input_cost_per_token = 1.400000e-7
@@ -806,6 +873,7 @@ output_cost_per_token = 4.200000e-7
 max_input_tokens = 1048576
 max_output_tokens = 131072
 cache_read_input_token_cost = 4.200000e-9
+mode = "chat"
 
 ["deepinfra/deepseek-ai/DeepSeek-V4.1-Flash-1017"]
 input_cost_per_token = 1.400000e-7
@@ -813,3 +881,34 @@ output_cost_per_token = 4.200000e-7
 max_input_tokens = 1048576
 max_output_tokens = 131072
 cache_read_input_token_cost = 4.200000e-9
+mode = "chat"
+
+["deepinfra/XiaomiMiMo/MiMo-V2.6-Flash"]
+input_cost_per_token = 1.400000e-7
+output_cost_per_token = 2.800000e-7
+max_input_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 2.800000e-9
+
+["deepinfra/nvidia/NVIDIA-Nemotron-3.5-Super-VL"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-8
+
+["deepinfra/tencent/Hy4-preview"]
+input_cost_per_token = 8.340000e-7
+output_cost_per_token = 2.501000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+mode = "chat"
+cache_read_input_token_cost = 4.200000e-8
+
+["deepinfra/zai-org/GLM-5.3-Flash"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 3.000000e-8

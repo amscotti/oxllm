@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(resolved, "azure_ai/claude-sonnet-5-5");
         aliased.oxllm_params.model = resolved;
         let override_pricing = aliased.oxllm_params.pricing_override().unwrap();
-        assert_eq!(override_pricing.cache_read_input_token_cost, Some(2e-7));
+        assert_eq!(override_pricing.cache_read_input_token_cost, Some(1e-7));
     }
 
     #[test]

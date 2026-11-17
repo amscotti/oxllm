@@ -1819,6 +1819,7 @@ input_cost_per_token = 2.200000e-7
 output_cost_per_token = 6.600000e-7
 max_input_tokens = 1048576
 cache_read_input_token_cost = 7.000000e-9
+max_output_tokens = 1048576
 
 ["fireworks_ai/accounts/fireworks/models/deepseek-v4-pro-0813"]
 input_cost_per_token = 1.320000e-6
@@ -1858,6 +1859,7 @@ input_cost_per_token = 1.500000e-7
 output_cost_per_token = 5.000000e-7
 max_input_tokens = 1048576
 cache_read_input_token_cost = 3.000000e-8
+max_output_tokens = 1048576
 
 ["fireworks_ai/accounts/fireworks/models/inkling"]
 input_cost_per_token = 1.000000e-6
@@ -1867,6 +1869,7 @@ cache_read_input_token_cost = 1.700000e-7
 cache_read_input_token_cost_priority = 1.700000e-7
 input_cost_per_token_priority = 1.000000e-6
 output_cost_per_token_priority = 4.050000e-6
+max_output_tokens = 1048576
 
 ["fireworks_ai/accounts/fireworks/models/kimi-k3"]
 input_cost_per_token = 3.000000e-6
@@ -1940,6 +1943,7 @@ input_cost_per_token = 2.100000e-6
 output_cost_per_token = 6.600000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 3.900000e-7
+max_output_tokens = 1048576
 
 ["fireworks_ai/accounts/fireworks/routers/glm-5p3-flash-us"]
 input_cost_per_token = 2.250000e-7
@@ -1949,6 +1953,7 @@ cache_read_input_token_cost = 4.500000e-8
 cache_read_input_token_cost_priority = 5.625000e-8
 input_cost_per_token_priority = 2.812500e-7
 output_cost_per_token_priority = 9.375000e-7
+max_output_tokens = 1048576
 
 ["fireworks_ai/accounts/fireworks/routers/glm-5p3-us"]
 input_cost_per_token = 2.100000e-6
@@ -1986,6 +1991,7 @@ input_cost_per_token = 2.200000e-7
 output_cost_per_token = 6.600000e-7
 max_input_tokens = 1048576
 cache_read_input_token_cost = 7.000000e-9
+max_output_tokens = 1048576
 
 ["fireworks_ai/deepseek-v4-pro-0813"]
 input_cost_per_token = 1.320000e-6
@@ -2037,12 +2043,14 @@ input_cost_per_token = 2.100000e-6
 output_cost_per_token = 6.600000e-6
 max_input_tokens = 1048576
 cache_read_input_token_cost = 3.900000e-7
+max_output_tokens = 1048576
 
 ["fireworks_ai/glm-5p3-flash"]
 input_cost_per_token = 1.500000e-7
 output_cost_per_token = 5.000000e-7
 max_input_tokens = 1048576
 cache_read_input_token_cost = 3.000000e-8
+max_output_tokens = 1048576
 
 ["fireworks_ai/glm-5p3-flash-us"]
 input_cost_per_token = 2.250000e-7
@@ -2052,6 +2060,7 @@ cache_read_input_token_cost = 4.500000e-8
 cache_read_input_token_cost_priority = 5.625000e-8
 input_cost_per_token_priority = 2.812500e-7
 output_cost_per_token_priority = 9.375000e-7
+max_output_tokens = 1048576
 
 ["fireworks_ai/glm-5p3-us"]
 input_cost_per_token = 2.100000e-6
@@ -2135,6 +2144,7 @@ cache_read_input_token_cost = 6.000000e-9
 cache_read_input_token_cost_priority = 7.500000e-9
 input_cost_per_token_priority = 3.750000e-7
 output_cost_per_token_priority = 1.500000e-6
+mode = "chat"
 
 ["fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash-1017-us"]
 input_cost_per_token = 4.500000e-7
@@ -2145,6 +2155,7 @@ cache_read_input_token_cost = 9.000000e-9
 cache_read_input_token_cost_priority = 1.125000e-8
 input_cost_per_token_priority = 5.625000e-7
 output_cost_per_token_priority = 2.250000e-6
+mode = "chat"
 
 ["fireworks_ai/accounts/fireworks/models/minimax-m3p1-flash"]
 input_cost_per_token = 1.500000e-7
@@ -2155,3 +2166,155 @@ cache_read_input_token_cost = 1.500000e-8
 cache_read_input_token_cost_priority = 2.250000e-8
 input_cost_per_token_priority = 2.250000e-7
 output_cost_per_token_priority = 9.000000e-7
+mode = "chat"
+
+["fireworks_ai/accounts/fireworks/models/kimi-k3p1-pro"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 1048576
+max_output_tokens = 131072
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-7
+cache_read_input_token_cost_priority = 3.000000e-7
+input_cost_per_token_priority = 3.000000e-6
+output_cost_per_token_priority = 1.500000e-5
+
+["fireworks_ai/accounts/fireworks/models/ultramarine-1-flash-us"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 3.000000e-8
+cache_read_input_token_cost_priority = 3.750000e-8
+input_cost_per_token_priority = 1.875000e-7
+output_cost_per_token_priority = 6.250000e-7
+
+["fireworks_ai/accounts/fireworks/routers/deepseek-flash-latest"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+max_output_tokens = 393216
+mode = "chat"
+cache_read_input_token_cost = 6.000000e-9
+cache_read_input_token_cost_priority = 7.500000e-9
+input_cost_per_token_priority = 3.750000e-7
+output_cost_per_token_priority = 1.500000e-6
+
+["fireworks_ai/accounts/fireworks/routers/deepseek-v4p1-flash-1017-spot"]
+input_cost_per_token = 2.100000e-7
+output_cost_per_token = 8.400000e-7
+max_input_tokens = 1048576
+max_output_tokens = 393216
+mode = "chat"
+cache_read_input_token_cost = 4.200000e-9
+
+["fireworks_ai/accounts/fireworks/routers/deepseek-v4p1-flash-1017-ultrafast"]
+input_cost_per_token = 2.400000e-6
+output_cost_per_token = 9.600000e-6
+max_input_tokens = 1048576
+max_output_tokens = 393216
+mode = "chat"
+cache_read_input_token_cost = 4.800000e-8
+
+["fireworks_ai/accounts/fireworks/routers/deepseek-v4p1-flash-spot"]
+input_cost_per_token = 2.100000e-7
+output_cost_per_token = 8.400000e-7
+max_input_tokens = 1048576
+max_output_tokens = 393216
+mode = "chat"
+cache_read_input_token_cost = 4.200000e-9
+
+["fireworks_ai/accounts/fireworks/routers/glm-5p3-spot"]
+input_cost_per_token = 9.800000e-7
+output_cost_per_token = 3.080000e-6
+max_input_tokens = 1048576
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 1.820000e-7
+
+["fireworks_ai/accounts/fireworks/routers/glm-fast-latest"]
+input_cost_per_token = 2.100000e-6
+output_cost_per_token = 6.600000e-6
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 3.900000e-7
+
+["fireworks_ai/accounts/fireworks/routers/glm-flash-latest"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 3.000000e-8
+cache_read_input_token_cost_priority = 3.750000e-8
+input_cost_per_token_priority = 1.875000e-7
+output_cost_per_token_priority = 6.250000e-7
+
+["fireworks_ai/accounts/fireworks/routers/glm-latest"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 2.600000e-7
+cache_read_input_token_cost_priority = 3.250000e-7
+input_cost_per_token_priority = 1.750000e-6
+output_cost_per_token_priority = 5.500000e-6
+
+["fireworks_ai/accounts/fireworks/routers/kimi-fast-latest"]
+input_cost_per_token = 4.500000e-6
+output_cost_per_token = 2.250000e-5
+max_input_tokens = 1048576
+max_output_tokens = 131072
+mode = "chat"
+cache_read_input_token_cost = 4.500000e-7
+
+["fireworks_ai/accounts/fireworks/routers/kimi-k3-spot"]
+input_cost_per_token = 2.100000e-6
+output_cost_per_token = 1.050000e-5
+max_input_tokens = 1048576
+max_output_tokens = 131072
+mode = "chat"
+cache_read_input_token_cost = 2.100000e-7
+
+["fireworks_ai/accounts/fireworks/routers/kimi-latest"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 1048576
+max_output_tokens = 131072
+mode = "chat"
+cache_read_input_token_cost = 3.000000e-7
+cache_read_input_token_cost_priority = 3.750000e-7
+input_cost_per_token_priority = 3.750000e-6
+output_cost_per_token_priority = 1.875000e-5
+
+["fireworks_ai/accounts/fireworks/routers/minimax-latest"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 512000
+max_output_tokens = 512000
+mode = "chat"
+cache_read_input_token_cost = 6.000000e-8
+cache_read_input_token_cost_priority = 9.000000e-8
+input_cost_per_token_priority = 4.500000e-7
+output_cost_per_token_priority = 1.800000e-6
+
+["fireworks_ai/accounts/fireworks/routers/qwen-max-latest"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 6.000000e-6
+max_input_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 2.500000e-7
+cache_read_input_token_cost_priority = 3.750000e-7
+input_cost_per_token_priority = 3.000000e-6
+output_cost_per_token_priority = 9.000000e-6
+
+["fireworks_ai/accounts/fireworks/routers/spot-deepseek-v4-flash"]
+input_cost_per_token = 1.050000e-7
+output_cost_per_token = 2.100000e-7
+max_input_tokens = 1048576
+max_output_tokens = 384000
+mode = "chat"
+cache_read_input_token_cost = 2.100000e-8

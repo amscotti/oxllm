@@ -101,6 +101,7 @@ prompt_cache_min_tokens = 4096
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
 output_cost_per_token_above_200k_tokens = 1.800000e-5
+cache_read_input_token_cost_above_200k_tokens_flex = 4.000000e-7
 
 ["gemini/deep-research-pro-preview-12-2025"]
 input_cost_per_token = 2.000000e-6
@@ -180,6 +181,8 @@ max_output_tokens = 32768
 cache_read_input_token_cost = 3.000000e-8
 output_cost_per_reasoning_token = 2.500000e-6
 input_cost_per_audio_token = 1.000000e-6
+output_cost_per_token_flex = 1.250000e-6
+output_cost_per_token_priority = 4.500000e-6
 
 ["gemini/gemini-2.5-flash-lite"]
 input_cost_per_token = 1.000000e-7
@@ -254,6 +257,7 @@ prompt_cache_min_tokens = 2048
 cache_read_input_token_cost_above_200k_tokens = 2.500000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
 output_cost_per_token_above_200k_tokens = 1.500000e-5
+cache_read_input_token_cost_above_200k_tokens_flex = 2.500000e-7
 
 ["gemini/gemini-2.5-pro-preview-tts"]
 input_cost_per_token = 1.000000e-6
@@ -339,6 +343,7 @@ output_cost_per_token = 4.500000e-6
 max_input_tokens = 131072
 max_output_tokens = 65536
 input_cost_per_audio_token = 3.000000e-6
+search_queries_cost_per_query = 1.400000e-02
 
 ["gemini/gemini-3.1-pro-preview"]
 input_cost_per_token = 2.000000e-6
@@ -350,6 +355,7 @@ prompt_cache_min_tokens = 4096
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
 output_cost_per_token_above_200k_tokens = 1.800000e-5
+cache_read_input_token_cost_above_200k_tokens_flex = 4.000000e-7
 
 ["gemini/gemini-3.1-pro-preview-customtools"]
 input_cost_per_token = 2.000000e-6
@@ -361,6 +367,7 @@ prompt_cache_min_tokens = 4096
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
 output_cost_per_token_above_200k_tokens = 1.800000e-5
+cache_read_input_token_cost_above_200k_tokens_flex = 4.000000e-7
 
 ["gemini/gemini-3.5-flash"]
 input_cost_per_token = 1.500000e-6
@@ -393,6 +400,7 @@ prompt_cache_min_tokens = 4096
 input_cost_per_token = 1.500000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 2048
+input_cost_per_token_batches = 7.500000e-8
 
 ["gemini/gemini-embedding-2"]
 input_cost_per_token = 2.000000e-7
@@ -447,11 +455,13 @@ output_cost_per_reasoning_token = 2.500000e-6
 input_cost_per_token = 3.500000e-7
 output_cost_per_token = 1.050000e-6
 max_output_tokens = 8192
+max_input_tokens = 8192
 
 ["gemini/gemini-gemma-2-9b-it"]
 input_cost_per_token = 3.500000e-7
 output_cost_per_token = 1.050000e-6
 max_output_tokens = 8192
+max_input_tokens = 8192
 
 ["gemini/gemini-live-2.5-flash-preview-native-audio-09-2025"]
 input_cost_per_token = 5.000000e-7
@@ -478,6 +488,7 @@ prompt_cache_min_tokens = 4096
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
 output_cost_per_token_above_200k_tokens = 1.800000e-5
+cache_read_input_token_cost_above_200k_tokens_flex = 4.000000e-7
 
 ["gemini/gemini-robotics-er-1.5-preview"]
 input_cost_per_token = 3.000000e-7
@@ -574,19 +585,17 @@ input_cost_per_token = 5.000000e-7
 output_cost_per_token = 6.000000e-6
 max_input_tokens = 8192
 max_output_tokens = 16384
-cache_read_input_token_cost = 1.250000e-7
 
 ["gemini/gemini-3.8-flash-tts"]
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 9.000000e-6
 max_input_tokens = 8192
 max_output_tokens = 16384
-cache_read_input_token_cost = 1.250000e-7
 
 ["gemini/gemini-omni-1.1-flash"]
 input_cost_per_token = 1.500000e-6
 output_cost_per_token = 9.000000e-6
-max_input_tokens = 1048576
+max_input_tokens = 131072
 max_output_tokens = 65536
 output_cost_per_reasoning_token = 9.000000e-6
 input_cost_per_audio_token = 1.500000e-6
@@ -690,6 +699,7 @@ output_cost_per_token = 4.500000e-6
 max_input_tokens = 131072
 max_output_tokens = 65536
 input_cost_per_audio_token = 3.000000e-6
+search_queries_cost_per_query = 1.400000e-02
 
 ["gemini/gemini-3.8-live-extended-thinking"]
 input_cost_per_token = 7.500000e-7
@@ -697,6 +707,7 @@ output_cost_per_token = 4.500000e-6
 max_input_tokens = 131072
 max_output_tokens = 65536
 input_cost_per_audio_token = 3.000000e-6
+search_queries_cost_per_query = 1.400000e-02
 
 ["gemini-4-argon"]
 input_cost_per_token = 2.000000e-6
@@ -735,3 +746,52 @@ cache_read_input_token_cost_priority = 1.800000e-7
 input_cost_per_token_batches = 1.000000e-6
 output_cost_per_token_batches = 5.000000e-6
 cache_read_input_token_cost_batches = 5.000000e-8
+
+["gemini/gemini-4-carbon"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 1.000000e-7
+output_cost_per_reasoning_token = 1.000000e-5
+prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.400000e-02
+cache_read_input_token_cost_batches = 5.000000e-8
+cache_read_input_token_cost_flex = 5.000000e-8
+cache_read_input_token_cost_priority = 1.800000e-7
+input_cost_per_token_batches = 1.000000e-6
+input_cost_per_token_flex = 1.000000e-6
+input_cost_per_token_priority = 3.600000e-6
+output_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_flex = 5.000000e-6
+output_cost_per_token_priority = 1.800000e-5
+
+["gemini/gemini-4-hydrogen"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 7.500000e-8
+output_cost_per_reasoning_token = 7.500000e-6
+prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.400000e-02
+cache_read_input_token_cost_batches = 3.750000e-8
+cache_read_input_token_cost_flex = 3.750000e-8
+cache_read_input_token_cost_priority = 1.350000e-7
+input_cost_per_token_batches = 7.500000e-7
+input_cost_per_token_flex = 7.500000e-7
+input_cost_per_token_priority = 2.700000e-6
+output_cost_per_token_batches = 3.750000e-6
+output_cost_per_token_flex = 3.750000e-6
+output_cost_per_token_priority = 1.350000e-5
+
+["gemini/gemini-omni-1.2-flash"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 9.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 65536
+mode = "chat"
+input_cost_per_image_token = 1.500000e-6
+output_cost_per_reasoning_token = 9.000000e-6

@@ -300,12 +300,12 @@ flex = { cache_read_input_token_cost = 8e-8, input_cost_per_token = 7.5e-7, outp
 priority = { cache_read_input_token_cost = 2.7e-7, input_cost_per_audio_token = 2.7e-6, input_cost_per_token = 2.7e-6, output_cost_per_token = 1.62e-5 }
 
 ["gemini/gemini-3.8-flash-lite-tts"]
-flex = { cache_read_input_token_cost = 2.5e-8, input_cost_per_token = 2.5e-7, output_cost_per_token = 3e-6 }
-priority = { cache_read_input_token_cost = 2.25e-7, input_cost_per_token = 9e-7, output_cost_per_token = 1.08e-5 }
+flex = { input_cost_per_token = 2.5e-7, output_cost_per_token = 3e-6 }
+priority = { input_cost_per_token = 9e-7, output_cost_per_token = 1.08e-5 }
 
 ["gemini/gemini-3.8-flash-tts"]
-flex = { cache_read_input_token_cost = 2.5e-8, input_cost_per_token = 2.5e-7, output_cost_per_token = 4.5e-6 }
-priority = { cache_read_input_token_cost = 2.25e-7, input_cost_per_token = 9e-7, output_cost_per_token = 1.62e-5 }
+flex = { input_cost_per_token = 2.5e-7, output_cost_per_token = 4.5e-6 }
+priority = { input_cost_per_token = 9e-7, output_cost_per_token = 1.62e-5 }
 
 ["gpt-4.1-nano"]
 aliases = ["gpt-4.1-nano-2025-04-14"]
@@ -338,7 +338,6 @@ priority = { cache_read_input_token_cost = 4.5e-8, input_cost_per_token = 4.5e-7
 ["gpt-5-nano"]
 aliases = ["gpt-5-nano-2025-08-07"]
 flex = { cache_read_input_token_cost = 2.5e-9, input_cost_per_token = 2.5e-8, output_cost_per_token = 2e-7 }
-priority = { input_cost_per_token = 2.5e-6 }
 
 ["gpt-5.2"]
 aliases = ["gpt-5.2-2025-12-11"]

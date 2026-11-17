@@ -361,6 +361,7 @@ cache_read_input_token_cost = 1.500000e-8
 input_cost_per_token = 1.0000000000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 8192
+cache_read_input_token_cost = 1.000000e-8
 ["mistral/glm-5-2"]
 input_cost_per_token = 1.400000e-6
 output_cost_per_token = 4.400000e-6
@@ -369,18 +370,20 @@ max_output_tokens = 131072
 cache_read_input_token_cost = 1.400000e-7
 
 ["mistral/mistral-large-4"]
-input_cost_per_token = 6.800000e-7
-output_cost_per_token = 2.090000e-6
+input_cost_per_token = 7.000000e-7
+output_cost_per_token = 2.100000e-6
 max_input_tokens = 1048576
-cache_read_input_token_cost = 6.800000e-8
+cache_read_input_token_cost = 7.000000e-8
 mode = "chat"
+max_output_tokens = 1048576
 
 ["mistral/mistral-large-4-0"]
-input_cost_per_token = 6.800000e-7
-output_cost_per_token = 2.090000e-6
+input_cost_per_token = 7.000000e-7
+output_cost_per_token = 2.100000e-6
 max_input_tokens = 1048576
-cache_read_input_token_cost = 6.800000e-8
+cache_read_input_token_cost = 7.000000e-8
 mode = "chat"
+max_output_tokens = 1048576
 
 ["mistral/labs-leanstral-1-5"]
 input_cost_per_token = 0.0
@@ -447,6 +450,7 @@ cache_read_input_token_cost = 3.000000e-8
 input_cost_per_token = 1.000000e-7
 output_cost_per_token = 0.0
 max_input_tokens = 8192
+cache_read_input_token_cost = 1.000000e-8
 
 ["mistral/mistral-medium-3"]
 input_cost_per_token = 1.500000e-6
@@ -572,3 +576,55 @@ output_cost_per_token = 4.400000e-6
 max_input_tokens = 1048576
 max_output_tokens = 131072
 cache_read_input_token_cost = 1.400000e-7
+
+["mistral/deepseek-v4-1-flash-1017"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+max_output_tokens = 131072
+mode = "chat"
+cache_read_input_token_cost = 7.000000e-9
+
+["mistral/voxtral-mini-transcribe-3"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+mode = "audio_transcription"
+input_cost_per_second = 5.833330e-5
+
+["mistral/voxtral-mini-transcribe-3-0"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+mode = "audio_transcription"
+input_cost_per_second = 5.833330e-5
+
+["mistral/voxtral-mini-transcribe-realtime-3"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+mode = "audio_transcription"
+input_cost_per_second = 1.333330e-4
+
+["mistral/voxtral-mini-transcribe-realtime-3-0"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+mode = "audio_transcription"
+input_cost_per_second = 1.333330e-4
+
+["mistral/voxtral-small-transcribe-3"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+mode = "audio_transcription"
+input_cost_per_second = 6.666670e-5
+
+["mistral/voxtral-small-transcribe-3-0"]
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+mode = "audio_transcription"
+input_cost_per_second = 6.666670e-5
+
+["mistral/zai-glm-5-3-flash"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 131072
+mode = "chat"
+cache_read_input_token_cost = 3.000000e-8
