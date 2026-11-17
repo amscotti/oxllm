@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // The global tracing subscriber is installed inside `oxllm_admin::run`
