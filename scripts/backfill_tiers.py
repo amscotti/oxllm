@@ -220,7 +220,7 @@ def main():
             new_lines += [f"{k} = {fmt(v)}" for (k, v) in svc_entries]
             if new_lines:
                 inserts.setdefault(last_content + 1, []).extend(new_lines)
-            if service_only:
+            if service_only or not entries:
                 continue
             snapshot.setdefault(model, {})
             for k, t, v in entries:

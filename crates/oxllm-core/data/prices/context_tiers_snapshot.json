@@ -6,7 +6,6 @@
     "input_cost_per_token_above_100k_tokens": 5e-07,
     "output_cost_per_token_above_100k_tokens": 2.5e-06
   },
-  "anthropic.claude-opus-5": {},
   "anthropic.claude-sonnet-4-20250514-v1:0": {
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost_above_200k_tokens": 6e-07,
@@ -27,7 +26,6 @@
     "input_cost_per_token_above_100k_tokens": 5.5e-07,
     "output_cost_per_token_above_100k_tokens": 2.75e-06
   },
-  "apac.anthropic.claude-opus-5": {},
   "apac.anthropic.claude-sonnet-4-20250514-v1:0": {
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost_above_200k_tokens": 6e-07,
@@ -41,7 +39,6 @@
     "input_cost_per_token_above_100k_tokens": 5.5e-07,
     "output_cost_per_token_above_100k_tokens": 2.75e-06
   },
-  "au.anthropic.claude-opus-5": {},
   "au.anthropic.claude-sonnet-4-5-20250929-v1:0": {
     "cache_creation_input_token_cost_above_1hr_above_200k_tokens": 1.32e-05,
     "cache_creation_input_token_cost_above_200k_tokens": 8.25e-06,
@@ -144,8 +141,6 @@
     "input_cost_per_token_above_272k_tokens": 2.4e-06,
     "output_cost_per_token_above_272k_tokens": 9e-06
   },
-  "azure/gpt-4o": {},
-  "azure/gpt-4o-mini": {},
   "azure/gpt-5.4": {
     "cache_read_input_token_cost_above_272k_tokens": 5e-07,
     "input_cost_per_token_above_272k_tokens": 5e-06,
@@ -287,9 +282,6 @@
     "input_cost_per_token_above_272k_tokens": 2e-06,
     "output_cost_per_token_above_272k_tokens": 7.5e-06
   },
-  "azure/o3": {},
-  "azure/o3-mini": {},
-  "azure/o4-mini": {},
   "azure/us-gov/gpt-5.6-luna": {
     "cache_creation_input_token_cost_above_272k_tokens": 6.875e-07,
     "cache_read_input_token_cost_above_272k_tokens": 5.5e-08,
@@ -478,25 +470,6 @@
     "input_cost_per_token_above_200k_tokens": 4e-06,
     "output_cost_per_token_above_200k_tokens": 1.2e-05
   },
-  "bedrock/ap-northeast-1/deepseek.v3.2": {},
-  "bedrock/ap-northeast-1/minimax.minimax-m2.1": {},
-  "bedrock/ap-northeast-1/minimax.minimax-m2.5": {},
-  "bedrock/ap-northeast-1/mistral.voxtral-mini-3b-2507": {},
-  "bedrock/ap-northeast-1/mistral.voxtral-small-24b-2507": {},
-  "bedrock/ap-northeast-1/moonshotai.kimi-k2.5": {},
-  "bedrock/ap-northeast-1/qwen.qwen3-next-80b-a3b": {},
-  "bedrock/ap-south-1/deepseek.v3.2": {},
-  "bedrock/ap-south-1/minimax.minimax-m2.1": {},
-  "bedrock/ap-south-1/minimax.minimax-m2.5": {},
-  "bedrock/ap-south-1/moonshotai.kimi-k2.5": {},
-  "bedrock/ap-south-1/qwen.qwen3-next-80b-a3b": {},
-  "bedrock/ap-southeast-2/minimax.minimax-m2.5": {},
-  "bedrock/ap-southeast-2/mistral.voxtral-mini-3b-2507": {},
-  "bedrock/ap-southeast-2/mistral.voxtral-small-24b-2507": {},
-  "bedrock/claude_platform/claude-fable-5": {},
-  "bedrock/claude_platform/claude-fable-5-1": {},
-  "bedrock/claude_platform/claude-fable-5-2": {},
-  "bedrock/claude_platform/claude-haiku-4-5": {},
   "bedrock/claude_platform/claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 6.25e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1e-06,
@@ -504,50 +477,6 @@
     "input_cost_per_token_above_100k_tokens": 5e-07,
     "output_cost_per_token_above_100k_tokens": 2.5e-06
   },
-  "bedrock/claude_platform/claude-opus-4-5": {},
-  "bedrock/claude_platform/claude-opus-4-6": {},
-  "bedrock/claude_platform/claude-opus-4-7": {},
-  "bedrock/claude_platform/claude-opus-4-8": {},
-  "bedrock/claude_platform/claude-opus-5": {},
-  "bedrock/claude_platform/claude-opus-5-5": {},
-  "bedrock/claude_platform/claude-sonnet-4-5": {},
-  "bedrock/claude_platform/claude-sonnet-4-6": {},
-  "bedrock/claude_platform/claude-sonnet-5": {},
-  "bedrock/claude_platform/claude-sonnet-5-5": {},
-  "bedrock/eu-central-1/minimax.minimax-m2.1": {},
-  "bedrock/eu-central-1/minimax.minimax-m2.5": {},
-  "bedrock/eu-north-1/deepseek.v3.2": {},
-  "bedrock/eu-north-1/minimax.minimax-m2.1": {},
-  "bedrock/eu-north-1/minimax.minimax-m2.5": {},
-  "bedrock/eu-north-1/moonshotai.kimi-k2.5": {},
-  "bedrock/eu-west-1/minimax.minimax-m2.1": {},
-  "bedrock/eu-west-1/minimax.minimax-m2.5": {},
-  "bedrock/eu-west-1/qwen.qwen3-next-80b-a3b": {},
-  "bedrock/eu-west-2/minimax.minimax-m2.1": {},
-  "bedrock/eu-west-2/minimax.minimax-m2.5": {},
-  "bedrock/eu-west-2/mistral.voxtral-mini-3b-2507": {},
-  "bedrock/eu-west-2/mistral.voxtral-small-24b-2507": {},
-  "bedrock/eu-west-2/nvidia.nemotron-super-3-120b": {},
-  "bedrock/eu-west-2/qwen.qwen3-coder-next": {},
-  "bedrock/eu-west-2/qwen.qwen3-next-80b-a3b": {},
-  "bedrock/mantle/anthropic.claude-haiku-4-5": {},
-  "bedrock/moonshotai.kimi-k2.5": {},
-  "bedrock/sa-east-1/deepseek.v3.2": {},
-  "bedrock/sa-east-1/minimax.minimax-m2.1": {},
-  "bedrock/sa-east-1/minimax.minimax-m2.5": {},
-  "bedrock/sa-east-1/moonshotai.kimi-k2.5": {},
-  "bedrock/sa-east-1/qwen.qwen3-next-80b-a3b": {},
-  "bedrock/us-east-1/deepseek.v3.2": {},
-  "bedrock/us-east-1/minimax.minimax-m2.1": {},
-  "bedrock/us-east-1/minimax.minimax-m2.5": {},
-  "bedrock/us-east-1/moonshotai.kimi-k2.5": {},
-  "bedrock/us-east-1/qwen.qwen3-coder-next": {},
-  "bedrock/us-east-1/zai.glm-5": {},
-  "bedrock/us-east-2/deepseek.v3.2": {},
-  "bedrock/us-east-2/minimax.minimax-m2.1": {},
-  "bedrock/us-east-2/minimax.minimax-m2.5": {},
-  "bedrock/us-east-2/moonshotai.kimi-k2.5": {},
-  "bedrock/us-gov-east-1/anthropic.claude-3-5-sonnet-20240620-v1:0": {},
   "bedrock/us-gov-east-1/anthropic.claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 7.5e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1.2e-06,
@@ -555,19 +484,6 @@
     "input_cost_per_token_above_100k_tokens": 6e-07,
     "output_cost_per_token_above_100k_tokens": 3e-06
   },
-  "bedrock/us-gov-east-1/anthropic.claude-opus-5": {},
-  "bedrock/us-gov-east-1/moonshotai.kimi-k3": {},
-  "bedrock/us-gov-east-1/nvidia.nemotron-nano-12b-v2": {},
-  "bedrock/us-gov-east-1/nvidia.nemotron-nano-3-30b": {},
-  "bedrock/us-gov-east-1/nvidia.nemotron-nano-9b-v2": {},
-  "bedrock/us-gov-east-1/nvidia.nemotron-super-3-120b": {},
-  "bedrock/us-gov-east-1/openai.gpt-oss-120b-1:0": {},
-  "bedrock/us-gov-east-1/openai.gpt-oss-20b-1:0": {},
-  "bedrock/us-gov-west-1/amazon.nova-2-multimodal-embeddings-v1:0": {},
-  "bedrock/us-gov-west-1/amazon.nova-lite-v1:0": {},
-  "bedrock/us-gov-west-1/amazon.nova-micro-v1:0": {},
-  "bedrock/us-gov-west-1/amazon.nova-pro-v1:0": {},
-  "bedrock/us-gov-west-1/anthropic.claude-3-5-sonnet-20240620-v1:0": {},
   "bedrock/us-gov-west-1/anthropic.claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 7.5e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1.2e-06,
@@ -575,19 +491,6 @@
     "input_cost_per_token_above_100k_tokens": 6e-07,
     "output_cost_per_token_above_100k_tokens": 3e-06
   },
-  "bedrock/us-gov-west-1/anthropic.claude-opus-5": {},
-  "bedrock/us-gov-west-1/moonshotai.kimi-k3": {},
-  "bedrock/us-gov-west-1/nvidia.nemotron-nano-12b-v2": {},
-  "bedrock/us-gov-west-1/nvidia.nemotron-nano-3-30b": {},
-  "bedrock/us-gov-west-1/nvidia.nemotron-nano-9b-v2": {},
-  "bedrock/us-gov-west-1/nvidia.nemotron-super-3-120b": {},
-  "bedrock/us-gov-west-1/openai.gpt-oss-120b-1:0": {},
-  "bedrock/us-gov-west-1/openai.gpt-oss-20b-1:0": {},
-  "bedrock/us-west-2/deepseek.v3.2": {},
-  "bedrock/us-west-2/minimax.minimax-m2.1": {},
-  "bedrock/us-west-2/minimax.minimax-m2.5": {},
-  "bedrock/us-west-2/moonshotai.kimi-k2.5": {},
-  "bedrock/us-west-2/zai.glm-5": {},
   "bedrock_mantle/anthropic.claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 6.875e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1.1e-06,
@@ -595,26 +498,6 @@
     "input_cost_per_token_above_100k_tokens": 5.5e-07,
     "output_cost_per_token_above_100k_tokens": 2.75e-06
   },
-  "bedrock_mantle/deepseek.v3.2": {},
-  "bedrock_mantle/google.gemma-3-12b-it": {},
-  "bedrock_mantle/google.gemma-3-27b-it": {},
-  "bedrock_mantle/google.gemma-3-4b-it": {},
-  "bedrock_mantle/minimax.minimax-m2": {},
-  "bedrock_mantle/minimax.minimax-m2.1": {},
-  "bedrock_mantle/minimax.minimax-m2.5": {},
-  "bedrock_mantle/mistral.devstral-2-123b": {},
-  "bedrock_mantle/mistral.magistral-small-2509": {},
-  "bedrock_mantle/mistral.ministral-3-14b-instruct": {},
-  "bedrock_mantle/mistral.ministral-3-3b-instruct": {},
-  "bedrock_mantle/mistral.ministral-3-8b-instruct": {},
-  "bedrock_mantle/mistral.mistral-large-3-675b-instruct": {},
-  "bedrock_mantle/mistral.voxtral-mini-3b-2507": {},
-  "bedrock_mantle/mistral.voxtral-small-24b-2507": {},
-  "bedrock_mantle/moonshotai.kimi-k2.5": {},
-  "bedrock_mantle/nvidia.nemotron-nano-12b-v2": {},
-  "bedrock_mantle/nvidia.nemotron-nano-3-30b": {},
-  "bedrock_mantle/nvidia.nemotron-nano-9b-v2": {},
-  "bedrock_mantle/nvidia.nemotron-super-3-120b": {},
   "bedrock_mantle/openai.gpt-5.4": {
     "cache_read_input_token_cost_above_272k_tokens": 5.5e-07,
     "input_cost_per_token_above_272k_tokens": 5.5e-06,
@@ -679,15 +562,6 @@
     "input_cost_per_token_above_272k_tokens": 8.8e-06,
     "output_cost_per_token_above_272k_tokens": 3.3e-05
   },
-  "bedrock_mantle/qwen.qwen3-coder-next": {},
-  "bedrock_mantle/us-gov-east-1/nvidia.nemotron-nano-12b-v2": {},
-  "bedrock_mantle/us-gov-east-1/nvidia.nemotron-nano-3-30b": {},
-  "bedrock_mantle/us-gov-east-1/nvidia.nemotron-nano-9b-v2": {},
-  "bedrock_mantle/us-gov-east-1/nvidia.nemotron-super-3-120b": {},
-  "bedrock_mantle/us-gov-east-1/openai.gpt-oss-120b": {},
-  "bedrock_mantle/us-gov-east-1/openai.gpt-oss-20b": {},
-  "bedrock_mantle/us-gov-east-1/xai.grok-4.6": {},
-  "bedrock_mantle/us-gov-east-1/xai.grok-4.7": {},
   "bedrock_mantle/us-gov-west-1/anthropic.claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 7.5e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1.2e-06,
@@ -695,13 +569,6 @@
     "input_cost_per_token_above_100k_tokens": 6e-07,
     "output_cost_per_token_above_100k_tokens": 3e-06
   },
-  "bedrock_mantle/us-gov-west-1/google.gemma-4-26b-a4b": {},
-  "bedrock_mantle/us-gov-west-1/google.gemma-4-31b": {},
-  "bedrock_mantle/us-gov-west-1/google.gemma-4-e2b": {},
-  "bedrock_mantle/us-gov-west-1/nvidia.nemotron-nano-12b-v2": {},
-  "bedrock_mantle/us-gov-west-1/nvidia.nemotron-nano-3-30b": {},
-  "bedrock_mantle/us-gov-west-1/nvidia.nemotron-nano-9b-v2": {},
-  "bedrock_mantle/us-gov-west-1/nvidia.nemotron-super-3-120b": {},
   "bedrock_mantle/us-gov-west-1/openai.gpt-5.6-luna": {
     "cache_creation_input_token_cost_above_272k_tokens": 6.6e-07,
     "cache_read_input_token_cost_above_272k_tokens": 5.28e-08,
@@ -714,23 +581,12 @@
     "input_cost_per_token_above_272k_tokens": 5.28e-06,
     "output_cost_per_token_above_272k_tokens": 2.376e-05
   },
-  "bedrock_mantle/us-gov-west-1/openai.gpt-oss-120b": {},
-  "bedrock_mantle/us-gov-west-1/openai.gpt-oss-20b": {},
-  "bedrock_mantle/us-gov-west-1/xai.grok-4.3": {},
-  "bedrock_mantle/us-gov-west-1/xai.grok-4.6": {},
-  "bedrock_mantle/us-gov-west-1/xai.grok-4.7": {},
-  "bedrock_mantle/writer.palmyra-vision-7b": {},
-  "bedrock_mantle/xai.grok-4.7": {},
-  "bedrock_mantle/zai.glm-4.7": {},
-  "bedrock_mantle/zai.glm-4.7-flash": {},
-  "bedrock_mantle/zai.glm-5": {},
   "claude-4-sonnet-20250514": {
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost_above_200k_tokens": 6e-07,
     "input_cost_per_token_above_200k_tokens": 6e-06,
     "output_cost_per_token_above_200k_tokens": 2.25e-05
   },
-  "claude-fable-5-2": {},
   "claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 6.25e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1e-06,
@@ -738,7 +594,6 @@
     "input_cost_per_token_above_100k_tokens": 5e-07,
     "output_cost_per_token_above_100k_tokens": 2.5e-06
   },
-  "claude-mythos-5-2": {},
   "claude-sonnet-4-20250514": {
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost_above_200k_tokens": 6e-07,
@@ -759,33 +614,16 @@
     "input_cost_per_token_above_100k_tokens": 5.0001e-07,
     "output_cost_per_token_above_100k_tokens": 2.49998e-06
   },
-  "databricks/databricks-deepseek-v4-1-flash": {},
-  "databricks/databricks-gemini-3-1-flash-lite": {},
   "databricks/databricks-gemini-3-1-pro": {
     "cache_read_input_token_cost_above_200k_tokens": 5.0001e-07,
     "input_cost_per_token_above_200k_tokens": 5.00003e-06,
     "output_cost_per_token_above_200k_tokens": 2.25e-05
   },
-  "databricks/databricks-gemini-3-5-flash": {},
-  "databricks/databricks-gemini-3-5-flash-lite": {},
-  "databricks/databricks-gemini-3-6-flash": {},
-  "databricks/databricks-gemini-3-7-flash": {},
-  "databricks/databricks-gemini-3-8-flash": {},
-  "databricks/databricks-gemini-3-flash": {},
-  "databricks/databricks-gemini-4-argon": {},
-  "databricks/databricks-glm-5-2": {},
-  "databricks/databricks-glm-5-3": {},
-  "databricks/databricks-glm-5-3-flash": {},
-  "databricks/databricks-gpt-5": {},
-  "databricks/databricks-gpt-5-1": {},
-  "databricks/databricks-gpt-5-2": {},
-  "databricks/databricks-gpt-5-3-codex": {},
   "databricks/databricks-gpt-5-4": {
     "cache_read_input_token_cost_above_272k_tokens": 5.0001e-07,
     "input_cost_per_token_above_272k_tokens": 5.00003e-06,
     "output_cost_per_token_above_272k_tokens": 2.25e-05
   },
-  "databricks/databricks-gpt-5-4-mini": {},
   "databricks/databricks-gpt-5-4-pro": {
     "input_cost_per_token_above_272k_tokens": 6e-05,
     "output_cost_per_token_above_272k_tokens": 0.00027
@@ -817,7 +655,6 @@
     "input_cost_per_token_above_272k_tokens": 4.00001e-06,
     "output_cost_per_token_above_272k_tokens": 1.8e-05
   },
-  "databricks/databricks-gpt-5-mini": {},
   "databricks/databricks-gpt-6-1-sol": {
     "cache_creation_input_token_cost_above_272k_tokens": 5.00003e-06,
     "cache_read_input_token_cost_above_272k_tokens": 1.9999e-07,
@@ -848,8 +685,6 @@
     "input_cost_per_token_above_272k_tokens": 4.00001e-06,
     "output_cost_per_token_above_272k_tokens": 1.50003e-05
   },
-  "databricks/databricks-kimi-k3": {},
-  "databricks/databricks-qwen35-122b-a10b": {},
   "daybreak-blue-latest": {
     "cache_creation_input_token_cost_above_272k_tokens": 1e-05,
     "cache_read_input_token_cost_above_272k_tokens": 8e-07,
@@ -869,7 +704,6 @@
     "input_cost_per_token_above_100k_tokens": 5.5e-07,
     "output_cost_per_token_above_100k_tokens": 2.75e-06
   },
-  "eu.anthropic.claude-opus-5": {},
   "eu.anthropic.claude-sonnet-4-20250514-v1:0": {
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost_above_200k_tokens": 6e-07,
@@ -883,14 +717,6 @@
     "input_cost_per_token_above_200k_tokens": 6.6e-06,
     "output_cost_per_token_above_200k_tokens": 2.475e-05
   },
-  "fireworks_ai/accounts/fireworks/models/kimi-k3p1-pro": {},
-  "fireworks_ai/accounts/fireworks/models/ultramarine-1-flash-us": {},
-  "fireworks_ai/accounts/fireworks/routers/deepseek-flash-latest": {},
-  "fireworks_ai/accounts/fireworks/routers/glm-flash-latest": {},
-  "fireworks_ai/accounts/fireworks/routers/glm-latest": {},
-  "fireworks_ai/accounts/fireworks/routers/kimi-latest": {},
-  "fireworks_ai/accounts/fireworks/routers/minimax-latest": {},
-  "fireworks_ai/accounts/fireworks/routers/qwen-max-latest": {},
   "gemini-2.5-computer-use-preview-10-2025": {
     "input_cost_per_token_above_200k_tokens": 2.5e-06,
     "output_cost_per_token_above_200k_tokens": 1.5e-05
@@ -926,7 +752,6 @@
     "input_cost_per_token_above_200k_tokens": 4e-06,
     "output_cost_per_token_above_200k_tokens": 1.8e-05
   },
-  "gemini-nano-banana-2.1": {},
   "gemini-pro-latest": {
     "cache_read_input_token_cost_above_200k_tokens": 4e-07,
     "input_cost_per_token_above_200k_tokens": 4e-06,
@@ -939,7 +764,6 @@
     "input_cost_per_token_above_200k_tokens": 2.5e-06,
     "output_cost_per_token_above_200k_tokens": 1.5e-05
   },
-  "gemini/gemini-2.5-flash-image": {},
   "gemini/gemini-2.5-pro": {
     "cache_read_input_token_cost_above_200k_tokens": 2.5e-07,
     "input_cost_per_token_above_200k_tokens": 2.5e-06,
@@ -960,9 +784,6 @@
     "input_cost_per_token_above_200k_tokens": 4e-06,
     "output_cost_per_token_above_200k_tokens": 1.8e-05
   },
-  "gemini/gemini-4-carbon": {},
-  "gemini/gemini-4-hydrogen": {},
-  "gemini/gemini-embedding-001": {},
   "gemini/gemini-exp-1114": {
     "input_cost_per_token_above_128k_tokens": 0,
     "output_cost_per_token_above_128k_tokens": 0
@@ -991,7 +812,6 @@
     "input_cost_per_token_above_100k_tokens": 5e-07,
     "output_cost_per_token_above_100k_tokens": 2.5e-06
   },
-  "global.anthropic.claude-opus-5": {},
   "global.anthropic.claude-sonnet-4-20250514-v1:0": {
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost_above_200k_tokens": 6e-07,
@@ -1005,7 +825,6 @@
     "input_cost_per_token_above_200k_tokens": 6e-06,
     "output_cost_per_token_above_200k_tokens": 2.25e-05
   },
-  "global.moonshotai.kimi-k3.1": {},
   "global.openai.gpt-5.4": {
     "cache_read_input_token_cost_above_272k_tokens": 5e-07,
     "input_cost_per_token_above_272k_tokens": 5e-06,
@@ -1070,7 +889,6 @@
     "input_cost_per_token_above_272k_tokens": 8e-06,
     "output_cost_per_token_above_272k_tokens": 3e-05
   },
-  "global.zai.glm-5.3": {},
   "gpt-5.4": {
     "cache_read_input_token_cost_above_272k_tokens": 5e-07,
     "input_cost_per_token_above_272k_tokens": 5e-06,
@@ -1190,10 +1008,6 @@
     "input_cost_per_token_above_272k_tokens": 2.5e-05,
     "output_cost_per_token_above_272k_tokens": 0.0001125
   },
-  "gpt-image-2.6-flare": {},
-  "gpt-image-2.6-sunburst": {},
-  "in.moonshotai.kimi-k3": {},
-  "in.moonshotai.kimi-k3.1": {},
   "jp.anthropic.claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 6.875e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1.1e-06,
@@ -1201,7 +1015,6 @@
     "input_cost_per_token_above_100k_tokens": 5.5e-07,
     "output_cost_per_token_above_100k_tokens": 2.75e-06
   },
-  "jp.anthropic.claude-opus-5": {},
   "jp.anthropic.claude-sonnet-4-5-20250929-v1:0": {
     "cache_creation_input_token_cost_above_1hr_above_200k_tokens": 1.32e-05,
     "cache_creation_input_token_cost_above_200k_tokens": 8.25e-06,
@@ -1214,7 +1027,6 @@
     "input_cost_per_token_above_200k_tokens": 3e-07,
     "output_cost_per_token_above_200k_tokens": 1.5e-06
   },
-  "moonshotai.kimi-k3.1": {},
   "openai.gpt-6-luna": {
     "cache_creation_input_token_cost_above_272k_tokens": 2.5e-07,
     "cache_read_input_token_cost_above_272k_tokens": 2e-08,
@@ -1774,7 +1586,6 @@
     "input_cost_per_token_above_200k_tokens": 4e-06,
     "output_cost_per_token_above_200k_tokens": 1.2e-05
   },
-  "qwen.qwen3-next-80b-a3b": {},
   "replicate/google/gemini-3-pro": {
     "input_cost_per_token_above_200k_tokens": 4e-06,
     "output_cost_per_token_above_200k_tokens": 1.8e-05
@@ -1794,7 +1605,6 @@
     "input_cost_per_token_above_100k_tokens": 6e-07,
     "output_cost_per_token_above_100k_tokens": 3e-06
   },
-  "us-gov.anthropic.claude-opus-5": {},
   "us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0": {
     "cache_creation_input_token_cost_above_1hr_above_200k_tokens": 1.44e-05,
     "cache_creation_input_token_cost_above_200k_tokens": 9e-06,
@@ -1802,7 +1612,6 @@
     "input_cost_per_token_above_200k_tokens": 7.2e-06,
     "output_cost_per_token_above_200k_tokens": 2.7e-05
   },
-  "us-gov.xai.grok-4.7": {},
   "us.anthropic.claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 6.875e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1.1e-06,
@@ -1810,7 +1619,6 @@
     "input_cost_per_token_above_100k_tokens": 5.5e-07,
     "output_cost_per_token_above_100k_tokens": 2.75e-06
   },
-  "us.anthropic.claude-opus-5": {},
   "us.anthropic.claude-sonnet-4-20250514-v1:0": {
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost_above_200k_tokens": 6e-07,
@@ -1824,7 +1632,6 @@
     "input_cost_per_token_above_200k_tokens": 6.6e-06,
     "output_cost_per_token_above_200k_tokens": 2.475e-05
   },
-  "us.moonshotai.kimi-k3.1": {},
   "us.openai.gpt-5.4": {
     "cache_read_input_token_cost_above_272k_tokens": 5.5e-07,
     "input_cost_per_token_above_272k_tokens": 5.5e-06,
@@ -1889,9 +1696,6 @@
     "input_cost_per_token_above_272k_tokens": 8.8e-06,
     "output_cost_per_token_above_272k_tokens": 3.3e-05
   },
-  "us.zai.glm-5.3": {},
-  "vertex_ai/claude-fable-5-2": {},
-  "vertex_ai/claude-fable-5-2@default": {},
   "vertex_ai/claude-haiku-5-5": {
     "cache_creation_input_token_cost_above_100k_tokens": 6.25e-07,
     "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1e-06,
@@ -1906,8 +1710,6 @@
     "input_cost_per_token_above_100k_tokens": 5e-07,
     "output_cost_per_token_above_100k_tokens": 2.5e-06
   },
-  "vertex_ai/claude-mythos-5-2": {},
-  "vertex_ai/claude-mythos-5-2@default": {},
   "vertex_ai/claude-sonnet-4": {
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost_above_200k_tokens": 6e-07,
@@ -1959,10 +1761,6 @@
     "input_cost_per_token_above_200k_tokens": 4e-06,
     "output_cost_per_token_above_200k_tokens": 1.8e-05
   },
-  "vertex_ai/gemini-4-carbon": {},
-  "vertex_ai/gemini-4-carbon-cyber-permissive": {},
-  "vertex_ai/gemini-4-hydrogen": {},
-  "vertex_ai/gemini-nano-banana-2.1": {},
   "vertex_ai/xai/grok-4.20-non-reasoning": {
     "cache_read_input_token_cost_above_200k_tokens": 4e-07,
     "input_cost_per_token_above_200k_tokens": 2.5e-06,
@@ -2243,6 +2041,5 @@
     "cache_read_input_token_cost_above_200k_tokens": 4e-07,
     "input_cost_per_token_above_200k_tokens": 2e-06,
     "output_cost_per_token_above_200k_tokens": 4e-06
-  },
-  "zai.glm-5": {}
+  }
 }
