@@ -1402,3 +1402,52 @@ fn mistral_drops_a_reasoning_only_assistant_turn_after_stripping() {
     assert_eq!(messages.len(), 1, "emptied turn dropped");
     assert_eq!(messages[0]["content"], "hi");
 }
+
+#[test]
+fn mistral_sanitizes_object_tool_choice_and_strips_strict() {
+    let p = MistralProvider;
+    let req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {"name": "get_weather", "parameters": {"type": "object"}}
+        }],
+        "tool_choice": {
+            "type": "function",
+            "strict": true,
+            "function": {"name": "get_weather", "strict": true}
+        },
+    });
+    let out = ChatProvider::transform_request(&p, &req, &deployment()).expect("ok");
+    assert_eq!(
+        out["tool_choice"],
+        json!({"type": "function", "function": {"name": "get_weather"}})
+    );
+}
+
+#[test]
+fn mistral_rejects_or_drops_malformed_object_tool_choice() {
+    let p = MistralProvider;
+    let req = json!({
+        "model": "mistral/mistral-large-latest",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {"name": "get_weather", "parameters": {"type": "object"}}
+        }],
+        "tool_choice": {"type": "function", "strict": true},
+    });
+    assert!(
+        ChatProvider::transform_request(&p, &req, &deployment()).is_err(),
+        "malformed object tool_choice must 400 unless drop_params"
+    );
+
+    let mut drop_dep = deployment();
+    drop_dep.oxllm_params.drop_params = Some(true);
+    let out = ChatProvider::transform_request(&p, &req, &drop_dep).expect("drop_params ok");
+    assert!(
+        out.get("tool_choice").is_none(),
+        "malformed object tool_choice must be dropped under drop_params: {out}"
+    );
+}

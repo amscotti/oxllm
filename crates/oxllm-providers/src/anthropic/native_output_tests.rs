@@ -401,3 +401,28 @@ fn colliding_tool_names_do_not_remap_a_forced_choice_twice() {
         assert_eq!(body["tool_choice"]["name"], body["tools"][0]["name"]);
     }
 }
+
+#[test]
+fn compaction_and_safeguards_are_forwarded_and_listed_as_supported() {
+    let body = AnthropicProvider
+        .transform_request(
+            &json!({
+                "messages": [{"role": "user", "content": "hi"}],
+                "compaction": {"type": "auto", "max_tokens": 10000},
+                "safeguards": {"enabled": true},
+            }),
+            &deployment("claude-sonnet-4-6"),
+        )
+        .unwrap();
+    assert_eq!(
+        body["compaction"],
+        json!({"type": "auto", "max_tokens": 10000})
+    );
+    assert_eq!(body["safeguards"], json!({"enabled": true}));
+
+    let supported = AnthropicProvider
+        .supported_params()
+        .expect("anthropic declares supported_params");
+    assert!(supported.contains(&"compaction"));
+    assert!(supported.contains(&"safeguards"));
+}

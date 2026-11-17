@@ -387,6 +387,28 @@ impl ChatProvider for BedrockProvider {
             if let Value::Object(map) = &mut body {
                 map.insert("anthropic_version".to_string(), json!(ANTHROPIC_VERSION));
                 map.remove("stream");
+                // Bedrock Invoke does not support `safeguards` yet and rejects
+                // unknown top-level inputs.
+                map.remove("safeguards");
+                let has_compaction_param = map.get("compaction").is_some_and(Value::is_object);
+                if !has_compaction_param {
+                    map.remove("compaction");
+                }
+                let has_compaction_block = map
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .is_some_and(|msgs| {
+                        msgs.iter().any(|msg| {
+                            msg.get("content")
+                                .and_then(Value::as_array)
+                                .is_some_and(|blocks| {
+                                    blocks.iter().any(|block| {
+                                        block.get("type").and_then(Value::as_str)
+                                            == Some("compaction")
+                                    })
+                                })
+                        })
+                    });
                 // InvokeModel carries beta selectors in the native body. Keep
                 // explicit tool betas alongside any message-config beta.
                 let mut betas = match request
@@ -407,11 +429,16 @@ impl ChatProvider for BedrockProvider {
                     }
                     None => Vec::new(),
                 };
-                if message_config_used {
-                    let beta = crate::anthropic::BETA_MID_CONVERSATION_OUTPUT_CONFIG;
+                let mut push_beta = |beta: &str| {
                     if !betas.iter().any(|value| value.as_str() == Some(beta)) {
                         betas.push(json!(beta));
                     }
+                };
+                if message_config_used {
+                    push_beta(crate::anthropic::BETA_MID_CONVERSATION_OUTPUT_CONFIG);
+                }
+                if has_compaction_param || has_compaction_block {
+                    push_beta(crate::anthropic::BETA_COMPACT_2026_09_04);
                 }
                 if !betas.is_empty() {
                     map.insert("anthropic_beta".to_string(), Value::Array(betas));

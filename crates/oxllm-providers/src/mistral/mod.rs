@@ -276,12 +276,53 @@ fn apply_mistral_request_transforms(
     // Mistral has no `"required"` tool_choice and rejects unknown string
     // values; map any non-`auto`/`none` string to `"any"` (parity with
     // the reference tool-choice catch-all). Object forms pass through.
-    let needs_tool_choice_remap = obj
-        .get("tool_choice")
-        .and_then(|v| v.as_str())
-        .is_some_and(|s| s != "auto" && s != "none");
-    if needs_tool_choice_remap {
-        obj.insert("tool_choice".to_string(), Value::String("any".to_string()));
+    match obj.get("tool_choice").cloned() {
+        None => {}
+        Some(Value::Null) => {
+            obj.remove("tool_choice");
+        }
+        Some(Value::String(s)) => {
+            if s != "auto" && s != "none" {
+                obj.insert("tool_choice".to_string(), Value::String("any".to_string()));
+            }
+        }
+        Some(Value::Object(map)) => {
+            let valid_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .is_none_or(|t| t == "function");
+            let fn_name = map
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty());
+            if let (true, Some(name)) = (valid_type, fn_name) {
+                // Mistral rejects OpenAI's `strict` or extra keys inside `tool_choice`;
+                // rebuild only `{type, function: {name}}`.
+                obj.insert(
+                    "tool_choice".to_string(),
+                    serde_json::json!({
+                        "type": "function",
+                        "function": { "name": name },
+                    }),
+                );
+            } else if drop_params {
+                obj.remove("tool_choice");
+            } else {
+                return Err(oxllm_core::Error::BadRequest(
+                    "mistral requires object tool_choice to specify a non-empty function.name; enable drop_params to ignore".into(),
+                ));
+            }
+        }
+        Some(_) => {
+            if drop_params {
+                obj.remove("tool_choice");
+            } else {
+                return Err(oxllm_core::Error::BadRequest(
+                    "mistral tool_choice must be a string or function object; enable drop_params to ignore".into(),
+                ));
+            }
+        }
     }
 
     // Mistral reads `random_seed`, not `seed`, at the top level. The shared

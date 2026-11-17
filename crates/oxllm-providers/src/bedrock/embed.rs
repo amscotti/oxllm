@@ -183,24 +183,65 @@ fn is_titan_embed(model: &str) -> bool {
     })
 }
 
+const EXTRA_BODY_MERGE_MAX_DEPTH: usize = 6;
+
+fn merge_extra_body_map(
+    target: &mut Map<String, Value>,
+    extra: &Map<String, Value>,
+    reserved_keys: &[&str],
+    depth: usize,
+) {
+    if depth >= EXTRA_BODY_MERGE_MAX_DEPTH {
+        return;
+    }
+    for (key, extra_val) in extra {
+        if reserved_keys.contains(&key.as_str()) {
+            continue;
+        }
+        match target.get_mut(key) {
+            Some(Value::Object(existing)) => {
+                if let Value::Object(extra_obj) = extra_val {
+                    merge_extra_body_map(existing, extra_obj, &[], depth + 1);
+                }
+            }
+            Some(_) => {}
+            None => {
+                target.insert(key.clone(), extra_val.clone());
+            }
+        }
+    }
+}
+
+fn apply_extra_body(out: &mut Map<String, Value>, request: &Value, reserved_keys: &[&str]) {
+    if let Some(extra) = request.get("extra_body").and_then(Value::as_object) {
+        merge_extra_body_map(out, extra, reserved_keys, 0);
+    }
+}
+
 fn cohere_body(request: &Value, texts: &[String]) -> Value {
-    let input_type = request
+    let mut out = Map::new();
+    out.insert("texts".to_string(), json!(texts));
+    if let Some(input_type) = request
         .get("input_type")
         .and_then(Value::as_str)
         .filter(|value| COHERE_INPUT_TYPES.contains(value))
-        .unwrap_or("search_document");
-    let truncate = request
+    {
+        out.insert("input_type".to_string(), json!(input_type));
+    }
+    if let Some(truncate) = request
         .get("truncate")
         .and_then(Value::as_str)
         .filter(|value| matches!(*value, "NONE" | "START" | "END"))
-        .unwrap_or("END");
-    let mut out = Map::new();
-    out.insert("texts".to_string(), json!(texts));
-    out.insert("input_type".to_string(), json!(input_type));
-    out.insert("truncate".to_string(), json!(truncate));
+    {
+        out.insert("truncate".to_string(), json!(truncate));
+    }
     if let Some(dimensions) = request.get("dimensions").filter(|value| !value.is_null()) {
         out.insert("output_dimension".to_string(), dimensions.clone());
     }
+    apply_extra_body(&mut out, request, &["texts"]);
+    out.entry("input_type")
+        .or_insert_with(|| json!("search_document"));
+    out.entry("truncate").or_insert_with(|| json!("END"));
     Value::Object(out)
 }
 
@@ -210,6 +251,7 @@ fn titan_body(request: &Value, text: &str) -> Value {
     if let Some(dimensions) = request.get("dimensions").filter(|value| !value.is_null()) {
         out.insert("dimensions".to_string(), dimensions.clone());
     }
+    apply_extra_body(&mut out, request, &["inputText"]);
     Value::Object(out)
 }
 

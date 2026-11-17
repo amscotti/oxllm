@@ -649,7 +649,7 @@ impl ChatProvider for AnthropicProvider {
             }
         }
 
-        for key in &["top_k", "metadata"] {
+        for key in &["top_k", "metadata", "compaction", "safeguards"] {
             if let Some(val) = request.get(*key) {
                 if !val.is_null() {
                     out.insert(key.to_string(), val.clone());
@@ -1132,6 +1132,8 @@ impl ChatProvider for AnthropicProvider {
             // `type: "mcp"` entries; advertising the top-level field keeps
             // `drop_params` from stripping a caller-supplied `mcp_servers`.
             "mcp_servers",
+            "compaction",
+            "safeguards",
         ])
     }
 }

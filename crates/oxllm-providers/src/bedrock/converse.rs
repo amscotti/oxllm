@@ -488,6 +488,8 @@ fn is_recognized_feature_model(model: &str) -> bool {
         "ai21.",
         "cohere.",
         "deepseek.",
+        "moonshot.",
+        "moonshotai.",
         "qwen.",
         "zai.glm-",
         "openai.gpt-",

@@ -6340,3 +6340,156 @@ fn convert_image_url_blocks_reverts_document_url_source_alongside_image() {
         json!({"type": "image_url", "image_url": {"url": "https://example.com/a.png"}})
     );
 }
+
+#[test]
+fn invoke_forwards_compaction_with_compact_beta_and_strips_safeguards() {
+    let provider = BedrockProvider;
+    let dep = bedrock_deployment("bedrock/anthropic.claude-sonnet-4-6");
+    let req = json!({
+        "model": "bedrock/anthropic.claude-sonnet-4-6",
+        "messages": [{"role": "user", "content": "hi"}],
+        "compaction": {"type": "auto", "max_tokens": 50000},
+        "safeguards": {"enabled": true},
+    });
+    let out = provider.transform_request(&req, &dep).expect("invoke ok");
+    assert_eq!(
+        out["compaction"],
+        json!({"type": "auto", "max_tokens": 50000})
+    );
+    assert!(
+        out.get("safeguards").is_none(),
+        "bedrock invoke must drop unsupported safeguards: {out}"
+    );
+    let betas: Vec<&str> = out["anthropic_beta"]
+        .as_array()
+        .expect("anthropic_beta array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        betas.contains(&crate::anthropic::BETA_COMPACT_2026_09_04),
+        "missing compact-2026-09-04 beta: {betas:?}"
+    );
+}
+
+#[test]
+fn invoke_emits_compact_beta_when_message_contains_compaction_block() {
+    let provider = BedrockProvider;
+    let dep = bedrock_deployment("bedrock/anthropic.claude-sonnet-4-6");
+    let req = json!({
+        "model": "bedrock/anthropic.claude-sonnet-4-6",
+        "messages": [{
+            "role": "assistant",
+            "content": [{"type": "compaction", "content": "summary"}]
+        }],
+    });
+    let out = provider.transform_request(&req, &dep).expect("invoke ok");
+    let betas: Vec<&str> = out["anthropic_beta"]
+        .as_array()
+        .expect("anthropic_beta array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        betas.contains(&crate::anthropic::BETA_COMPACT_2026_09_04),
+        "missing compact-2026-09-04 beta for compaction block: {betas:?}"
+    );
+}
+
+#[test]
+fn invoke_drops_non_object_compaction_without_adding_beta() {
+    let provider = BedrockProvider;
+    let dep = bedrock_deployment("bedrock/anthropic.claude-sonnet-4-6");
+    let req = json!({
+        "model": "bedrock/anthropic.claude-sonnet-4-6",
+        "messages": [{"role": "user", "content": "hi"}],
+        "compaction": "invalid",
+    });
+    let out = provider.transform_request(&req, &dep).expect("invoke ok");
+    assert!(out.get("compaction").is_none());
+    assert!(
+        out.get("anthropic_beta")
+            .and_then(|v| v.as_array())
+            .is_none_or(|arr| !arr
+                .iter()
+                .any(|b| b.as_str() == Some(crate::anthropic::BETA_COMPACT_2026_09_04))),
+    );
+}
+
+#[test]
+fn converse_inference_profile_arn_recognizes_moonshot_base_model() {
+    let provider = BedrockProvider;
+    let mut dep = bedrock_deployment(
+        "bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/kimi-profile",
+    );
+    dep.oxllm_params
+        .extra
+        .insert("base_model".into(), json!("bedrock/moonshotai.kimi-k2.5"));
+    let req = json!({
+        "model": dep.model_name,
+        "messages": [{"role": "user", "content": "hi"}],
+    });
+    let out = provider
+        .transform_request(&req, &dep)
+        .expect("moonshot arn ok");
+    assert!(out.get("messages").is_some());
+
+    dep.oxllm_params.extra.insert(
+        "base_model".into(),
+        json!("bedrock/moonshot.kimi-k2-thinking"),
+    );
+    let out2 = provider
+        .transform_request(&req, &dep)
+        .expect("moonshot legacy arn ok");
+    assert!(out2.get("messages").is_some());
+}
+
+#[test]
+fn bedrock_embed_merges_extra_body_and_protects_inputs() {
+    let cohere_dep = bedrock_deployment("bedrock/cohere.embed-english-v3");
+    let cohere_req = json!({
+        "input": ["hello"],
+        "extra_body": {
+            "texts": ["evil"],
+            "input_type": "classification",
+            "truncate": "NONE",
+            "embedding_types": ["float", "int8"],
+        },
+    });
+    let cohere_out =
+        super::embed::transform_request(&cohere_req, &cohere_dep).expect("cohere embed ok");
+    assert_eq!(cohere_out["texts"], json!(["hello"]));
+    assert_eq!(cohere_out["input_type"], "classification");
+    assert_eq!(cohere_out["truncate"], "NONE");
+    assert_eq!(cohere_out["embedding_types"], json!(["float", "int8"]));
+
+    // Explicit top-level parameters must override defaults AND extra_body.
+    let explicit_req = json!({
+        "input": ["hello"],
+        "input_type": "search_query",
+        "dimensions": 256,
+        "extra_body": {
+            "input_type": "classification",
+            "output_dimension": 512,
+        },
+    });
+    let explicit_out =
+        super::embed::transform_request(&explicit_req, &cohere_dep).expect("cohere explicit ok");
+    assert_eq!(explicit_out["input_type"], "search_query");
+    assert_eq!(explicit_out["output_dimension"], 256);
+
+    let titan_dep = bedrock_deployment("bedrock/amazon.titan-embed-text-v2:0");
+    let titan_req = json!({
+        "input": "hello titan",
+        "extra_body": {
+            "inputText": "evil",
+            "normalize": true,
+            "dimensions": 512,
+        },
+    });
+    let titan_out =
+        super::embed::transform_request(&titan_req, &titan_dep).expect("titan embed ok");
+    assert_eq!(titan_out["inputText"], "hello titan");
+    assert_eq!(titan_out["normalize"], true);
+    assert_eq!(titan_out["dimensions"], 512);
+}

@@ -1232,3 +1232,61 @@ router_settings:
     assert_eq!(flex_resp.status(), 429);
     proxy.shutdown();
 }
+
+#[tokio::test]
+async fn streaming_tool_calls_with_spurious_stop_finish_reason_normalize_to_tool_calls() {
+    let upstream = httpmock::MockServer::start_async().await;
+    let config = parse_config_str(&format!(
+        r#"
+model_list:
+  - model_name: compat-tools
+    oxllm_params:
+      model: openai/gpt-4o
+      api_base: {base}
+      api_key: synthetic-key
+general_settings:
+  allow_private_api_base: true
+"#,
+        base = upstream.base_url()
+    ))
+    .unwrap();
+    let mock = upstream
+        .mock_async(|when, then| {
+            when.method(POST).path("/chat/completions");
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .body(concat!(
+                    "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"ping\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
+                    "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n"
+                ));
+        })
+        .await;
+    let (proxy, _) = common::start_oxllm(config).await.unwrap();
+    let response = common::http_client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&json!({
+            "model": "compat-tools",
+            "stream": true,
+            "messages": [{"role": "user", "content": "ping"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+    let finish_reasons: Vec<_> = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter(|data| *data != "[DONE]")
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .filter_map(|chunk| {
+            chunk["choices"][0]["finish_reason"]
+                .as_str()
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(finish_reasons, vec!["tool_calls".to_string()], "{body}");
+    mock.assert_hits_async(1).await;
+    proxy.shutdown();
+}
