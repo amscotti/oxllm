@@ -46,8 +46,21 @@ impl SkillsCache {
         }
     }
 
+    fn lock_entries(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, CacheEntry>> {
+        self.entries.lock().unwrap_or_else(|poisoned| {
+            let mut guard = poisoned.into_inner();
+            // Discard potentially half-mutated cache state and clear the poison
+            // flag so subsequent reads/writes do not keep wiping fresh entries.
+            guard.clear();
+            self.entries.clear_poison();
+            guard
+        })
+    }
+
     fn lookup(&self, model: &str) -> Option<Vec<SkillRecord>> {
-        let mut entries = self.entries.lock().expect("skills cache lock");
+        let mut entries = self.lock_entries();
         let now = std::time::Instant::now();
         match entries.get(model) {
             Some(entry) if now < entry.expires_at => Some(entry.records.clone()),
@@ -62,7 +75,7 @@ impl SkillsCache {
     }
 
     fn store(&self, model: &str, records: Vec<SkillRecord>) {
-        let mut entries = self.entries.lock().expect("skills cache lock");
+        let mut entries = self.lock_entries();
         if !entries.contains_key(model) && entries.len() >= SKILLS_CACHE_MAX_MODELS {
             entries.clear();
         }
@@ -78,7 +91,7 @@ impl SkillsCache {
     /// Drop every entry. Called by the skills write paths so this process's
     /// reads never observe its own just-written state stale.
     pub(crate) fn invalidate(&self) {
-        self.entries.lock().expect("skills cache lock").clear();
+        self.lock_entries().clear();
     }
 
     /// Test hook: expire every entry so the next lookup misses. Uses
@@ -89,7 +102,7 @@ impl SkillsCache {
         let past = std::time::Instant::now()
             .checked_sub(std::time::Duration::from_secs(1))
             .expect("monotonic clock supports 1s lookback");
-        let mut entries = self.entries.lock().expect("skills cache lock");
+        let mut entries = self.lock_entries();
         for entry in entries.values_mut() {
             entry.expires_at = past;
         }
@@ -379,5 +392,40 @@ mod tests {
         // Pattern ending mid-character: suffix must match.
         assert!(glob_match("gpt-*o", "gpt-4o"));
         assert!(!glob_match("gpt-*o", "gpt-4o-mini"));
+    }
+
+    #[test]
+    fn skills_cache_recovers_from_poisoned_mutex_without_panicking() {
+        use super::SkillsCache;
+        use crate::types::SkillRecord;
+
+        let cache = std::sync::Arc::new(SkillsCache::new());
+        cache.store(
+            "gpt-4o",
+            vec![SkillRecord {
+                id: "s1".to_string(),
+                name: "skill".to_string(),
+                description: None,
+                content: "prompt".to_string(),
+                version: "1".to_string(),
+                model_pattern: Some("gpt-*".to_string()),
+                team_id: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            }],
+        );
+
+        let poisoned = cache.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.entries.lock().unwrap();
+            panic!("simulated panic while holding skills cache lock");
+        })
+        .join();
+
+        assert!(cache.lookup("gpt-4o").is_none());
+        cache.store("gpt-4o", vec![]);
+        assert_eq!(cache.lookup("gpt-4o").map(|v| v.len()), Some(0));
+        cache.invalidate();
+        assert!(cache.lookup("gpt-4o").is_none());
     }
 }

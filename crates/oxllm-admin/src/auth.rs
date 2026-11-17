@@ -118,11 +118,7 @@ pub fn create_login_csrf(secret: &str, secure: bool) -> (String, String) {
 /// Verify a `POST /login` CSRF submission: the hidden form field must match
 /// the token in the server-issued (signed) login-CSRF cookie.
 pub fn login_csrf_ok(headers: &axum::http::HeaderMap, secret: &str, presented: &str) -> bool {
-    let Some(value) = headers
-        .get(axum::http::header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|header| find_cookie(header, LOGIN_CSRF_COOKIE))
-    else {
+    let Some(value) = find_cookie_in_headers(headers, LOGIN_CSRF_COOKIE) else {
         return false;
     };
     let Some((token, tag_hex)) = value.split_once('.') else {
@@ -180,10 +176,7 @@ pub fn parse_session(secret: &str, cookie_value: &str) -> Option<SessionInfo> {
 /// Extract the CSRF token from a verified session cookie header. Returns
 /// `None` when the cookie is missing or invalid.
 pub fn csrf_token_from_headers(headers: &axum::http::HeaderMap, secret: &str) -> Option<String> {
-    headers
-        .get(axum::http::header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|header| find_cookie(header, SESSION_COOKIE))
+    find_cookie_in_headers(headers, SESSION_COOKIE)
         .and_then(|value| parse_session(secret, value).map(|i| i.csrf_token))
 }
 
@@ -196,11 +189,7 @@ pub async fn require_session(
     mut req: Request,
     next: Next,
 ) -> Response {
-    let info = req
-        .headers()
-        .get(axum::http::header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|header| find_cookie(header, SESSION_COOKIE))
+    let info = find_cookie_in_headers(req.headers(), SESSION_COOKIE)
         .and_then(|value| parse_session(&state.config.session_secret, value));
 
     if let Some(info) = info {
@@ -231,6 +220,17 @@ pub async fn require_session(
 /// Handlers consume it via `axum::Extension` to render it into the page.
 #[derive(Clone, Debug)]
 pub struct SessionCsrf(pub String);
+
+/// Locate `name` across all `Cookie` header fields (RFC 9113 allows HTTP/2
+/// peers to send multiple `cookie` headers instead of `;`-joining them),
+/// skipping any non-UTF-8 header value rather than aborting.
+fn find_cookie_in_headers<'a>(headers: &'a axum::http::HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find_map(|header| find_cookie(header, name))
+}
 
 fn find_cookie<'a>(header: &'a str, name: &str) -> Option<&'a str> {
     let prefix = format!("{name}=");
@@ -1057,6 +1057,39 @@ mod tests {
         assert_eq!(
             client_from_xff(&headers, &trusted),
             Some("203.0.113.7".to_string())
+        );
+    }
+
+    #[test]
+    fn cookie_helpers_find_cookie_across_split_headers_and_skip_non_utf8() {
+        use axum::http::HeaderValue;
+
+        let (csrf_token, csrf_cookie) = create_login_csrf(SECRET, false);
+        let csrf_nv = csrf_cookie.split(';').next().unwrap();
+        let session = create_session(SECRET, 1);
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.append(
+            axum::http::header::COOKIE,
+            HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+        );
+        headers.append(
+            axum::http::header::COOKIE,
+            HeaderValue::from_static("unrelated=1"),
+        );
+        headers.append(
+            axum::http::header::COOKIE,
+            HeaderValue::from_str(csrf_nv).unwrap(),
+        );
+        headers.append(
+            axum::http::header::COOKIE,
+            HeaderValue::from_str(&format!("{SESSION_COOKIE}={}", session.cookie_value)).unwrap(),
+        );
+
+        assert!(login_csrf_ok(&headers, SECRET, &csrf_token));
+        assert_eq!(
+            csrf_token_from_headers(&headers, SECRET).as_deref(),
+            Some(session.csrf_token.as_str())
         );
     }
 }

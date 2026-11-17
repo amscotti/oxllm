@@ -230,8 +230,8 @@ pub struct AppState {
     /// and the connection peer IP is used directly.
     pub trusted_proxies: Arc<[ipnet::IpNet]>,
     /// Parsed CIDR allowlist for `general_settings.allowed_ips`. `None` when
-    /// the allowlist is not configured (all IPs allowed). `Some([])` is
-    /// treated the same as `None` by the middleware.
+    /// the allowlist is not configured (all IPs allowed). `Some([])` is treated
+    /// as fail-closed (no IP can match) and denies all requests.
     pub allowed_ips: Option<Arc<[ipnet::IpNet]>>,
     /// The credential resolver registry used to materialize
     /// [`oxllm_core::provider::ResolvedCredentials`] for each deployment before invoking provider

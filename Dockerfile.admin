@@ -1,4 +1,4 @@
-FROM rust:1.96-bookworm AS builder
+FROM rust:1.100-bookworm AS builder
 WORKDIR /app
 
 # Build the real workspace, including all declared targets and embedded templates.

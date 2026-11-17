@@ -783,4 +783,107 @@ mod tests {
             "threshold change must rebuild the Slack AlertState Arc"
         );
     }
+
+    #[test]
+    fn reload_preserves_guardrails_when_unchanged_and_rebuilds_on_change() {
+        use crate::config::types::{
+            AimConfig, GeneralSettings, GuardrailsConfig, LakeraConfig, PiiMaskingConfig,
+            PresidioConfig, PromptInjectionConfig,
+        };
+        use crate::guardrails::BedrockGuardrail;
+
+        let mk = |lang: &str, drop_params: bool| {
+            let general = GeneralSettings {
+                allow_private_api_base: Some(true),
+                guardrails: Some(GuardrailsConfig {
+                    pii_masking: Some(PiiMaskingConfig {
+                        enabled: true,
+                        exclude: None,
+                    }),
+                    prompt_injection: Some(PromptInjectionConfig {
+                        enabled: true,
+                        action: None,
+                        threshold: None,
+                    }),
+                    presidio: Some(PresidioConfig {
+                        enabled: Some(true),
+                        url: "https://presidio.example.invalid".to_string(),
+                        language: Some(lang.to_string()),
+                        analyze_endpoint: None,
+                        anonymize_endpoint: None,
+                        timeout_secs: None,
+                        anonymizers: None,
+                    }),
+                    aim: Some(AimConfig {
+                        enabled: Some(true),
+                        url: "https://aim.example.invalid".to_string(),
+                        api_key: "aim-key".to_string(),
+                        threshold: None,
+                        timeout_secs: None,
+                    }),
+                    lakera: Some(LakeraConfig {
+                        enabled: Some(true),
+                        api_key: "lakera-key".to_string(),
+                        endpoint: Some("https://lakera.example.invalid".to_string()),
+                        threshold: None,
+                        timeout_secs: None,
+                        mode: None,
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let settings = OxllmSettings {
+                drop_params: Some(drop_params),
+                ..Default::default()
+            };
+            proxy_with_general(general, settings)
+        };
+
+        let mut state = AppState::new(mk("en", false)).expect("build initial state");
+        assert!(state.pii_guardrail.is_some());
+        assert!(state.injection_guardrail.is_some());
+        assert!(state.presidio_guardrail.is_some());
+        assert!(state.aim_guardrail.is_some());
+        assert!(state.lakera_guardrail.is_some());
+
+        // Attach a directly-constructed BedrockGuardrail (avoiding AWS env
+        // mutation under `#![forbid(unsafe_code)]`) so we can assert cache/Arc
+        // preservation directly across reload.
+        let sentinel = BedrockGuardrail::new(
+            "gr-test".to_string(),
+            "1".to_string(),
+            Some("us-east-1".to_string()),
+            "AKIATEST".to_string(),
+            "secret".to_string(),
+            None,
+            Some(5),
+        )
+        .expect("build bedrock guardrail");
+        state.bedrock_guardrail = Some(sentinel.clone());
+
+        let reloaded = state
+            .reload_from_config(mk("en", true))
+            .expect("reload state with unchanged guardrails");
+        let preserved = reloaded
+            .bedrock_guardrail
+            .as_ref()
+            .expect("guardrail block must be reused rather than rebuilt");
+        assert!(
+            sentinel.shares_cache_with(preserved),
+            "reload must reuse guardrails when config is unchanged"
+        );
+        assert!(reloaded.presidio_guardrail.is_some());
+        assert!(reloaded.aim_guardrail.is_some());
+        assert!(reloaded.lakera_guardrail.is_some());
+
+        let rebuilt_state = reloaded
+            .reload_from_config(mk("fr", true))
+            .expect("reload state with changed guardrail config");
+        assert!(
+            rebuilt_state.bedrock_guardrail.is_none(),
+            "guardrail config change must rebuild via build_guardrails instead of reusing prev"
+        );
+        assert!(rebuilt_state.presidio_guardrail.is_some());
+    }
 }

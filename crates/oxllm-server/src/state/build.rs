@@ -638,26 +638,42 @@ pub(crate) fn assemble(
         None => build_credential_resolver(),
     };
 
+    // Guardrails (regex/keyword/json_path/semantic/MCP, PII/injection regexes,
+    // Presidio/AIM/Lakera/Bedrock HTTP & SigV4 clients + caches, and Model
+    // Armor) are built once and cached on AppState so requests do not
+    // recompile regexes or rebuild reqwest::Client per call. All of them are
+    // preserved across reloads whenever the guardrails config section and
+    // `allow_private_api_base` are unchanged (same pattern as the JWT
+    // validator / HTTP client preservation).
     let (
-        pii_guardrail,
-        injection_guardrail,
-        presidio_guardrail,
-        aim_guardrail,
-        lakera_guardrail,
-        bedrock_guardrail,
-    ) = crate::guardrails::build_guardrails(&config)?;
-
-    // The user-defined guardrail chain (custom regex/keyword/json_path/http +
-    // semantic + MCP) and Model Armor are built once and cached on AppState
-    // so chat requests do not recompile regexes or rebuild reqwest::Client per
-    // call. Preserved across reloads when the guardrails config section is
-    // unchanged (same pattern as the JWT validator / HTTP client preservation).
-    let (custom_guardrail_chain, model_armor) = match old {
-        Some(prev) if reload::guardrails_config_unchanged(&prev.config, &config) => (
-            prev.custom_guardrail_chain.clone(),
-            prev.model_armor.clone(),
+        (
+            pii_guardrail,
+            injection_guardrail,
+            presidio_guardrail,
+            aim_guardrail,
+            lakera_guardrail,
+            bedrock_guardrail,
         ),
-        _ => crate::guardrails::build_user_guardrails(&config)?,
+        (custom_guardrail_chain, model_armor),
+    ) = match old {
+        Some(prev) if reload::guardrails_config_unchanged(&prev.config, &config) => (
+            (
+                prev.pii_guardrail.clone(),
+                prev.injection_guardrail.clone(),
+                prev.presidio_guardrail.clone(),
+                prev.aim_guardrail.clone(),
+                prev.lakera_guardrail.clone(),
+                prev.bedrock_guardrail.clone(),
+            ),
+            (
+                prev.custom_guardrail_chain.clone(),
+                prev.model_armor.clone(),
+            ),
+        ),
+        _ => (
+            crate::guardrails::build_guardrails(&config)?,
+            crate::guardrails::build_user_guardrails(&config)?,
+        ),
     };
 
     Ok(AppState {

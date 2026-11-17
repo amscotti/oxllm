@@ -12,7 +12,7 @@ pub struct AlertingConfig {
     pub webhook: Option<WebhookAlertConfig>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebhookAlertConfig {
     pub url: String,
@@ -30,7 +30,22 @@ pub struct WebhookAlertConfig {
     pub soft_budget_pct: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+impl std::fmt::Debug for WebhookAlertConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookAlertConfig")
+            .field("url", &super::redact_str(&self.url))
+            .field(
+                "headers",
+                &self.headers.as_ref().map(super::RedactedHeaders),
+            )
+            .field("thresholds", &self.thresholds)
+            .field("webhook_type", &self.webhook_type)
+            .field("soft_budget_pct", &self.soft_budget_pct)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlackAlertConfig {
     pub webhook_url: String,
@@ -44,7 +59,18 @@ pub struct SlackAlertConfig {
     pub soft_budget_pct: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+impl std::fmt::Debug for SlackAlertConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SlackAlertConfig")
+            .field("webhook_url", &super::redact_str(&self.webhook_url))
+            .field("channel", &self.channel)
+            .field("thresholds", &self.thresholds)
+            .field("soft_budget_pct", &self.soft_budget_pct)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PagerDutyConfig {
     pub routing_key: String,
@@ -63,6 +89,17 @@ pub struct PagerDutyConfig {
     pub soft_budget_pct: Option<f64>,
 }
 
+impl std::fmt::Debug for PagerDutyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PagerDutyConfig")
+            .field("routing_key", &super::redact_str(&self.routing_key))
+            .field("thresholds", &self.thresholds)
+            .field("endpoint", &self.endpoint)
+            .field("soft_budget_pct", &self.soft_budget_pct)
+            .finish()
+    }
+}
+
 /// Configuration for the email (SMTP) budget-threshold alerting hook.
 ///
 /// ```yaml
@@ -77,7 +114,7 @@ pub struct PagerDutyConfig {
 ///     ssl: true
 ///     thresholds: [0.8, 0.9, 1.0]
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmailAlertConfig {
     /// SMTP server hostname.
@@ -107,6 +144,22 @@ pub struct EmailAlertConfig {
     /// [`WebhookAlertConfig::soft_budget_pct`].
     #[serde(default)]
     pub soft_budget_pct: Option<f64>,
+}
+
+impl std::fmt::Debug for EmailAlertConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailAlertConfig")
+            .field("smtp_host", &self.smtp_host)
+            .field("smtp_port", &self.smtp_port)
+            .field("smtp_username", &self.smtp_username)
+            .field("smtp_password", &super::redact_opt(&self.smtp_password))
+            .field("from", &self.from)
+            .field("to", &self.to)
+            .field("ssl", &self.ssl)
+            .field("thresholds", &self.thresholds)
+            .field("soft_budget_pct", &self.soft_budget_pct)
+            .finish()
+    }
 }
 
 fn default_smtp_port() -> u16 {

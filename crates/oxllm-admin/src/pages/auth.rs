@@ -72,12 +72,21 @@ pub(crate) async fn login_form(State(state): State<AppState>) -> Result<Response
         .into_response())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub(crate) struct LoginForm {
     password: String,
     /// Pre-login CSRF token echoed from the login form's hidden field.
     #[serde(default)]
     csrf_token: String,
+}
+
+impl std::fmt::Debug for LoginForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoginForm")
+            .field("password", &"<redacted>")
+            .field("csrf_token", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Optional connection peer. Present when the server is started with
@@ -167,4 +176,21 @@ pub(crate) async fn login(
 
 pub(crate) async fn index() -> impl IntoResponse {
     (StatusCode::SEE_OTHER, [("location", "/dashboard")])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LoginForm;
+
+    #[test]
+    fn login_form_debug_redacts_password_and_csrf_token() {
+        let form = LoginForm {
+            password: "hunter2-secret-password".to_string(),
+            csrf_token: "csrf-secret-token-value".to_string(),
+        };
+        let dbg = format!("{form:?}");
+        assert!(!dbg.contains("hunter2-secret-password"));
+        assert!(!dbg.contains("csrf-secret-token-value"));
+        assert!(dbg.contains("<redacted>"));
+    }
 }

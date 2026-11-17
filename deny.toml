@@ -19,6 +19,18 @@ ignore = [
     # trusted (operator-supplied), not untrusted input. Ignored pending migration
     # to a maintained fork (serde_yaml_ng / serde_norway).
     "RUSTSEC-2025-0068",
+    # libsqlite3-sys < 0.39.0 bundled SQLite < 3.54.0 CVE-2026-119375 (RUSTSEC-2026-0459).
+    # Pulled transitively via `sqlx-sqlite 0.8.6` (`libsqlite3-sys ^0.30.1`); no
+    # sqlx release upgrades `libsqlite3-sys` to >= 0.39.0 yet. Only triggered by
+    # opening an untrusted `.db` + mismatched-page-size `-wal` file pair; oxllm
+    # only opens trusted server-managed SQLite databases (or in-memory `:memory:`
+    # in tests). Tracked upstream in sqlx.
+    "RUSTSEC-2026-0459",
+    # pin-utils archived / unmaintained (RUSTSEC-2026-0441), no safe upgrade
+    # available. Pulled transitively by `aws-smithy-{http,runtime,types}` (AWS
+    # Bedrock SDK) and dev-dependency `httpmock 0.7.0 -> async-std`. Provides only
+    # declarative pinning macros (`pin_mut!` / `unsafe_pinned!`) with no CVE.
+    "RUSTSEC-2026-0441",
 ]
 
 [licenses]

@@ -89,7 +89,7 @@ pub struct PresidioConfig {
 /// `required_action.action_type` of `"monitor_action"`, `"block_action"`,
 /// or `"anonymize_action"`. Oxllm blocks when the policy reports
 /// `block_action` (matching the verified reference integration).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AimConfig {
     /// Master switch. The guardrail is only constructed when
@@ -111,13 +111,25 @@ pub struct AimConfig {
     pub timeout_secs: Option<u64>,
 }
 
+impl std::fmt::Debug for AimConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AimConfig")
+            .field("enabled", &self.enabled)
+            .field("url", &self.url)
+            .field("api_key", &super::redact_str(&self.api_key))
+            .field("threshold", &self.threshold)
+            .field("timeout_secs", &self.timeout_secs)
+            .finish()
+    }
+}
+
 /// Configuration for the Lakera AI prompt-injection detection API.
 ///
 /// Lakera Guard calls `POST {endpoint}/v2/guard` with the chat messages and
 /// blocks when the response reports `flagged: true` (matching the reference v2
 /// `lakera_ai_v2.LakeraAIResponse` shape and `if lakera_response.get("flagged")
 /// is True` semantics). Fail-open: on service errors the request is allowed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LakeraConfig {
     /// Master switch. Defaults to `true` when the section is present.
@@ -144,6 +156,19 @@ pub struct LakeraConfig {
     /// want to observe detections before enforcing blocks.
     #[serde(default)]
     pub mode: Option<String>,
+}
+
+impl std::fmt::Debug for LakeraConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LakeraConfig")
+            .field("enabled", &self.enabled)
+            .field("api_key", &super::redact_str(&self.api_key))
+            .field("endpoint", &self.endpoint)
+            .field("threshold", &self.threshold)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("mode", &self.mode)
+            .finish()
+    }
 }
 
 /// Configuration for the AWS Bedrock Guardrails integration.
@@ -176,7 +201,7 @@ pub struct BedrockGuardrailConfig {
 /// Calls `POST {endpoint}` with `{ messages: [...] }` and blocks when the
 /// response reports `blocked: true` or the `risk_score` clears the configured
 /// threshold. Fail-open: on service errors the request is allowed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelArmorConfig {
     /// Master switch. Defaults to `true` when the section is present.
@@ -194,6 +219,18 @@ pub struct ModelArmorConfig {
     /// HTTP request timeout in seconds (default 5, minimum 1).
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+}
+
+impl std::fmt::Debug for ModelArmorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelArmorConfig")
+            .field("enabled", &self.enabled)
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &super::redact_opt(&self.api_key))
+            .field("threshold", &self.threshold)
+            .field("timeout_secs", &self.timeout_secs)
+            .finish()
+    }
 }
 
 /// Configuration for the PII masking guardrail.
@@ -235,7 +272,7 @@ pub struct PromptInjectionConfig {
 /// - `keyword`   — `{ blocklist: [], allowlist: [], action? }`
 /// - `json_path` — `{ rules: [{ path, operator, value?, action? }] }`
 /// - `http`      — `{ url, method?, headers?, timeout_secs?, block_on: { field, value }, fail_open? }`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustomGuardrailConfig {
     /// Human-readable name used in logs.
@@ -246,6 +283,16 @@ pub struct CustomGuardrailConfig {
     /// Type-specific configuration (an arbitrary JSON object).
     #[serde(default)]
     pub config: serde_json::Value,
+}
+
+impl std::fmt::Debug for CustomGuardrailConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomGuardrailConfig")
+            .field("name", &self.name)
+            .field("guardrail_type", &self.guardrail_type)
+            .field("config", &super::RedactedValue(&self.config))
+            .finish()
+    }
 }
 
 /// Semantic-similarity blocked-phrase guard configuration, declared under

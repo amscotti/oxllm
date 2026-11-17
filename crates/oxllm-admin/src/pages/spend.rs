@@ -847,14 +847,17 @@ pub(crate) async fn fetch_spend_pages(
         if batch.is_empty() {
             break;
         }
-        let next = value
-            .get("next_cursor")
-            .and_then(|v| v.as_i64())
-            .or_else(|| {
-                batch
-                    .last()
-                    .and_then(|r| r.get("id").and_then(|i| i.as_i64()))
-            });
+        // Respect an explicit `"next_cursor": null` from the proxy (final page)
+        // rather than falling back to `batch.last().id`, which otherwise fires
+        // an extra empty-page request and misreports `truncated_by_row_cap` if
+        // the total happens to equal `max_rows`. Only legacy proxies that omit
+        // the `"next_cursor"` field fall back to the row id.
+        let next = match value.get("next_cursor") {
+            Some(v) => v.as_i64(),
+            None => batch
+                .last()
+                .and_then(|r| r.get("id").and_then(|i| i.as_i64())),
+        };
         let batch_len = batch.len();
         rows.extend(batch);
         if rows.len() >= max_rows {

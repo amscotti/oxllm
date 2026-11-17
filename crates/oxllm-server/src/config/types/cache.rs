@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Cache configuration within `oxllm_settings`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct CacheConfig {
     /// Cache backend type: `"memory"` (default), `"redis"`, `"s3"`, `"gcs"`,
     /// or `"azure"`. The blob-store backends (`s3`/`gcs`/`azure`) serve cached
@@ -46,11 +46,27 @@ pub struct CacheConfig {
     pub semantic_cache: Option<SemanticCacheConfig>,
 }
 
+impl std::fmt::Debug for CacheConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CacheConfig")
+            .field("cache_type", &self.cache_type)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("redis_url", &super::redact_opt(&self.redis_url))
+            .field("prefix", &self.prefix)
+            .field("s3", &self.s3)
+            .field("gcs", &self.gcs)
+            .field("azure", &self.azure)
+            .field("semantic_cache", &self.semantic_cache)
+            .finish()
+    }
+}
+
 /// S3-compatible object-storage cache backend (AWS S3, MinIO, R2, …).
 ///
 /// The raw backend rejects counter writes; the server wiring layers an
 /// in-memory counter store so rate limits and budgets are enforced per replica.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct S3CacheConfig {
     /// Bucket name.
@@ -78,6 +94,23 @@ pub struct S3CacheConfig {
     pub endpoint: Option<String>,
 }
 
+impl std::fmt::Debug for S3CacheConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3CacheConfig")
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("prefix", &self.prefix)
+            .field("access_key_id", &super::redact_opt(&self.access_key_id))
+            .field(
+                "secret_access_key",
+                &super::redact_opt(&self.secret_access_key),
+            )
+            .field("session_token", &super::redact_opt(&self.session_token))
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
+}
+
 /// Google Cloud Storage cache backend.
 ///
 /// Response-cache-only: counter writes are unsupported. Per-object TTL is enforced
@@ -86,7 +119,7 @@ pub struct S3CacheConfig {
 /// preconditions and treat expired or legacy unversioned objects as misses;
 /// objects are not auto-deleted, so bucket lifecycle rules should still be
 /// configured to reclaim space.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GcsCacheConfig {
     /// Bucket name.
@@ -102,13 +135,26 @@ pub struct GcsCacheConfig {
     pub service_account_json: Option<String>,
 }
 
+impl std::fmt::Debug for GcsCacheConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GcsCacheConfig")
+            .field("bucket", &self.bucket)
+            .field("prefix", &self.prefix)
+            .field(
+                "service_account_json",
+                &super::redact_opt(&self.service_account_json),
+            )
+            .finish()
+    }
+}
+
 /// Azure Blob Storage cache backend.
 ///
 /// Response-cache-only: counter writes are unsupported. Per-object TTL is enforced
 /// client-side via the `x-ms-meta-expires` metadata deadline (reads past
 /// the deadline are misses); blobs are not auto-deleted, so container
 /// lifecycle rules should still be configured to reclaim space.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AzureBlobCacheConfig {
     /// Storage account name.
@@ -127,8 +173,22 @@ pub struct AzureBlobCacheConfig {
     pub connection_string: Option<String>,
 }
 
+impl std::fmt::Debug for AzureBlobCacheConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AzureBlobCacheConfig")
+            .field("account", &self.account)
+            .field("container", &self.container)
+            .field("prefix", &self.prefix)
+            .field(
+                "connection_string",
+                &super::redact_opt(&self.connection_string),
+            )
+            .finish()
+    }
+}
+
 /// Semantic-cache configuration, opt-in via `oxllm_settings.cache.semantic_cache`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SemanticCacheConfig {
     /// Master switch. When `false` (or absent) semantic caching is disabled.
@@ -180,6 +240,25 @@ pub struct SemanticCacheConfig {
     /// creation). Defaults to `1536` (OpenAI `text-embedding-3-small`).
     #[serde(default)]
     pub qdrant_dimension: Option<usize>,
+}
+
+impl std::fmt::Debug for SemanticCacheConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SemanticCacheConfig")
+            .field("enabled", &self.enabled)
+            .field("embedding_model", &self.embedding_model)
+            .field("similarity_threshold", &self.similarity_threshold)
+            .field("max_entries", &self.max_entries)
+            .field("ttl_secs", &self.ttl_secs)
+            .field("api_base", &self.api_base)
+            .field("api_key", &super::redact_opt(&self.api_key))
+            .field("redis_url", &super::redact_opt(&self.redis_url))
+            .field("qdrant_url", &self.qdrant_url)
+            .field("qdrant_api_key", &super::redact_opt(&self.qdrant_api_key))
+            .field("qdrant_collection", &self.qdrant_collection)
+            .field("qdrant_dimension", &self.qdrant_dimension)
+            .finish()
+    }
 }
 
 fn nonempty_cache_prefix<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>

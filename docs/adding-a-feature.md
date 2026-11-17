@@ -327,11 +327,11 @@ management). Requires the `db` feature.
    sits behind master-key-only auth + auth-brake + optional CORS — don't add
    per-route auth.
 4. **Invalidation**: if the endpoint mutates cached state (keys, models),
-   publish on the `oxllm:invalidate` channel via the `Coordinator` so other
-   replicas drop their local caches. Use the
-   `auth::invalidate_cache_key(&state, cache_key)` helper (`auth/mod.rs`) —
-   it clears both the local moka entry and the negative-cache entry, and
-   publishes the cross-replica invalidation in one call (see existing
+   publish on the `oxllm:invalidate` channel via `state.cache` (not
+   `Coordinator`, which backs `AuthBrake` only) so other replicas drop their
+   local caches. Use the `auth::invalidate_cache_key(&state, cache_key)` helper
+   (`auth/mod.rs`) — it clears both the local moka entry and the negative-cache
+   entry, and publishes the cross-replica invalidation in one call (see existing
    mutation handlers like key delete / team add).
 5. **Admin UI** (optional): add a page/handler in `oxllm-admin/src/pages/`
    and call the endpoint through `proxy_client.rs`.

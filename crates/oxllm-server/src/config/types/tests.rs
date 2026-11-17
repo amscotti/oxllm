@@ -543,3 +543,153 @@ model_list:
         Some("1d")
     );
 }
+
+#[test]
+fn secret_bearing_config_structs_redact_secrets_in_debug() {
+    use std::collections::HashMap;
+
+    let sentinel = "super-secret-value-xyz";
+    let cfg = ProxyConfig {
+        model_list: vec![],
+        oxllm_settings: OxllmSettings {
+            cache: Some(CacheConfig {
+                redis_url: Some(format!("redis://user:{sentinel}@cache.example:6379/0")),
+                s3: Some(S3CacheConfig {
+                    bucket: "b".into(),
+                    access_key_id: Some(sentinel.into()),
+                    secret_access_key: Some(sentinel.into()),
+                    session_token: Some(sentinel.into()),
+                    ..Default::default()
+                }),
+                gcs: Some(GcsCacheConfig {
+                    bucket: "b".into(),
+                    service_account_json: Some(sentinel.into()),
+                    ..Default::default()
+                }),
+                azure: Some(AzureBlobCacheConfig {
+                    account: "a".into(),
+                    container: "c".into(),
+                    connection_string: Some(sentinel.into()),
+                    ..Default::default()
+                }),
+                semantic_cache: Some(SemanticCacheConfig {
+                    api_key: Some(sentinel.into()),
+                    redis_url: Some(format!("redis://user:{sentinel}@sem.example:6379")),
+                    qdrant_api_key: Some(sentinel.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            callback_settings: Some(HashMap::from([(
+                "generic".into(),
+                serde_json::json!({"headers": {"Authorization": format!("Bearer {sentinel}")}}),
+            )])),
+            langfuse_config: Some(LangfuseConfig {
+                host: "https://lf.example".into(),
+                public_key: sentinel.into(),
+                secret_key: sentinel.into(),
+                ..Default::default()
+            }),
+            langsmith_config: Some(LangsmithConfig {
+                api_key: sentinel.into(),
+                project: "p".into(),
+                ..Default::default()
+            }),
+            datadog_config: Some(DatadogConfig {
+                api_key: sentinel.into(),
+                ..Default::default()
+            }),
+            helicone_config: Some(HeliconeConfig {
+                api_key: sentinel.into(),
+                ..Default::default()
+            }),
+            wandb_config: Some(WandbConfig {
+                api_key: sentinel.into(),
+                project: "p".into(),
+                ..Default::default()
+            }),
+            s3_log_config: Some(S3LogConfig {
+                bucket: "b".into(),
+                region: "us-east-1".into(),
+                access_key_id: Some(sentinel.into()),
+                secret_access_key: Some(sentinel.into()),
+                ..Default::default()
+            }),
+            slack_alerting_config: Some(SlackAlertConfig {
+                webhook_url: format!("https://hooks.slack.com/{sentinel}"),
+                ..Default::default()
+            }),
+            pagerduty_config: Some(PagerDutyConfig {
+                routing_key: sentinel.into(),
+                ..Default::default()
+            }),
+            email_alert_config: Some(EmailAlertConfig {
+                smtp_host: "smtp.example".into(),
+                smtp_password: Some(sentinel.into()),
+                from: "a@example".into(),
+                to: vec!["b@example".into()],
+                ..Default::default()
+            }),
+            alerting_config: Some(AlertingConfig {
+                webhook: Some(WebhookAlertConfig {
+                    url: format!("https://wh.example/{sentinel}"),
+                    headers: Some(HashMap::from([("X-Token".into(), sentinel.into())])),
+                    ..Default::default()
+                }),
+            }),
+            extra: serde_json::Map::from_iter([("custom_token".into(), sentinel.into())]),
+            ..Default::default()
+        },
+        general_settings: GeneralSettings {
+            master_key: Some(sentinel.into()),
+            database_url: Some(format!("postgres://u:{sentinel}@db.example/oxllm")),
+            jwt_secret: Some(sentinel.into()),
+            pass_through_endpoints: Some(vec![PassThroughEndpoint {
+                path: "/v1/custom".into(),
+                target: "https://custom.example".into(),
+                headers: Some(HashMap::from([("Authorization".into(), sentinel.into())])),
+            }]),
+            guardrails: Some(GuardrailsConfig {
+                aim: Some(AimConfig {
+                    enabled: Some(true),
+                    url: "https://aim.example".into(),
+                    api_key: sentinel.into(),
+                    threshold: None,
+                    timeout_secs: None,
+                }),
+                lakera: Some(LakeraConfig {
+                    enabled: Some(true),
+                    api_key: sentinel.into(),
+                    endpoint: None,
+                    threshold: None,
+                    timeout_secs: None,
+                    mode: None,
+                }),
+                model_armor: Some(ModelArmorConfig {
+                    enabled: Some(true),
+                    endpoint: "https://ma.example".into(),
+                    api_key: Some(sentinel.into()),
+                    threshold: None,
+                    timeout_secs: None,
+                }),
+                custom_guardrails: Some(vec![CustomGuardrailConfig {
+                    name: "http".into(),
+                    guardrail_type: "http".into(),
+                    config: serde_json::json!({"headers": {"X-Api-Key": sentinel}}),
+                }]),
+                ..Default::default()
+            }),
+            extra: serde_json::Map::from_iter([("extra_secret".into(), sentinel.into())]),
+            ..Default::default()
+        },
+        router_settings: Default::default(),
+        extra: serde_json::Map::from_iter([("top_secret".into(), sentinel.into())]),
+    };
+
+    let dbg = format!("{cfg:?}");
+    assert!(
+        !dbg.contains(sentinel),
+        "config Debug output leaked secret sentinel: {dbg}"
+    );
+    assert!(dbg.contains("<redacted>"));
+}

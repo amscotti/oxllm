@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LangfuseConfig {
     pub host: String,
@@ -19,7 +19,21 @@ pub struct LangfuseConfig {
     pub log_outputs: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+impl std::fmt::Debug for LangfuseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LangfuseConfig")
+            .field("host", &self.host)
+            .field("public_key", &super::redact_str(&self.public_key))
+            .field("secret_key", &super::redact_str(&self.secret_key))
+            .field("flush_interval_secs", &self.flush_interval_secs)
+            .field("max_batch_size", &self.max_batch_size)
+            .field("log_inputs", &self.log_inputs)
+            .field("log_outputs", &self.log_outputs)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LangsmithConfig {
     pub api_key: String,
@@ -28,7 +42,17 @@ pub struct LangsmithConfig {
     pub endpoint: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+impl std::fmt::Debug for LangsmithConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LangsmithConfig")
+            .field("api_key", &super::redact_str(&self.api_key))
+            .field("project", &self.project)
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatadogConfig {
     pub api_key: String,
@@ -38,12 +62,31 @@ pub struct DatadogConfig {
     pub endpoint: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+impl std::fmt::Debug for DatadogConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DatadogConfig")
+            .field("api_key", &super::redact_str(&self.api_key))
+            .field("service", &self.service)
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeliconeConfig {
     pub api_key: String,
     #[serde(default)]
     pub endpoint: Option<String>,
+}
+
+impl std::fmt::Debug for HeliconeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeliconeConfig")
+            .field("api_key", &super::redact_str(&self.api_key))
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -75,7 +118,7 @@ pub struct MlflowConfig {
 ///     entity: my-team
 ///     tags: ["prod"]
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WandbConfig {
     /// W&B API key (sent as `Authorization: Bearer {api_key}`).
@@ -91,6 +134,18 @@ pub struct WandbConfig {
     /// Override the base endpoint (defaults to `https://api.wandb.ai`).
     #[serde(default)]
     pub endpoint: Option<String>,
+}
+
+impl std::fmt::Debug for WandbConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WandbConfig")
+            .field("api_key", &super::redact_str(&self.api_key))
+            .field("project", &self.project)
+            .field("entity", &self.entity)
+            .field("tags", &self.tags)
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
 }
 
 /// Configuration for the S3 log-storage hook.
@@ -109,7 +164,7 @@ pub struct WandbConfig {
 /// the ambient AWS credentials (IRSA / instance role), but since this hook
 /// signs requests with SigV4 directly, explicit credentials are required to be
 /// useful outside of an AWS environment.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct S3LogConfig {
     /// Target S3 bucket name.
@@ -134,4 +189,21 @@ pub struct S3LogConfig {
     /// the reference S3 logging, which persists both halves of the exchange).
     #[serde(default)]
     pub log_response_body: Option<bool>,
+}
+
+impl std::fmt::Debug for S3LogConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3LogConfig")
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("prefix", &self.prefix)
+            .field("access_key_id", &super::redact_opt(&self.access_key_id))
+            .field(
+                "secret_access_key",
+                &super::redact_opt(&self.secret_access_key),
+            )
+            .field("endpoint", &self.endpoint)
+            .field("log_response_body", &self.log_response_body)
+            .finish()
+    }
 }
