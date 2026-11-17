@@ -129,6 +129,20 @@ pub(crate) fn parse_openai_stream_chunk(chunk: &str) -> Result<Option<Value>> {
             .unwrap_or(500);
         return Err(oxllm_core::Error::Upstream { status, message });
     }
+    if value
+        .get("choices")
+        .and_then(Value::as_array)
+        .is_some_and(|choices| {
+            choices
+                .iter()
+                .any(|choice| choice.get("finish_reason").and_then(Value::as_str) == Some("abort"))
+        })
+    {
+        return Err(oxllm_core::Error::Upstream {
+            status: 500,
+            message: "Upstream generation aborted (finish_reason=abort)".to_string(),
+        });
+    }
     Ok(Some(value))
 }
 
@@ -136,9 +150,12 @@ pub(crate) fn parse_openai_stream_chunk(chunk: &str) -> Result<Option<Value>> {
 /// Shared across the `code` and `type` lookup paths.
 fn named_error_status(s: &str) -> Option<u16> {
     match s {
-        "rate_limit_exceeded" | "rate_limit" | "rate_limit_error" | "insufficient_quota" => {
-            Some(429)
-        }
+        "rate_limit_exceeded"
+        | "rate_limit"
+        | "rate_limit_error"
+        | "insufficient_quota"
+        | "resource_unavailable"
+        | "flex_unavailable" => Some(429),
         "invalid_request_error"
         | "context_length_exceeded"
         | "content_policy_violation"
@@ -535,5 +552,45 @@ mod tests {
                 .unwrap_or_else(|| panic!("falsy error must yield a value: {raw}"));
             assert!(out["choices"].is_array(), "payload preserved for: {raw}");
         }
+    }
+
+    #[test]
+    fn flex_and_resource_unavailable_map_to_429() {
+        for status_name in ["resource_unavailable", "flex_unavailable"] {
+            for field in ["code", "type"] {
+                let raw = format!(
+                    r#"data: {{"error":{{"message":"no capacity","{field}":"{status_name}"}}}}"#
+                );
+                let err = parse_openai_stream_chunk(&raw).expect_err("must surface 429 error");
+                assert!(
+                    matches!(
+                        err,
+                        oxllm_core::Error::Upstream { status: 429, message }
+                            if message == "no capacity"
+                    ),
+                    "expected 429 for {field}={status_name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn finish_reason_abort_surfaces_500_upstream_error() {
+        let raw = r#"data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"abort"}]}"#;
+        let err = parse_openai_stream_chunk(raw).expect_err("abort finish_reason must fail");
+        assert!(matches!(
+            err,
+            oxllm_core::Error::Upstream { status: 500, message }
+                if message.contains("finish_reason=abort")
+        ));
+    }
+
+    #[test]
+    fn null_choices_pass_abort_check() {
+        let raw = r#"data: {"id":"x","choices":null,"usage":{"total_tokens":5}}"#;
+        let out = parse_openai_stream_chunk(raw)
+            .expect("null choices must not fail")
+            .expect("chunk");
+        assert!(out["choices"].is_null());
     }
 }

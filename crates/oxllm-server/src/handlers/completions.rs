@@ -71,7 +71,8 @@ pub async fn completions(
 
     let chat_response =
         chat_completions_inner_preserving_stream_usage(state, &auth, &headers, Bytes::from(bytes))
-            .await?;
+            .await
+            .map_err(crate::handlers::chat::openai_route_error)?;
     if !chat_response.status().is_success() {
         return Ok(chat_response);
     }

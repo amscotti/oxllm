@@ -68,6 +68,33 @@ pub const UPSTREAM_RESPONSE_COST_HEADER: &str = "x-oxllm-response-cost";
 /// existing proxies.
 pub const UPSTREAM_RESPONSE_COST_HEADER_LITELLM: &str = "x-litellm-response-cost";
 
+/// Header allowing a passthrough upstream to report the spend-log model label
+/// for requests whose body omits `model`. Label-only; never used for pricing.
+pub const UPSTREAM_MODEL_HEADER: &str = "x-oxllm-upstream-model";
+
+/// Legacy alias for [`UPSTREAM_MODEL_HEADER`].
+pub const UPSTREAM_MODEL_HEADER_LITELLM: &str = "x-litellm-upstream-model";
+
+const MAX_UPSTREAM_REPORTED_MODEL_CHARS: usize = 256;
+
+/// Parse an upstream-reported model label from `x-oxllm-upstream-model` (or its
+/// legacy alias). Uses the first comma-delimited element of the header value
+/// and bounds it to 256 characters. Empty/whitespace-only values return `None`.
+pub fn parse_upstream_reported_model(headers: &HeaderMap) -> Option<String> {
+    let raw = headers
+        .get_all(UPSTREAM_MODEL_HEADER)
+        .iter()
+        .chain(headers.get_all(UPSTREAM_MODEL_HEADER_LITELLM))
+        .find_map(|v| v.to_str().ok())?;
+    let first = raw.split(',').next()?.trim();
+    let bounded = match first.char_indices().nth(MAX_UPSTREAM_REPORTED_MODEL_CHARS) {
+        Some((idx, _)) => &first[..idx],
+        None => first,
+    };
+    let trimmed = bounded.trim_end();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 /// U3: extract token usage from upstream response headers.
 ///
 /// Pass-through targets (another oxllm instance, or an existing proxy) can report
@@ -4028,5 +4055,63 @@ mod tests {
             "at least 2s elapsed * 0.001 $/s (token math would be 0): got {cost}"
         );
         assert!(cost < 0.02, "sanity upper bound (~10x elapsed): got {cost}");
+    }
+
+    #[test]
+    fn parse_upstream_reported_model_takes_first_element_and_bounds_256() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            UPSTREAM_MODEL_HEADER,
+            HeaderValue::from_static(" gpt-4o-mini , other-model "),
+        );
+        assert_eq!(
+            parse_upstream_reported_model(&headers).as_deref(),
+            Some("gpt-4o-mini")
+        );
+
+        let mut blank = HeaderMap::new();
+        blank.insert(
+            UPSTREAM_MODEL_HEADER_LITELLM,
+            HeaderValue::from_static("   "),
+        );
+        assert!(parse_upstream_reported_model(&blank).is_none());
+
+        let long_name = "a".repeat(300);
+        let mut oversized = HeaderMap::new();
+        oversized.insert(
+            UPSTREAM_MODEL_HEADER_LITELLM,
+            HeaderValue::from_str(&long_name).unwrap(),
+        );
+        let parsed = parse_upstream_reported_model(&oversized).unwrap();
+        assert_eq!(parsed.chars().count(), 256);
+    }
+
+    #[tokio::test]
+    async fn upstream_reported_model_labels_summary_without_triggering_catalog_pricing() {
+        use std::sync::{Arc, Mutex};
+        struct SummaryModelHook(Arc<Mutex<Option<String>>>);
+        #[async_trait]
+        impl Hook for SummaryModelHook {
+            async fn post_success(&self, _ctx: &CallContext, resp: &ResponseSummary) {
+                *self.0.lock().unwrap() = Some(resp.model.clone());
+            }
+        }
+        let recorded = Arc::new(Mutex::new(None));
+        let state = state_with_hooks(vec![Arc::new(SummaryModelHook(recorded.clone()))]);
+        let mut ctx = dummy_ctx();
+        ctx.model = "unpriced-passthrough-service".to_string();
+        ctx.upstream_reported_model = Some("gpt-4o".to_string());
+        let usage = UsageSummary {
+            prompt_tokens: 1_000,
+            completion_tokens: 500,
+            total_tokens: 1_500,
+            ..Default::default()
+        };
+        let cost = post_success(&state, &ctx, "gpt-4o", Some(&usage), None, None, "openai").await;
+        assert!(
+            cost.is_none(),
+            "upstream-reported model label must not select gpt-4o catalog price; got {cost:?}"
+        );
+        assert_eq!(recorded.lock().unwrap().as_deref(), Some("gpt-4o"));
     }
 }

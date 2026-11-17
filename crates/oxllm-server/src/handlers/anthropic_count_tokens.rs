@@ -178,10 +178,23 @@ pub(crate) async fn count_at_provider(
     {
         native["system"] = system;
     }
-    if let Some(tools) = request.get("tools").and_then(Value::as_array)
-        && tools.iter().all(|tool| tool.get("function").is_none())
+    if let Some(tools) = request.get("tools").filter(|value| !value.is_null())
+        && let Some(arr) = tools.as_array()
+        && arr.iter().all(|tool| tool.get("function").is_none())
     {
-        native["tools"] = json!(tools);
+        let drop_params = deployment
+            .oxllm_params
+            .drop_params
+            .or(state.config.oxllm_settings.drop_params)
+            .unwrap_or(false)
+            || request.get("drop_params").and_then(Value::as_bool) == Some(true);
+        let cleaned: Vec<Value> = arr
+            .iter()
+            .map(|tool| {
+                oxllm_providers::anthropic::sanitize_tool_custom_field(tool, true, drop_params)
+            })
+            .collect();
+        native["tools"] = json!(cleaned);
     }
     native["model"] = json!(model);
     if let Some(object) = native.as_object_mut() {

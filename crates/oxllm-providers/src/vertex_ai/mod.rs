@@ -63,6 +63,120 @@ pub const DEFAULT_VERTEX_LOCATION: &str = "us-central1";
 /// The `anthropic_version` value Vertex requires on Claude `:rawPredict` calls.
 pub const VERTEX_ANTHROPIC_VERSION: &str = "vertex-2023-10-16";
 
+/// The `anthropic_version` values accepted in Vertex AI `:rawPredict` bodies.
+const VERTEX_SUPPORTED_ANTHROPIC_VERSIONS: &[&str] = &[VERTEX_ANTHROPIC_VERSION, "2026-10-21"];
+
+/// Header-only Vertex AI betas (must be sent in `anthropic-beta` HTTP header
+/// rather than the `:rawPredict` JSON `anthropic_beta` body array).
+pub fn is_vertex_header_only_beta(beta: &str) -> bool {
+    matches!(
+        beta,
+        "compact-2026-09-04"
+            | "inline-tools-2026-09-15"
+            | "ce-plugins-2026-09-01"
+            | "ce-user-management-2026-07-13"
+            | "dreaming-2026-04-21"
+            | "experimental-claude-tag-2026-10-21"
+            | "extended-cache-ttl-2025-04-11"
+            | "managed-agents-2026-04-01"
+            | "mcp-tunnels-2026-06-22"
+            | "oauth-2025-04-20"
+            | "prompt-caching-2024-07-31"
+            | "prompt-caching-scope-2026-01-05"
+            | "redact-thinking-2026-02-12"
+            | "spend-limit-reads-2026-09-26"
+            | "telemetry-destinations-2026-08-11"
+            | "user-profiles-2026-03-24"
+            | "user-profiles-2026-08-18"
+            | "user-profiles-2026-09-04"
+    )
+}
+
+/// Filter and translate an Anthropic beta tag for Vertex AI's `:rawPredict`
+/// `anthropic_beta` request body array. Returns `None` for betas that Vertex AI
+/// rejects in the body (such as `web-fetch-2025-09-10`, `fast-mode-2026-02-01`,
+/// `advisor-tool-2026-03-01`, and header-only betas like `compact-2026-09-04`),
+/// remaps `advanced-tool-use-2025-11-20` -> `tool-search-tool-2025-10-19`,
+/// and returns accepted body tags as-is.
+pub fn map_vertex_body_beta(beta: &str) -> Option<&str> {
+    let beta = beta.trim();
+    if beta.is_empty() || is_vertex_header_only_beta(beta) {
+        return None;
+    }
+    match beta {
+        "advanced-tool-use-2025-11-20" => Some("tool-search-tool-2025-10-19"),
+        // Known unsupported (`null`) betas on Vertex AI per anthropic_beta_headers_config.json.
+        "advisor-tool-2026-03-01"
+        | "web-fetch-2025-09-10"
+        | "fast-mode-2026-02-01"
+        | "bash_20241022"
+        | "bash_20250124"
+        | "text_editor_20241022"
+        | "text_editor_20250124"
+        | "structured-output-2024-03-01"
+        | "code-execution-2025-05-22"
+        | "code-execution-2025-08-25"
+        | "computer-use-2024-10-22"
+        | "files-api-2025-04-14"
+        | "mcp-client-2025-04-04"
+        | "mcp-client-2025-11-20"
+        | "mcp-client-2026-09-15"
+        | "mcp-servers-2025-12-04"
+        | "skills-2025-10-02"
+        | "agent-memory-2026-07-22"
+        | "analytics-usage-cost-2026-08-24"
+        | "cache-diagnosis-2026-04-07"
+        | "dev-full-thinking-2025-05-14"
+        | "message-batches-2024-09-24"
+        | "message-threads-2026-08-12"
+        | "output-300k-2026-03-24"
+        | "server-side-fallback-2026-07-01"
+        | "webhooks-2026-10-07" => None,
+        other => Some(other),
+    }
+}
+
+/// Filter and deduplicate a list of beta tags for Vertex AI's `:rawPredict`
+/// `anthropic_beta` JSON body array.
+pub fn filter_vertex_body_betas<'a, I>(betas: I) -> Vec<String>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut out = Vec::new();
+    for raw in betas {
+        if let Some(mapped) = map_vertex_body_beta(raw) {
+            if !out.iter().any(|existing: &String| existing == mapped) {
+                out.push(mapped.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Resolve the `anthropic_version` field for Vertex `:rawPredict` Claude calls.
+pub fn resolve_vertex_anthropic_version(
+    requested: Option<&str>,
+    model: &str,
+    drop_params: bool,
+) -> Result<&'static str> {
+    let trimmed = requested.map(str::trim).unwrap_or("");
+    if matches!(trimmed, "" | "2023-01-01" | "2023-06-01") {
+        return Ok(VERTEX_ANTHROPIC_VERSION);
+    }
+    if let Some(&accepted) = VERTEX_SUPPORTED_ANTHROPIC_VERSIONS
+        .iter()
+        .find(|&&v| v == trimmed)
+    {
+        return Ok(accepted);
+    }
+    if drop_params {
+        return Ok(VERTEX_ANTHROPIC_VERSION);
+    }
+    Err(oxllm_core::Error::BadRequest(format!(
+        "{model} does not support anthropic-version={trimmed}; enable drop_params to ignore"
+    )))
+}
+
 /// The model-name prefix that selects this provider in `oxllm_params.model`.
 pub const STRIP: &str = "vertex_ai";
 
@@ -357,23 +471,23 @@ impl ChatProvider for VertexProvider {
             // 'model' parameter") — so we strip it after delegating.
             // Request-aware endpoint selection resolves wildcard models before
             // constructing the URL; the native body never needs a model field.
+            let drop_params = deployment.oxllm_params.drop_params == Some(true)
+                || request.get("drop_params").and_then(Value::as_bool) == Some(true);
+            let requested_version = request.get("anthropic_version").and_then(Value::as_str);
+            let vertex_version =
+                resolve_vertex_anthropic_version(requested_version, &model, drop_params)?;
             let mut stripped_deployment = deployment.clone();
             stripped_deployment.oxllm_params.model = native_model_id(&model).to_string();
             let mut body = AnthropicProvider.transform_request(request, &stripped_deployment)?;
             if let Some(obj) = body.as_object_mut() {
                 obj.remove("model");
-                obj.insert(
-                    "anthropic_version".to_string(),
-                    json!(VERTEX_ANTHROPIC_VERSION),
-                );
-                // the reference Vertex Anthropic request transform
-                // (`transformation.py:108-141`) mirrors the computed beta set
-                // into the body as `anthropic_beta` (Vertex's `:rawPredict`
-                // reads the body, not the `anthropic-beta` header, for
-                // feature-gated knobs). The host only computes beta headers
-                // for the direct `anthropic` provider, so we compute them
-                // here against the caller's OpenAI-shape request.
-                let betas = crate::anthropic::collect_beta_headers(request, &model);
+                obj.insert("anthropic_version".to_string(), json!(vertex_version));
+                // Mirror only Vertex-accepted body betas into `anthropic_beta`
+                // (`:rawPredict` rejects unsupported betas like web-fetch,
+                // advisor-tool, fast-mode, and header-only betas like
+                // compact-2026-09-04 inside the JSON body).
+                let computed = crate::anthropic::collect_beta_headers(request, &model);
+                let betas = filter_vertex_body_betas(computed.iter().map(String::as_str));
                 if !betas.is_empty() {
                     obj.insert("anthropic_beta".to_string(), json!(betas));
                 }

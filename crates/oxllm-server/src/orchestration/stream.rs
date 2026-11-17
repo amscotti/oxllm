@@ -844,16 +844,24 @@ async fn finalize_stream_exit(
             // `stream: true`. The status is synthesized first
             // (out-of-range -> 502) so the derived `type`/`code` track
             // what the client would see on the non-streaming path.
-            let error_code = if idle_timeout {
-                Some(crate::error::UPSTREAM_TIMEOUT_CODE)
+            let (error_type, error_code) = if !idle_timeout && status == 529 {
+                if call_ctx.is_anthropic_route {
+                    ("overloaded_error", None)
+                } else {
+                    ("service_unavailable_error", Some("server_is_overloaded"))
+                }
             } else {
-                crate::error::code_for_upstream_status(synthesized.as_u16())
+                let code = if idle_timeout {
+                    Some(crate::error::UPSTREAM_TIMEOUT_CODE)
+                } else {
+                    crate::error::code_for_upstream_status(synthesized.as_u16())
+                };
+                (
+                    crate::error::error_type_for_status(synthesized.as_u16()),
+                    code,
+                )
             };
-            let error_obj = crate::error::error_envelope_object(
-                message,
-                crate::error::error_type_for_status(synthesized.as_u16()),
-                error_code,
-            );
+            let error_obj = crate::error::error_envelope_object(message, error_type, error_code);
             let error_event = serde_json::json!({ "error": error_obj });
             match send_event(tx, Event::default().data(error_event.to_string())).await {
                 ClientSend::Sent => {}

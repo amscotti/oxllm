@@ -829,3 +829,55 @@ fn foundry_claude_forwards_the_mapped_service_tier() {
             if message.contains("service_tier") && message.contains("drop_params")
     ));
 }
+
+#[test]
+fn foundry_kimi_keeps_reasoning_content_and_forwards_reasoning_effort() {
+    for model_id in ["FW-Kimi-K3", "kimi-k2.6"] {
+        let dep = deployment(model_id, "https://resource.services.ai.azure.com/models");
+        let req = json!({
+            "model": model_id,
+            "reasoning_effort": {"effort": "high", "summary": "concise"},
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": "thinking through",
+                    "reasoning_content": "step-by-step reasoning",
+                    "thinking_blocks": [{"type": "thinking", "thinking": "x"}]
+                }
+            ]
+        });
+        let body = ChatProvider::transform_request(&AzureAiProvider, &req, &dep).expect("ok");
+        assert_eq!(body["reasoning_effort"], "high");
+        assert_eq!(
+            body["messages"][1]["reasoning_content"],
+            "step-by-step reasoning"
+        );
+        assert!(body["messages"][1].get("thinking_blocks").is_none());
+
+        let default_req = json!({
+            "model": model_id,
+            "reasoning_effort": "default",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let default_body =
+            ChatProvider::transform_request(&AzureAiProvider, &default_req, &dep).expect("ok");
+        assert!(default_body.get("reasoning_effort").is_none());
+
+        let invalid_req = json!({
+            "model": model_id,
+            "reasoning_effort": "bogus",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        assert!(matches!(
+            ChatProvider::transform_request(&AzureAiProvider, &invalid_req, &dep),
+            Err(oxllm_core::Error::BadRequest(_))
+        ));
+
+        let mut drop_dep = dep.clone();
+        drop_dep.oxllm_params.drop_params = Some(true);
+        let dropped =
+            ChatProvider::transform_request(&AzureAiProvider, &invalid_req, &drop_dep).expect("ok");
+        assert!(dropped.get("reasoning_effort").is_none());
+    }
+}

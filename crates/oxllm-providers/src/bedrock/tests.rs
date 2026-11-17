@@ -6140,3 +6140,203 @@ fn strip_qwen_tokens_noop_when_no_framing_present() {
     let s = strip_qwen_tokens("plain");
     assert_eq!(s, "plain");
 }
+
+#[test]
+fn strip_cross_region_prefix_recognizes_ca_and_in_and_new_vendors() {
+    assert_eq!(
+        strip_cross_region_prefix("ca.anthropic.claude-sonnet-4-5-v1:0"),
+        "anthropic.claude-sonnet-4-5-v1:0"
+    );
+    assert_eq!(
+        strip_cross_region_prefix("in.amazon.nova-pro-v1:0"),
+        "amazon.nova-pro-v1:0"
+    );
+    assert_eq!(
+        detect_bedrock_provider("moonshotai.kimi-k2.5"),
+        BedrockVendor::MoonshotAi
+    );
+    assert_eq!(
+        detect_bedrock_provider("moonshot.kimi-k2-thinking"),
+        BedrockVendor::MoonshotAi
+    );
+    assert_eq!(
+        detect_bedrock_provider("openai.gpt-oss-120b-1:0"),
+        BedrockVendor::OpenAi
+    );
+    assert_eq!(detect_bedrock_provider("zai.glm-4.5"), BedrockVendor::Zai);
+}
+
+fn bedrock_converse_deployment(model: &str) -> Deployment {
+    let mut dep = bedrock_deployment(model);
+    dep.oxllm_params
+        .extra
+        .insert("use_converse_api".into(), json!(true));
+    dep
+}
+
+#[test]
+fn converse_reasoning_effort_none_disables_thinking_on_optional_default_claude_models() {
+    let p = BedrockProvider;
+    for model in [
+        "bedrock/anthropic.claude-opus-5",
+        "bedrock/anthropic.claude-sonnet-5",
+        "bedrock/anthropic.claude-haiku-5-5",
+    ] {
+        let dep = bedrock_converse_deployment(model);
+        let out = p
+            .transform_request(
+                &json!({
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "reasoning_effort": "none"
+                }),
+                &dep,
+            )
+            .expect(model);
+        assert_eq!(
+            out["additionalModelRequestFields"]["thinking"],
+            json!({"type": "disabled"}),
+            "{model}: {out}"
+        );
+    }
+}
+
+#[test]
+fn converse_s3_uri_media_and_bucket_owner_validation() {
+    let p = BedrockProvider;
+    let dep = bedrock_deployment("bedrock/amazon.nova-pro-v1:0");
+    let out = p
+        .transform_request(
+            &json!({
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "inspect"},
+                        {"type": "image_url", "image_url": {"url": "s3://my-bucket/pic.png", "bucket_owner": "123456789012"}},
+                        {"type": "image_url", "image_url": {"url": "s3://my-bucket/spec.pdf"}},
+                        {"type": "file", "file": {"file_id": "s3://my-bucket/clip.mp4", "bucketOwner": "999888777666"}}
+                    ]
+                }]
+            }),
+            &dep,
+        )
+        .expect("s3 media ok");
+    let content = out["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(content[0], json!({"text": "inspect"}));
+    assert_eq!(
+        content[1],
+        json!({"image": {"format": "png", "source": {"s3Location": {"uri": "s3://my-bucket/pic.png", "bucketOwner": "123456789012"}}}})
+    );
+    assert_eq!(content[2]["document"]["format"], "pdf");
+    assert_eq!(
+        content[2]["document"]["source"],
+        json!({"s3Location": {"uri": "s3://my-bucket/spec.pdf"}})
+    );
+    assert_eq!(
+        content[3],
+        json!({"video": {"format": "mp4", "source": {"s3Location": {"uri": "s3://my-bucket/clip.mp4", "bucketOwner": "999888777666"}}}})
+    );
+
+    let bad_owner = p
+        .transform_request(
+            &json!({
+                "messages": [{
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "s3://my-bucket/pic.png", "bucket_owner": ""}}]
+                }]
+            }),
+            &dep,
+        )
+        .expect_err("empty bucket_owner must reject with 400");
+    assert!(matches!(bad_owner, oxllm_core::Error::BadRequest(_)));
+
+    let numeric_owner = p
+        .transform_request(
+            &json!({
+                "messages": [{
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "s3://my-bucket/pic.png", "bucket_owner": 12345}}]
+                }]
+            }),
+            &dep,
+        )
+        .expect_err("non-string bucket_owner must reject with 400");
+    assert!(matches!(numeric_owner, oxllm_core::Error::BadRequest(_)));
+
+    let tool_with_s3_video = p
+        .transform_request(
+            &json!({
+                "messages": [
+                    {"role": "assistant", "content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "get_vid", "arguments": "{}"}}]},
+                    {"role": "tool", "tool_call_id": "c1", "content": [{"type": "image_url", "image_url": {"url": "s3://my-bucket/clip.mp4"}}]}
+                ]
+            }),
+            &dep,
+        )
+        .expect("toolResult S3 video allowed");
+    assert_eq!(
+        tool_with_s3_video["messages"][1]["content"][0]["toolResult"]["content"][0]["video"]["source"]
+            ["s3Location"]["uri"],
+        "s3://my-bucket/clip.mp4"
+    );
+}
+
+#[test]
+fn converse_drops_signed_thinking_for_non_claude_targets_and_keeps_opaque_arns() {
+    let p = BedrockProvider;
+    let nova = bedrock_deployment("bedrock/amazon.nova-pro-v1:0");
+    let req = json!({
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": "answer",
+                "thinking_blocks": [
+                    {"type": "thinking", "thinking": "unsigned reasoning"},
+                    {"type": "thinking", "thinking": "signed reasoning", "signature": "sig-abc"},
+                    {"type": "redacted_thinking", "data": "AA=="}
+                ]
+            },
+            {"role": "user", "content": "next"}
+        ]
+    });
+    let nova_out = p.transform_request(&req, &nova).expect("nova ok");
+    let assistant_content = nova_out["messages"][1]["content"].as_array().unwrap();
+    assert_eq!(
+        assistant_content,
+        &vec![
+            json!({"reasoningContent": {"reasoningText": {"text": "unsigned reasoning"}}}),
+            json!({"text": "answer"})
+        ]
+    );
+
+    let opaque_arn = bedrock_converse_deployment(
+        "bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/custom-profile",
+    );
+    let arn_out = p
+        .transform_request(&req, &opaque_arn)
+        .expect("opaque arn ok");
+    let arn_content = arn_out["messages"][1]["content"].as_array().unwrap();
+    assert_eq!(arn_content.len(), 4);
+}
+
+#[test]
+fn convert_image_url_blocks_reverts_document_url_source_alongside_image() {
+    let mut body = json!({
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "document", "source": {"type": "url", "url": "https://example.com/a.pdf"}},
+                {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+            ]
+        }]
+    });
+    convert_image_url_blocks(&mut body);
+    assert_eq!(
+        body["messages"][0]["content"][0],
+        json!({"type": "image_url", "image_url": {"url": "https://example.com/a.pdf"}})
+    );
+    assert_eq!(
+        body["messages"][0]["content"][1],
+        json!({"type": "image_url", "image_url": {"url": "https://example.com/a.png"}})
+    );
+}

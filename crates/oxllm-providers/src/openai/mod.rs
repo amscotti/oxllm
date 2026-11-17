@@ -245,6 +245,17 @@ fn request_has_tools(body: &Value) -> bool {
 /// Drop parameters the OpenAI reasoning APIs reject, and map `max_tokens`
 /// onto `max_completion_tokens`. No-op for non-reasoning models.
 pub(crate) fn apply_openai_reasoning_limits(body: &mut Value, model: &str) {
+    apply_openai_reasoning_limits_with_host(body, model, false);
+}
+
+/// Azure-hosted variant of [`apply_openai_reasoning_limits`]. Azure keeps
+/// `gpt-6.1-terra` and `gpt-5.3-codex` without `reasoning_effort: "none"`
+/// support even when OpenAI direct accepts `"none"`.
+pub(crate) fn apply_azure_openai_reasoning_limits(body: &mut Value, model: &str) {
+    apply_openai_reasoning_limits_with_host(body, model, true);
+}
+
+fn apply_openai_reasoning_limits_with_host(body: &mut Value, model: &str, is_azure: bool) {
     if !is_reasoning_model(model) {
         return;
     }
@@ -263,8 +274,8 @@ pub(crate) fn apply_openai_reasoning_limits(body: &mut Value, model: &str) {
     let strip_temp = body
         .get("temperature")
         .is_some_and(|t| t.as_f64() != Some(1.0))
-        && should_strip_temperature(model, body);
-    let strip_sampling = should_strip_reasoning_unsupported(model, body);
+        && should_strip_temperature_with_host(model, body, is_azure);
+    let strip_sampling = should_strip_reasoning_unsupported_with_host(model, body, is_azure);
     let strip_unsupported_effort = is_gpt_6_1_sol(&leaf)
         && effort_level(body).is_some_and(|level| matches!(level, "none" | "minimal"));
     let drop_always = is_o_series_lowered(&leaf) || is_gpt_reasoning_series(&leaf);
@@ -321,16 +332,27 @@ pub(crate) fn apply_openai_token_limit_alias(body: &mut Value) {
 /// Whether the model accepts `reasoning_effort: "none"`.
 ///
 /// Accepting `"none"` is not the same as defaulting to it. gpt-5.1 / 5.2 /
-/// 5.4 default to `"none"`; gpt-5.5, gpt-5.6, gpt-6-luna, and gpt-6-sol accept
-/// `"none"` but default to reasoning on. gpt-6-astra and gpt-6.1-sol do not
-/// accept `"none"`; gpt-6.1-sol also rejects `"minimal"`.
-/// Codex, pro, and chat variants do not accept it.
+/// 5.4 default to `"none"`; gpt-5.3-codex (excluding `-spark`), gpt-5.5,
+/// gpt-5.6, gpt-6-luna, gpt-6-sol, and gpt-6.1-terra accept `"none"` on OpenAI
+/// but default to reasoning on. gpt-6-astra and gpt-6.1-sol do not accept
+/// `"none"`; gpt-6.1-sol also rejects `"minimal"`.
+/// Earlier codex models, `-spark`, `-pro`, and `-chat` variants do not accept it.
 fn supports_none_reasoning_effort(model: &str) -> bool {
+    supports_none_reasoning_effort_with_host(model, false)
+}
+
+fn supports_none_reasoning_effort_with_host(model: &str, is_azure: bool) -> bool {
     let leaf = model_leaf(model);
+    if !is_azure && leaf.starts_with("gpt-5.3-codex") && !leaf.starts_with("gpt-5.3-codex-spark") {
+        return true;
+    }
     if leaf_excludes_none(&leaf) {
         return false;
     }
-    if leaf.starts_with("gpt-6-luna") || leaf.starts_with("gpt-6-sol") {
+    if leaf.starts_with("gpt-6-luna")
+        || leaf.starts_with("gpt-6-sol")
+        || (!is_azure && leaf.starts_with("gpt-6.1-terra"))
+    {
         return true;
     }
     if leaf.starts_with("gpt-6") {
@@ -357,13 +379,14 @@ fn defaults_to_none_effort(model: &str) -> bool {
 /// o-series always strip; a gpt-5/gpt-6 model keeps it only when reasoning
 /// resolves to `"none"` on a model that accepts that level; every other
 /// reasoning model strips.
-fn should_strip_temperature(model: &str, body: &Value) -> bool {
+fn should_strip_temperature_with_host(model: &str, body: &Value, is_azure: bool) -> bool {
     let leaf = model_leaf(model);
     if is_o_series_lowered(&leaf) {
         return true;
     }
     if is_gpt_reasoning_series(&leaf) {
-        return !(supports_none_reasoning_effort(&leaf) && effort_resolves_to_none(&leaf, body));
+        return !(supports_none_reasoning_effort_with_host(&leaf, is_azure)
+            && effort_resolves_to_none(&leaf, body));
     }
     true
 }
@@ -374,13 +397,18 @@ fn should_strip_temperature(model: &str, body: &Value) -> bool {
 /// always strip, including when the caller sends `reasoning_effort: "none"`.
 /// Models that accept `"none"` keep these params only while effort resolves
 /// to `"none"`.
+#[cfg(test)]
 fn should_strip_reasoning_unsupported(model: &str, body: &Value) -> bool {
+    should_strip_reasoning_unsupported_with_host(model, body, false)
+}
+
+fn should_strip_reasoning_unsupported_with_host(model: &str, body: &Value, is_azure: bool) -> bool {
     let leaf = model_leaf(model);
     if is_o_series_lowered(&leaf) {
         return true;
     }
     if is_gpt_reasoning_series(&leaf) {
-        if !supports_none_reasoning_effort(&leaf) {
+        if !supports_none_reasoning_effort_with_host(&leaf, is_azure) {
             return true;
         }
         return !effort_resolves_to_none(&leaf, body);

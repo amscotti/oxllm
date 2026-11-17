@@ -951,3 +951,284 @@ router_settings:
         proxy.shutdown();
     }
 }
+
+#[tokio::test]
+async fn anthropic_529_maps_to_503_on_openai_routes_and_stays_529_on_anthropic_routes() {
+    let upstream = MockServer::start_async().await;
+    let config = parse_config_str(&format!(
+        r#"
+model_list:
+  - model_name: claude
+    oxllm_params:
+      model: anthropic/claude-haiku-5-5
+      api_base: {}/v1
+      api_key: synthetic-key
+general_settings:
+  allow_private_api_base: true
+router_settings:
+  num_retries: 0
+  cooldown_time: 0
+  allowed_fails: 100
+"#,
+        upstream.base_url()
+    ))
+    .unwrap();
+
+    upstream
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/messages");
+            then.status(529).json_body(json!({
+                "type": "error",
+                "error": {"type": "overloaded_error", "message": "Anthropic capacity full"}
+            }));
+        })
+        .await;
+    upstream
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/messages/count_tokens");
+            then.status(529).json_body(json!({
+                "type": "error",
+                "error": {"type": "overloaded_error", "message": "Count overloaded"}
+            }));
+        })
+        .await;
+
+    let (proxy, _) = common::start_oxllm(config).await.unwrap();
+
+    let msg_resp = common::http_client()
+        .post(proxy.url("/v1/messages"))
+        .json(&json!({
+            "model": "claude",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(msg_resp.status(), 529);
+    let msg_body: Value = msg_resp.json().await.unwrap();
+    assert_eq!(msg_body["error"]["type"], "overloaded_error");
+
+    let count_resp = common::http_client()
+        .post(proxy.url("/v1/messages/count_tokens"))
+        .json(&json!({
+            "model": "claude",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(count_resp.status(), 529);
+    let count_body: Value = count_resp.json().await.unwrap();
+    assert_eq!(count_body["error"]["type"], "overloaded_error");
+
+    let chat_resp = common::http_client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&json!({
+            "model": "claude",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(chat_resp.status(), 503);
+    let chat_body: Value = chat_resp.json().await.unwrap();
+    assert_eq!(chat_body["error"]["type"], "service_unavailable_error");
+    assert_eq!(chat_body["error"]["code"], "server_is_overloaded");
+
+    let responses_resp = common::http_client()
+        .post(proxy.url("/v1/responses"))
+        .json(&json!({
+            "model": "claude",
+            "input": "hi"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(responses_resp.status(), 503);
+    let responses_body: Value = responses_resp.json().await.unwrap();
+    assert_eq!(responses_body["error"]["type"], "service_unavailable_error");
+    assert_eq!(responses_body["error"]["code"], "server_is_overloaded");
+
+    proxy.shutdown();
+}
+
+#[tokio::test]
+async fn upstream_503_stays_503_across_anthropic_and_openai_routes() {
+    let upstream = MockServer::start_async().await;
+    let config = parse_config_str(&format!(
+        r#"
+model_list:
+  - model_name: claude
+    oxllm_params:
+      model: anthropic/claude-haiku-5-5
+      api_base: {}/v1
+      api_key: synthetic-key
+general_settings:
+  allow_private_api_base: true
+router_settings:
+  num_retries: 0
+  cooldown_time: 0
+  allowed_fails: 100
+"#,
+        upstream.base_url()
+    ))
+    .unwrap();
+    upstream
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/messages");
+            then.status(503).json_body(json!({
+                "type": "error",
+                "error": {"type": "api_error", "message": "upstream 503"}
+            }));
+        })
+        .await;
+
+    let (proxy, _) = common::start_oxllm(config).await.unwrap();
+    for (route, body) in [
+        (
+            "/v1/messages",
+            json!({"model": "claude", "max_tokens": 16, "messages": [{"role": "user", "content": "hi"}]}),
+        ),
+        (
+            "/v1/chat/completions",
+            json!({"model": "claude", "messages": [{"role": "user", "content": "hi"}]}),
+        ),
+    ] {
+        let resp = common::http_client()
+            .post(proxy.url(route))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 503, "{route} must preserve 503");
+    }
+    proxy.shutdown();
+}
+
+#[tokio::test]
+async fn missing_message_role_returns_400_and_roleless_tool_calls_turn_succeeds() {
+    let upstream = MockServer::start_async().await;
+    let config = parse_config_str(&format!(
+        r#"
+model_list:
+  - model_name: chat
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_base: {}
+      api_key: synthetic-key
+general_settings:
+  allow_private_api_base: true
+router_settings:
+  num_retries: 0
+"#,
+        upstream.base_url()
+    ))
+    .unwrap();
+    let wire = upstream
+        .mock_async(|when, then| {
+            when.method(POST).path("/chat/completions").matches(|req| {
+                req.body
+                    .as_ref()
+                    .and_then(|b| serde_json::from_slice::<Value>(b).ok())
+                    .is_some_and(|body| body["messages"][1]["role"] == "assistant")
+            });
+            then.status(200).json_body(reply("gpt-4o-mini"));
+        })
+        .await;
+
+    let (proxy, _) = common::start_oxllm(config).await.unwrap();
+    let bad = common::http_client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&json!({
+            "model": "chat",
+            "messages": [{"content": "hello"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 400);
+    let bad_body: Value = bad.json().await.unwrap();
+    assert!(
+        bad_body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("messages[0].role")),
+        "{bad_body}"
+    );
+
+    let ok = common::http_client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&json!({
+            "model": "chat",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"tool_calls": [{"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "done"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), 200);
+    wire.assert_hits_async(1).await;
+    proxy.shutdown();
+}
+
+#[tokio::test]
+async fn chat_stream_abort_finish_reason_surfaces_error_and_flex_unavailable_maps_429() {
+    let upstream = MockServer::start_async().await;
+    let config = parse_config_str(&format!(
+        r#"
+model_list:
+  - model_name: chat
+    oxllm_params:
+      model: openai/gpt-4o-mini
+      api_base: {}
+      api_key: synthetic-key
+general_settings:
+  allow_private_api_base: true
+router_settings:
+  num_retries: 0
+"#,
+        upstream.base_url()
+    ))
+    .unwrap();
+    upstream
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/chat/completions")
+                .json_body_partial(json!({"messages": [{"role": "user", "content": "abort"}]}).to_string());
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .body("data: {\"id\":\"1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"abort\"}]}\n\ndata: [DONE]\n\n");
+        })
+        .await;
+    upstream
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/chat/completions")
+                .json_body_partial(json!({"messages": [{"role": "user", "content": "flex"}]}).to_string());
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .body("data: {\"error\":{\"message\":\"no flex\",\"type\":\"resource_unavailable\",\"code\":\"flex_unavailable\"}}\n\n");
+        })
+        .await;
+
+    let (proxy, _) = common::start_oxllm(config).await.unwrap();
+    let abort_resp = common::http_client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&json!({"model": "chat", "stream": true, "messages": [{"role": "user", "content": "abort"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(abort_resp.status(), 500);
+
+    let flex_resp = common::http_client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&json!({"model": "chat", "stream": true, "messages": [{"role": "user", "content": "flex"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(flex_resp.status(), 429);
+    proxy.shutdown();
+}

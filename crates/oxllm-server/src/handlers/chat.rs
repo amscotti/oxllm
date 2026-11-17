@@ -44,11 +44,72 @@ pub async fn chat_completions(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let state = shared.load_full();
-    chat_completions_inner(state, &auth, &headers, body).await
+    chat_completions_inner(state, &auth, &headers, body)
+        .await
+        .map_err(openai_route_error)
+}
+
+/// Convert Anthropic HTTP 529 overload errors into OpenAI-contract 503
+/// `service_unavailable_error` (`code: "server_is_overloaded"`) for
+/// OpenAI-shaped routes. `/v1/messages` preserves 529 `overloaded_error`.
+pub(crate) fn openai_route_error(mut err: ApiError) -> ApiError {
+    if err.status.as_u16() == 529 {
+        err.status = axum::http::StatusCode::SERVICE_UNAVAILABLE;
+        err.error_type = "service_unavailable_error".to_string();
+        err.code = Some("server_is_overloaded".to_string());
+    }
+    err
+}
+
+const ASSISTANT_ONLY_MESSAGE_KEYS: &[&str] = &[
+    "tool_calls",
+    "function_call",
+    "reasoning_content",
+    "reasoning_items",
+    "thinking_blocks",
+    "refusal",
+    "audio",
+];
+
+fn validate_and_fill_message_roles(request_body: &mut Value) -> Result<(), ApiError> {
+    let Some(messages) = request_body
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+    for (idx, msg) in messages.iter_mut().enumerate() {
+        let Some(obj) = msg.as_object_mut() else {
+            continue;
+        };
+        let has_valid_role = match obj.get("role") {
+            Some(Value::String(role)) => !role.trim().is_empty(),
+            None | Some(Value::Null) => false,
+            Some(_) => {
+                return Err(ApiError::bad_request(format!(
+                    "Missing required parameter: 'messages[{idx}].role'."
+                )));
+            }
+        };
+        if has_valid_role {
+            continue;
+        }
+        if ASSISTANT_ONLY_MESSAGE_KEYS
+            .iter()
+            .any(|key| obj.contains_key(*key))
+        {
+            obj.insert("role".to_string(), Value::String("assistant".to_string()));
+        } else {
+            return Err(ApiError::bad_request(format!(
+                "Missing required parameter: 'messages[{idx}].role'."
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Inner chat completions pipeline, callable from sibling handlers
-/// (`completions`, `messages`, `responses`) that already hold the
+/// (`completions`, `responses`, Azure legacy) that already hold the
 /// authenticated principal.
 pub(crate) async fn chat_completions_inner(
     state: Arc<AppState>,
@@ -56,18 +117,29 @@ pub(crate) async fn chat_completions_inner(
     headers: &axum::http::HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    chat_completions_inner_with_usage_policy(state, auth, headers, body, false).await
+    chat_completions_inner_with_usage_policy(state, auth, headers, body, false, false).await
 }
 
-/// Variant for native-response converters that must retain usage metadata on
-/// every OpenAI chunk until their own terminal event has been assembled.
+/// Variant for OpenAI-shaped native converters (`/v1/completions`, `/v1/responses`)
+/// that must retain usage metadata on every chunk until their terminal event.
 pub(crate) async fn chat_completions_inner_preserving_stream_usage(
     state: Arc<AppState>,
     auth: &AuthUser,
     headers: &axum::http::HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    chat_completions_inner_with_usage_policy(state, auth, headers, body, true).await
+    chat_completions_inner_with_usage_policy(state, auth, headers, body, true, false).await
+}
+
+/// Variant for the Anthropic `/v1/messages` converter so Anthropic 529
+/// overload responses keep Anthropic's `overloaded_error` taxonomy.
+pub(crate) async fn chat_completions_inner_for_anthropic_messages(
+    state: Arc<AppState>,
+    auth: &AuthUser,
+    headers: &axum::http::HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    chat_completions_inner_with_usage_policy(state, auth, headers, body, true, true).await
 }
 
 async fn chat_completions_inner_with_usage_policy(
@@ -76,6 +148,7 @@ async fn chat_completions_inner_with_usage_policy(
     headers: &axum::http::HeaderMap,
     body: Bytes,
     preserve_stream_usage: bool,
+    is_anthropic_route: bool,
 ) -> Result<Response, ApiError> {
     let mut request_body: Value = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;
@@ -111,6 +184,7 @@ async fn chat_completions_inner_with_usage_policy(
             "missing or empty required field: 'messages'",
         ));
     }
+    validate_and_fill_message_roles(&mut request_body)?;
     crate::orchestration::request_controls::validate(&request_body)?;
 
     crate::pipeline::check_request_model_acl(&state, auth, &model, &request_body, headers).await?;
@@ -123,6 +197,7 @@ async fn chat_completions_inner_with_usage_policy(
     )
     .await?;
     pipeline.call_ctx.preserve_stream_usage_for_conversion = preserve_stream_usage;
+    pipeline.call_ctx.is_anthropic_route = is_anthropic_route;
 
     // Guardrails run after JSON parsing + structural validation but before
     // orchestration, so the masked body is the one serialized into the
@@ -476,5 +551,64 @@ mod tests {
             "guardrail must not have run before validation; got: {}",
             err.message
         );
+    }
+
+    #[tokio::test]
+    async fn chat_rejects_missing_or_empty_message_role_with_400() {
+        let state = bare_state();
+        let headers = axum::http::HeaderMap::new();
+        for body in [
+            br#"{"model":"gpt-4o","messages":[{"content":"hi"}]}"#.as_slice(),
+            br#"{"model":"gpt-4o","messages":[{"role":null,"content":"hi"}]}"#.as_slice(),
+            br#"{"model":"gpt-4o","messages":[{"role":"   ","content":"hi"}]}"#.as_slice(),
+            br#"{"model":"gpt-4o","messages":[{"role":123,"content":"hi"}]}"#.as_slice(),
+            br#"{"model":"gpt-4o","messages":[{"role":"user","content":"ok"},{"content":"second"}]}"#.as_slice(),
+        ] {
+            let err = chat_completions_inner(
+                state.clone(),
+                &AuthUser::open(),
+                &headers,
+                Bytes::from(body),
+            )
+            .await
+            .expect_err("missing role must return 400");
+            assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+            assert!(
+                err.message.contains("Missing required parameter: 'messages["),
+                "unexpected error message: {}",
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn roleless_assistant_only_turn_gets_assistant_role() {
+        let mut req = json!({
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"tool_calls": [{"id": "c1"}]},
+                {"reasoning_content": null},
+                {"thinking_blocks": []},
+            ]
+        });
+        validate_and_fill_message_roles(&mut req).expect("assistant-only turns must pass");
+        assert_eq!(req["messages"][1]["role"], "assistant");
+        assert_eq!(req["messages"][2]["role"], "assistant");
+        assert_eq!(req["messages"][3]["role"], "assistant");
+    }
+
+    #[test]
+    fn openai_route_error_maps_529_to_503_overload_and_preserves_503() {
+        let mapped = openai_route_error(ApiError::upstream(529, "Overloaded"));
+        assert_eq!(mapped.status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(mapped.error_type, "service_unavailable_error");
+        assert_eq!(mapped.code.as_deref(), Some("server_is_overloaded"));
+        assert_eq!(mapped.message, "Overloaded");
+
+        let kept = openai_route_error(ApiError::upstream(503, "primary unavailable"));
+        assert_eq!(kept.status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(kept.error_type, "api_error");
+        assert_eq!(kept.code.as_deref(), Some("upstream_error"));
     }
 }

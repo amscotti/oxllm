@@ -25,6 +25,99 @@ const COMPAT: OpenAiCompatProvider = OpenAiCompatProvider::new(
     true,
 );
 
+const FOUNDRY_REASONING_EFFORTS: &[&str] = &[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "auto",
+];
+
+fn deployment_base_model(deployment: &Deployment) -> Option<&str> {
+    deployment
+        .model_info
+        .as_ref()
+        .and_then(|info| info.base_model.as_deref())
+        .or_else(|| {
+            deployment
+                .oxllm_params
+                .extra
+                .get("base_model")
+                .and_then(Value::as_str)
+        })
+}
+
+fn keeps_foundry_reasoning_content(deployment: &Deployment) -> bool {
+    let model = deployment
+        .oxllm_params
+        .model
+        .strip_prefix("azure_ai/")
+        .unwrap_or(&deployment.oxllm_params.model);
+    let base = deployment_base_model(deployment).map(|b| b.strip_prefix("azure_ai/").unwrap_or(b));
+    [Some(model), base].into_iter().flatten().any(|name| {
+        let lower = name.to_ascii_lowercase();
+        lower.starts_with("fw-") || lower.starts_with("kimi-")
+    })
+}
+
+fn declares_foundry_reasoning_levels(deployment: &Deployment) -> bool {
+    let has_declared_levels = |extra: &serde_json::Map<String, Value>| {
+        extra
+            .get("reasoning_effort_levels")
+            .and_then(Value::as_array)
+            .is_some_and(|arr| !arr.is_empty())
+    };
+    if deployment
+        .model_info
+        .as_ref()
+        .is_some_and(|info| has_declared_levels(&info.extra))
+        || has_declared_levels(&deployment.oxllm_params.extra)
+    {
+        return true;
+    }
+    let model = deployment
+        .oxllm_params
+        .model
+        .strip_prefix("azure_ai/")
+        .unwrap_or(&deployment.oxllm_params.model);
+    let base = deployment_base_model(deployment).map(|b| b.strip_prefix("azure_ai/").unwrap_or(b));
+    [Some(model), base].into_iter().flatten().any(|name| {
+        let lower = name.to_ascii_lowercase();
+        lower.starts_with("fw-kimi") || lower.starts_with("kimi-")
+    })
+}
+
+fn apply_foundry_reasoning_effort(body: &mut Value, model: &str, drop_params: bool) -> Result<()> {
+    let Some(obj) = body.as_object_mut() else {
+        return Ok(());
+    };
+    let Some(requested) = obj
+        .get("reasoning_effort")
+        .cloned()
+        .filter(|v| !v.is_null())
+    else {
+        return Ok(());
+    };
+    let level = match &requested {
+        Value::Object(map) => map.get("effort"),
+        other => Some(other),
+    };
+    if level.and_then(Value::as_str) == Some("default") {
+        obj.remove("reasoning_effort");
+        return Ok(());
+    }
+    if let Some(level_str) = level.and_then(Value::as_str)
+        && FOUNDRY_REASONING_EFFORTS.contains(&level_str)
+    {
+        obj.insert("reasoning_effort".to_string(), json!(level_str));
+        return Ok(());
+    }
+    if drop_params {
+        obj.remove("reasoning_effort");
+        return Ok(());
+    }
+    Err(Error::BadRequest(format!(
+        "azure_ai model `{model}` takes reasoning_effort as one of {}, got {requested}",
+        FOUNDRY_REASONING_EFFORTS.join(", ")
+    )))
+}
+
 /// Azure AI Foundry adapter for vendor chat and embeddings.
 #[derive(Debug, Clone, Default)]
 pub struct AzureAiProvider;
@@ -205,17 +298,20 @@ impl ChatProvider for AzureAiProvider {
         } else {
             // Sanitize before the compat transform places native cache marks,
             // so incompatible controls cannot consume its breakpoint budget.
+            let keep_reasoning_content = keeps_foundry_reasoning_content(&resolved);
             let mut sanitized = request.clone();
             if let Some(messages) = sanitized.get_mut("messages").and_then(Value::as_array_mut) {
                 for message in messages {
                     if let Some(object) = message.as_object_mut() {
                         for field in [
                             "thinking_blocks",
-                            "reasoning_content",
                             "provider_specific_fields",
                             "cache_control",
                         ] {
                             object.remove(field);
+                        }
+                        if !keep_reasoning_content {
+                            object.remove("reasoning_content");
                         }
                         if let Some(content) =
                             object.get_mut("content").and_then(Value::as_array_mut)
@@ -278,6 +374,10 @@ impl ChatProvider for AzureAiProvider {
                 .to_string();
             if crate::openai::is_gpt_6_1_sol(&model) {
                 crate::openai::apply_openai_reasoning_limits(&mut body, &model);
+            } else if declares_foundry_reasoning_levels(&resolved) {
+                let drop_params = resolved.oxllm_params.drop_params == Some(true)
+                    || request.get("drop_params").and_then(Value::as_bool) == Some(true);
+                apply_foundry_reasoning_effort(&mut body, &model, drop_params)?;
             }
             Ok(body)
         }

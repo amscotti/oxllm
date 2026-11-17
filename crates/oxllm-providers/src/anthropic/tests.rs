@@ -8682,3 +8682,179 @@ fn tool_result_cache_point_survives_native_message_conversion() {
         "ephemeral"
     );
 }
+
+#[test]
+fn reasoning_effort_none_disables_optional_default_thinking_only() {
+    let p = AnthropicProvider;
+    for model in ["claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5"] {
+        let req = json!({
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "none"
+        });
+        let out = p
+            .transform_request(&req, &adaptive_deployment(model))
+            .expect(model);
+        assert_eq!(out["thinking"], json!({"type": "disabled"}), "{model}");
+    }
+    for model in [
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-fable-1",
+        "claude-mythos-preview",
+    ] {
+        let req = json!({
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "none"
+        });
+        let out = p
+            .transform_request(&req, &adaptive_deployment(model))
+            .expect(model);
+        assert!(
+            out.get("thinking").is_none() && out.get("output_config").is_none(),
+            "always-on thinking model {model} must ignore reasoning_effort=none: {out}"
+        );
+    }
+}
+
+#[test]
+fn response_maps_pause_turn_to_length_and_refusal_explanation() {
+    let p = AnthropicProvider;
+    let pause_resp = json!({
+        "id": "msg_1",
+        "model": "claude-sonnet-4-6",
+        "content": [{"type": "text", "text": "waiting"}],
+        "stop_reason": "pause_turn",
+        "usage": {"input_tokens": 5, "output_tokens": 3}
+    });
+    let pause_out = p
+        .transform_response(&pause_resp, "claude-sonnet-4-6")
+        .unwrap();
+    assert_eq!(pause_out["choices"][0]["finish_reason"], "length");
+
+    let refusal_resp = json!({
+        "id": "msg_2",
+        "model": "claude-sonnet-4-6",
+        "content": [{"type": "text", "text": ""}],
+        "stop_reason": "refusal",
+        "stop_details": {"explanation": "Disallowed content"},
+        "usage": {"input_tokens": 5, "output_tokens": 1}
+    });
+    let refusal_out = p
+        .transform_response(&refusal_resp, "claude-sonnet-4-6")
+        .unwrap();
+    assert_eq!(refusal_out["choices"][0]["finish_reason"], "content_filter");
+    assert_eq!(
+        refusal_out["choices"][0]["message"]["refusal"],
+        "Disallowed content"
+    );
+
+    let pause_delta = p
+        .transform_stream_chunk(
+            r#"event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"pause_turn"},"usage":{"output_tokens":2}}"#,
+        )
+        .unwrap()
+        .expect("pause chunk");
+    assert_eq!(pause_delta["choices"][0]["finish_reason"], "length");
+
+    let refusal_delta = p
+        .transform_stream_chunk(
+            r#"event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":"Stream safety policy"}},"usage":{"output_tokens":2}}"#,
+        )
+        .unwrap()
+        .expect("refusal chunk");
+    assert_eq!(
+        refusal_delta["choices"][0]["finish_reason"],
+        "content_filter"
+    );
+    assert_eq!(
+        refusal_delta["choices"][0]["delta"]["refusal"],
+        "Stream safety policy"
+    );
+}
+
+#[test]
+fn pdf_data_url_and_http_url_map_to_anthropic_document_blocks() {
+    let p = AnthropicProvider;
+    let req = json!({
+        "model": "claude",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "data:application/pdf;base64,JVBERi0="}},
+                {"type": "image_url", "image_url": {"url": "https://example.com/spec.pdf"}},
+                {"type": "image_url", "image_url": {"url": "https://example.com/file?id=1", "format": "pdf"}}
+            ]
+        }]
+    });
+    let out = p.transform_request(&req, &deployment()).expect("ok");
+    let parts = out["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(
+        parts[0],
+        json!({"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0="}})
+    );
+    assert_eq!(
+        parts[1],
+        json!({"type": "document", "source": {"type": "url", "url": "https://example.com/spec.pdf"}})
+    );
+    assert_eq!(
+        parts[2],
+        json!({"type": "document", "source": {"type": "url", "url": "https://example.com/file?id=1"}})
+    );
+
+    let counted = count_tokens::normalize_request_with_drop_params(
+        &json!({
+            "model": "claude",
+            "messages": req["messages"]
+        }),
+        "claude-sonnet-4-6",
+        false,
+    )
+    .expect("count_tokens ok");
+    assert_eq!(counted["messages"][0]["content"][0]["type"], "document");
+    assert_eq!(counted["messages"][0]["content"][1]["type"], "document");
+}
+
+#[test]
+fn hosted_tool_custom_defer_loading_hoisted_and_new_beta_headers_collected() {
+    let p = AnthropicProvider;
+    let req = json!({
+        "model": "claude-sonnet-4-6",
+        "messages": [{
+            "role": "assistant",
+            "content": [{"type": "tool_addition", "name": "t"}]
+        }, {
+            "role": "user",
+            "content": "hi"
+        }],
+        "tools": [
+            {"type": "web_search_20250305", "name": "web_search", "custom": {"defer_loading": true}},
+            {"type": "computer_20251124", "name": "computer"}
+        ],
+        "compaction": {"type": "auto"},
+        "thinking": {"type": "enabled", "budget_tokens": 1024, "display": "updates"},
+        "safeguards": {"enabled": true}
+    });
+    let out = p
+        .transform_request(&req, &adaptive_deployment("claude-sonnet-4-6"))
+        .expect("ok");
+    assert_eq!(out["tools"][0]["defer_loading"], true);
+    assert!(out["tools"][0].get("custom").is_none());
+
+    let betas = collect_beta_headers(&req, "claude-sonnet-4-6");
+    for expected in [
+        BETA_COMPACT_2026_09_04,
+        BETA_THINKING_DISPLAY_UPDATES,
+        BETA_MID_CONVERSATION_TOOL_CHANGES,
+        BETA_DANGEROUS_TOOL_USE,
+        BETA_COMPUTER_USE_2025_11_24,
+    ] {
+        assert!(
+            betas.contains(&expected.to_string()),
+            "missing beta {expected} in {betas:?}"
+        );
+    }
+}

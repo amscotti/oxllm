@@ -179,7 +179,9 @@ pub(crate) async fn embeddings_inner_with_headers(
             crate::pipeline::stamp_key_spend_header(&mut resp, &state, &pipeline.call_ctx).await;
             Ok(resp)
         }
-        Err(err) => Err(err.for_inference()),
+        Err(err) => Err(crate::handlers::chat::openai_route_error(
+            err.for_inference(),
+        )),
     }
 }
 

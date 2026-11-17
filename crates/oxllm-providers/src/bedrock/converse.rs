@@ -121,9 +121,11 @@ pub(super) fn transform_request_converse_with_base_model(
                 }
             }
             "assistant" => {
+                let drop_signed = drop_signed_thinking_for_target(runtime_model, feature_model);
                 let blocks = convert_assistant_content(
                     msg,
                     is_anthropic_model(feature_model),
+                    drop_signed,
                     feature_model,
                 )?;
                 if !blocks.is_empty() {
@@ -768,6 +770,19 @@ fn apply_reasoning_effort(request: &Value, model: &str, out: &mut Map<String, Va
         .get("thinking")
         .is_some_and(|value| !value.is_null())
     {
+        return;
+    }
+    if effort == "none" {
+        if crate::util::is_optional_default_thinking_anthropic_model(model) {
+            let amrf = out
+                .entry("additionalModelRequestFields".to_string())
+                .or_insert_with(|| Value::Object(Map::new()));
+            if let Value::Object(map) = amrf {
+                if !map.contains_key("thinking") {
+                    map.insert("thinking".to_string(), json!({"type": "disabled"}));
+                }
+            }
+        }
         return;
     }
     let Some(budget) = reasoning_effort_to_budget(effort) else {
@@ -1489,15 +1504,70 @@ fn tag_trailing_user_messages_as_guarded(messages: &mut [Value]) {
 /// and, on failure, fall back to `{}` so the block remains well-formed
 /// (Bedrock rejects non-object `input`). A `cache_control` hint on a text
 /// content block injects a trailing `{cachePoint: {type: "default"}}` block.
+fn is_claude_behind_any_region_prefix(model: &str) -> bool {
+    if model.is_empty() {
+        return false;
+    }
+    let bare = model.strip_prefix("bedrock/").unwrap_or(model);
+    is_anthropic_model(bare)
+        || bare
+            .split_once('.')
+            .is_some_and(|(_, rest)| rest.to_ascii_lowercase().starts_with("anthropic."))
+}
+
+fn drop_signed_thinking_for_target(runtime_model: &str, feature_model: &str) -> bool {
+    let target = if !feature_model.is_empty() {
+        feature_model
+    } else if runtime_model
+        .strip_prefix("bedrock/")
+        .unwrap_or(runtime_model)
+        .contains('.')
+    {
+        runtime_model
+    } else {
+        return false;
+    };
+    !is_claude_behind_any_region_prefix(target)
+}
+
+fn is_signed_or_redacted_thinking_block(block: &Value) -> bool {
+    if block.get("type").and_then(Value::as_str) == Some("redacted_thinking") {
+        return true;
+    }
+    if block.get("type").and_then(Value::as_str) == Some("thinking")
+        && block
+            .get("signature")
+            .and_then(Value::as_str)
+            .is_some_and(|sig| !sig.is_empty())
+    {
+        return true;
+    }
+    if let Some(rc) = block.get("reasoningContent") {
+        if rc.get("redactedContent").is_some() {
+            return true;
+        }
+        if rc
+            .pointer("/reasoningText/signature")
+            .and_then(Value::as_str)
+            .is_some_and(|sig| !sig.is_empty())
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn convert_assistant_content(
     msg: &Value,
     require_signature: bool,
+    drop_signed: bool,
     model: &str,
 ) -> Result<Vec<Value>> {
     let content = &msg["content"];
     let tool_calls = &msg["tool_calls"];
     let mut blocks: Vec<Value> = crate::util::thinking_blocks_for_replay(msg, require_signature)?
         .iter()
+        .filter(|block| !(drop_signed && is_signed_or_redacted_thinking_block(block)))
         .filter_map(thinking_block_to_converse)
         .filter(|block| {
             !content
@@ -1516,6 +1586,9 @@ fn convert_assistant_content(
         }
         Value::Array(arr) => {
             for elem in arr {
+                if drop_signed && is_signed_or_redacted_thinking_block(elem) {
+                    continue;
+                }
                 if let Some(reasoning) = thinking_block_to_converse(elem) {
                     blocks.push(reasoning);
                     continue;
@@ -1629,13 +1702,26 @@ fn convert_tool_result(msg: &Value, model: &str) -> Result<Vec<Value>> {
                     }
                     "image_url" => {
                         let media = data_url_to_converse_media(object)?;
+                        if media.get("video").is_some()
+                            && media.pointer("/video/source/s3Location").is_none()
+                        {
+                            continue;
+                        }
                         if images_beside_result && media.get("image").is_some() {
                             sibling_images.push(media);
                         } else {
                             content_blocks.push(media);
                         }
                     }
-                    "file" => content_blocks.push(openai_file_to_converse_document(object)?),
+                    "file" => {
+                        let media = openai_file_to_converse_document(object)?;
+                        if media.get("video").is_some()
+                            && media.pointer("/video/source/s3Location").is_none()
+                        {
+                            continue;
+                        }
+                        content_blocks.push(media);
+                    }
                     _ => {}
                 }
             }
@@ -2070,7 +2156,168 @@ fn validate_native_tool(tool: &Value) -> Result<()> {
 /// Convert an OpenAI `image_url` data-URL into a Converse `image` or
 /// `document` block. PDFs (and other Bedrock document types) must go out
 /// as `{document: …}` — wrapping them as `image` 400s on Converse.
+fn is_s3_uri(url: &str) -> bool {
+    url.get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("s3://"))
+}
+
+fn s3_bucket_owner(media: Option<&Map<String, Value>>, uri: &str) -> Result<Option<String>> {
+    let Some(owner_val) = media
+        .and_then(|m| m.get("bucket_owner").or_else(|| m.get("bucketOwner")))
+        .filter(|v| !v.is_null())
+    else {
+        return Ok(None);
+    };
+    let Some(owner) = owner_val.as_str().filter(|s| !s.trim().is_empty()) else {
+        return Err(oxllm_core::Error::BadRequest(format!(
+            "`bucket_owner` for {uri} must be a non-empty string"
+        )));
+    };
+    Ok(Some(owner.to_string()))
+}
+
+fn s3_uri_extension(uri: &str) -> Option<String> {
+    let path = uri.split(['?', '#']).next().unwrap_or(uri);
+    let last_segment = path.rsplit('/').next()?;
+    let (_, ext) = last_segment.rsplit_once('.')?;
+    let ext = ext.trim().to_ascii_lowercase();
+    (!ext.is_empty()).then_some(ext)
+}
+
+fn normalize_s3_media_format(
+    uri: &str,
+    explicit_format: Option<&str>,
+) -> Result<(&'static str, String)> {
+    let raw = match explicit_format.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(fmt) => fmt
+            .split(';')
+            .next()
+            .unwrap_or(fmt)
+            .trim()
+            .to_ascii_lowercase(),
+        None => {
+            let ext = s3_uri_extension(uri).ok_or_else(|| {
+                oxllm_core::Error::BadRequest(format!(
+                    "cannot determine media type for S3 URI {uri}; set `format`"
+                ))
+            })?;
+            match ext.as_str() {
+                "png" | "jpeg" | "jpg" | "gif" | "webp" => format!("image/{ext}"),
+                "mkv" | "mov" | "mp4" | "webm" | "flv" | "mpeg" | "mpg" | "wmv" | "3gp" => {
+                    format!("video/{ext}")
+                }
+                "pdf" => "application/pdf".to_string(),
+                "csv" => "text/csv".to_string(),
+                "doc" => "application/msword".to_string(),
+                "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    .to_string(),
+                "xls" => "application/vnd.ms-excel".to_string(),
+                "xlsx" => {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_string()
+                }
+                "html" | "htm" => "text/html".to_string(),
+                "txt" => "text/plain".to_string(),
+                "md" | "markdown" => "text/markdown".to_string(),
+                _ => {
+                    return Err(oxllm_core::Error::BadRequest(format!(
+                        "unsupported Bedrock Converse S3 media extension for {uri}"
+                    )));
+                }
+            }
+        }
+    };
+    if raw.starts_with("audio/") {
+        return Err(oxllm_core::Error::BadRequest(format!(
+            "Bedrock Converse does not accept {uri} as {raw}; audio is unsupported"
+        )));
+    }
+    if let Some(sub) = raw.strip_prefix("image/") {
+        let fmt = match sub {
+            "jpg" | "jpeg" => "jpeg",
+            "png" => "png",
+            "gif" => "gif",
+            "webp" => "webp",
+            _ => {
+                return Err(oxllm_core::Error::BadRequest(format!(
+                    "unsupported Bedrock Converse image format `{sub}` for {uri}"
+                )));
+            }
+        };
+        return Ok(("image", fmt.to_string()));
+    }
+    if let Some(sub) = raw.strip_prefix("video/") {
+        let fmt = match sub {
+            "x-matroska" | "mkv" => "mkv",
+            "quicktime" | "mov" => "mov",
+            "mp4" => "mp4",
+            "webm" => "webm",
+            "x-flv" | "flv" => "flv",
+            "mpeg" => "mpeg",
+            "mpg" => "mpg",
+            "x-ms-wmv" | "wmv" => "wmv",
+            "3gpp" | "3gp" | "three_gp" => "three_gp",
+            _ => {
+                return Err(oxllm_core::Error::BadRequest(format!(
+                    "unsupported Bedrock Converse video format `{sub}` for {uri}"
+                )));
+            }
+        };
+        return Ok(("video", fmt.to_string()));
+    }
+    if let Some(doc_fmt) = document_format_from_media_type(&raw) {
+        return Ok(("document", doc_fmt.to_string()));
+    }
+    match raw.as_str() {
+        "png" => Ok(("image", "png".to_string())),
+        "jpg" | "jpeg" => Ok(("image", "jpeg".to_string())),
+        "gif" => Ok(("image", "gif".to_string())),
+        "webp" => Ok(("image", "webp".to_string())),
+        "pdf" | "csv" | "doc" | "docx" | "xls" | "xlsx" | "html" | "txt" | "md" => {
+            Ok(("document", raw))
+        }
+        "htm" => Ok(("document", "html".to_string())),
+        "markdown" => Ok(("document", "md".to_string())),
+        "mkv" | "mov" | "mp4" | "webm" | "flv" | "mpeg" | "mpg" | "wmv" => Ok(("video", raw)),
+        "3gp" | "three_gp" => Ok(("video", "three_gp".to_string())),
+        _ => Err(oxllm_core::Error::BadRequest(format!(
+            "unsupported Bedrock Converse media format `{raw}` for {uri}"
+        ))),
+    }
+}
+
+fn s3_url_to_converse_media(uri: &str, media: Option<&Map<String, Value>>) -> Result<Value> {
+    let explicit_format = media.and_then(|m| m.get("format")).and_then(Value::as_str);
+    let (kind, format) = normalize_s3_media_format(uri, explicit_format)?;
+    let owner = s3_bucket_owner(media, uri)?;
+    let mut s3_loc = Map::new();
+    s3_loc.insert("uri".to_string(), json!(uri));
+    if let Some(owner) = owner {
+        s3_loc.insert("bucketOwner".to_string(), json!(owner));
+    }
+    let source = json!({"s3Location": Value::Object(s3_loc)});
+    match kind {
+        "image" => Ok(json!({"image": {"format": format, "source": source}})),
+        "video" => Ok(json!({"video": {"format": format, "source": source}})),
+        _ => {
+            let name = media
+                .and_then(|m| m.get("filename").or_else(|| m.get("name")))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("document.{format}"));
+            Ok(json!({
+                "document": {
+                    "format": format,
+                    "name": name,
+                    "source": source,
+                }
+            }))
+        }
+    }
+}
+
 fn data_url_to_converse_media(block: &Map<String, Value>) -> Result<Value> {
+    let media_obj = block.get("image_url").and_then(Value::as_object);
     let url = block
         .get("image_url")
         .and_then(|image| {
@@ -2079,6 +2326,9 @@ fn data_url_to_converse_media(block: &Map<String, Value>) -> Result<Value> {
                 .or_else(|| image.get("url").and_then(Value::as_str))
         })
         .unwrap_or("");
+    if is_s3_uri(url) {
+        return s3_url_to_converse_media(url, media_obj);
+    }
     let (media_type, data) = crate::util::parse_base64_data_url(url).ok_or_else(|| {
         oxllm_core::Error::BadRequest(
             "Bedrock Converse image_url requires a non-empty base64 data URL; remote URLs must be inlined before translation".into(),
@@ -2106,7 +2356,7 @@ fn data_url_to_converse_media(block: &Map<String, Value>) -> Result<Value> {
 
 fn document_format_from_media_type(media_type: &str) -> Option<&'static str> {
     match media_type {
-        "application/pdf" => Some("pdf"),
+        "application/pdf" | "application/x-pdf" => Some("pdf"),
         "text/csv" => Some("csv"),
         "application/msword" => Some("doc"),
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => Some("docx"),
@@ -2130,6 +2380,15 @@ fn openai_file_to_converse_document(block: &Map<String, Value>) -> Result<Value>
         .get("file")
         .and_then(Value::as_object)
         .ok_or_else(invalid_file)?;
+    if let Some(s3_uri) = file
+        .get("file_id")
+        .or_else(|| file.get("file_data"))
+        .or_else(|| file.get("data"))
+        .and_then(Value::as_str)
+        .filter(|s| is_s3_uri(s))
+    {
+        return s3_url_to_converse_media(s3_uri, Some(file));
+    }
     let data = file
         .get("file_data")
         .and_then(Value::as_str)

@@ -1076,13 +1076,12 @@ fn transform_request_wildcard_accepts_valid_model_ids() {
 // anthropic_beta body field — Vertex Claude reference parity (LOW)
 // ---------------------------------------------------------------------------
 
-/// The reference Vertex Anthropic transform mirrors the computed
+/// The reference Vertex Anthropic transform mirrors the Vertex-accepted
 /// beta set into the request body as `anthropic_beta` (Vertex's `:rawPredict`
-/// reads the body, not the `anthropic-beta` header, for feature-gated knobs).
-/// The host only computes beta headers for the direct `anthropic` provider, so
-/// the Vertex provider must compute them itself. We trigger a beta via
-/// `web_search_options` (which maps to `BETA_WEB_FETCH`) and assert the body
-/// carries the tag.
+/// reads the body for supported feature-gated knobs while rejecting
+/// unsupported betas like `web-fetch-2025-09-10`). Trigger a supported beta
+/// (`context_management` -> `BETA_CONTEXT_MANAGEMENT`) and verify supported
+/// tags appear while `BETA_WEB_FETCH` is omitted.
 #[test]
 fn transform_request_claude_injects_anthropic_beta_body_field() {
     let dep = make_deployment_with_extra(
@@ -1094,16 +1093,58 @@ fn transform_request_claude_injects_anthropic_beta_body_field() {
         "messages": [{"role": "user", "content": "search the web"}],
         "max_tokens": 64,
         "web_search_options": {},
+        "context_management": [{"type": "compaction", "compact_threshold": 1000}],
     });
     let out = ChatProvider::transform_request(&PROVIDER, &req, &dep).expect("ok");
-    let beta = out
-        .get("anthropic_beta")
-        .and_then(Value::as_array)
-        .expect("anthropic_beta body field must be present when a beta-tagged feature is used");
+    let beta = out.get("anthropic_beta").and_then(Value::as_array).expect(
+        "anthropic_beta body field must be present when a Vertex-supported beta feature is used",
+    );
     assert!(
         beta.iter()
+            .any(|v| v.as_str() == Some(crate::anthropic::BETA_CONTEXT_MANAGEMENT)),
+        "anthropic_beta must contain the context-management tag, got: {beta:?}"
+    );
+    assert!(
+        !beta
+            .iter()
             .any(|v| v.as_str() == Some(crate::anthropic::BETA_WEB_FETCH)),
-        "anthropic_beta must contain the web-fetch tag, got: {beta:?}"
+        "anthropic_beta must omit Vertex-unsupported web-fetch tag, got: {beta:?}"
+    );
+}
+
+#[test]
+fn transform_request_claude_remaps_advanced_tool_use_and_respects_anthropic_version() {
+    let dep = make_deployment_with_extra(
+        "vertex_ai/claude-sonnet-4-5",
+        &[("vertex_project", json!("p"))],
+    );
+    let req = json!({
+        "model": "vertex_ai/claude-sonnet-4-5",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 64,
+        "anthropic_version": "2026-10-21",
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "parameters": {"type": "object"},
+                "defer_loading": true
+            }
+        }],
+    });
+    let out = ChatProvider::transform_request(&PROVIDER, &req, &dep).expect("ok");
+    assert_eq!(out["anthropic_version"], "2026-10-21");
+    let betas = out["anthropic_beta"].as_array().expect("betas present");
+    assert!(
+        betas
+            .iter()
+            .any(|v| v.as_str() == Some("tool-search-tool-2025-10-19")),
+        "advanced-tool-use must remap to tool-search-tool-2025-10-19 on Vertex, got: {betas:?}"
+    );
+    assert!(
+        !betas
+            .iter()
+            .any(|v| v.as_str() == Some(crate::anthropic::BETA_ADVANCED_TOOL_USE)),
     );
 }
 

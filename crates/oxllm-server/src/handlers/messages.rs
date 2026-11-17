@@ -29,7 +29,7 @@ use crate::error::ApiError;
 use crate::handlers::anthropic_common::{
     anthropic_error_response, sanitise_forwarded_error_message, status_to_anthropic_error_type,
 };
-use crate::handlers::chat::chat_completions_inner_preserving_stream_usage;
+use crate::handlers::chat::chat_completions_inner_for_anthropic_messages;
 use crate::handlers::convert::anthropic::{
     AnthropicStreamConverter, anthropic_to_openai_request, openai_to_anthropic_response,
     process_openai_sse_event, validate_anthropic_to_openai_request,
@@ -117,7 +117,7 @@ async fn messages_inner(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let chat_response = match chat_completions_inner_preserving_stream_usage(
+    let chat_response = match chat_completions_inner_for_anthropic_messages(
         state,
         &auth,
         &headers,

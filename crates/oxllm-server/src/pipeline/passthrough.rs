@@ -753,14 +753,21 @@ async fn hooked_raw(
         // key/team/model budgets and the deployment TPM cap. Recover usage
         // from the buffered JSON body for OpenAI threads paths only.
         // Streaming relays parse terminal native usage incrementally above.
-        let cost = pipeline
-            .post_success(
+        let reported_model = pipeline
+            .call_ctx
+            .upstream_reported_model
+            .as_deref()
+            .or_else(|| {
                 response_body
                     .as_ref()
                     .and_then(|body| body.get("model"))
                     .and_then(Value::as_str)
                     .filter(|model| !model.trim().is_empty())
-                    .unwrap_or(&resolved_model),
+            })
+            .unwrap_or(&resolved_model);
+        let cost = pipeline
+            .post_success(
+                reported_model,
                 usage.as_ref(),
                 response_body.as_ref(),
                 deployment.provider_slug(),
@@ -1423,18 +1430,19 @@ pub(crate) async fn send_upstream_tracked(
     } else {
         send.await?
     };
-    if let Some(ctx) = ctx {
-        ctx.reached_upstream = true;
-    }
-
     let status = response.status();
-    // U3: extract cost/usage headers BEFORE sanitizing (which consumes the
+    // U3: extract cost/usage/model headers BEFORE sanitizing (which consumes the
     // reqwest::Response) so passthrough routes can track spend when the
-    // upstream reports total tokens, and honour the gateway response-cost
-    // contract when the upstream reports its own computed cost.
+    // upstream reports total tokens, honour the gateway response-cost contract,
+    // and label model-less spend rows with `x-oxllm-upstream-model`.
     let usage = crate::pipeline::extract_upstream_usage(response.headers());
     let upstream_cost =
         crate::pipeline::extract_upstream_response_cost(response.headers()).into_override();
+    let upstream_model = crate::pipeline::parse_upstream_reported_model(response.headers());
+    if let Some(ctx) = ctx {
+        ctx.reached_upstream = true;
+        ctx.upstream_reported_model = upstream_model;
+    }
     let sanitized = crate::security::sanitize_upstream_response(response).await?;
     Ok((status, sanitized, usage, upstream_cost))
 }
@@ -1479,7 +1487,10 @@ pub(crate) fn meter_native_stream(
         let mut usage = None;
         let mut output_usage_reported = false;
         let mut reported_cost = None;
-        let mut model = ctx.model.clone();
+        let mut model = ctx
+            .upstream_reported_model
+            .clone()
+            .unwrap_or_else(|| ctx.model.clone());
         let mut bytes_sent = false;
         let mut completion = String::new();
         let original_request = ctx.request_body.clone();
@@ -1553,9 +1564,18 @@ pub(crate) fn meter_native_stream(
                                 Some("cyber_policy" | "invalid_request_error")
                             ) {
                                 400
+                            } else if matches!(
+                                error.get("code").and_then(Value::as_str),
+                                Some("resource_unavailable" | "flex_unavailable")
+                            ) {
+                                429
                             } else {
                                 match error.get("type").and_then(Value::as_str) {
-                                    Some("rate_limit_error") => 429,
+                                    Some(
+                                        "rate_limit_error"
+                                        | "resource_unavailable"
+                                        | "flex_unavailable",
+                                    ) => 429,
                                     Some("overloaded_error") => 529,
                                     Some("authentication_error") => 401,
                                     Some("billing_error") => 402,
@@ -1590,7 +1610,9 @@ pub(crate) fn meter_native_stream(
                         if let Some(tier) = oxllm_core::response_service_tier(&value) {
                             ctx.served_service_tier = Some(tier.into());
                         }
-                        if let Some(served) = payload.get("model").and_then(Value::as_str) {
+                        if ctx.upstream_reported_model.is_none()
+                            && let Some(served) = payload.get("model").and_then(Value::as_str)
+                        {
                             model = served.into();
                         }
                         for pointer in [

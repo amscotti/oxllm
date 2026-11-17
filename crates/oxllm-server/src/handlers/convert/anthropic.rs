@@ -571,6 +571,18 @@ fn map_anthropic_tool_to_openai(tool: &Value) -> Value {
     if let Some(control) = tool.get("cache_control") {
         mapped["cache_control"] = control.clone();
     }
+    if let Some(defer) = tool
+        .get("defer_loading")
+        .or_else(|| tool.pointer("/custom/defer_loading"))
+        .filter(|v| v.is_boolean())
+    {
+        mapped["defer_loading"] = defer.clone();
+    }
+    for field in ["allowed_callers", "input_examples"] {
+        if let Some(val) = tool.get(field).filter(|v| !v.is_null()) {
+            mapped[field] = val.clone();
+        }
+    }
     mapped
 }
 

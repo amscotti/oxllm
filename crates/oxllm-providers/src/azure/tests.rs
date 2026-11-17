@@ -1038,3 +1038,116 @@ fn gpt6_request_drops_rejected_params_and_orphan_tool_choice() {
     assert_eq!(out["max_completion_tokens"], 32);
     assert!(out.get("max_tokens").is_none());
 }
+
+#[test]
+fn azure_gpt_6_1_terra_and_5_3_codex_do_not_unlock_sampling_on_none_effort() {
+    let p = AzureProvider;
+    for model in ["gpt-6.1-terra", "gpt-5.3-codex"] {
+        let mut dep = deployment();
+        dep.oxllm_params.model = format!("azure/{model}");
+        dep.model_info = Some(oxllm_core::deployment::ModelInfo {
+            base_model: Some(format!("openai/{model}")),
+            ..Default::default()
+        });
+        let req = json!({
+            "model": "my-deployment",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "none",
+            "temperature": 0.4,
+            "top_p": 0.9,
+            "logprobs": true,
+        });
+        let out = ChatProvider::transform_request(&p, &req, &dep).expect("ok");
+        assert!(
+            out.get("temperature").is_none(),
+            "{model} on Azure does not accept none effort to unlock temperature"
+        );
+        assert!(out.get("top_p").is_none());
+        assert!(out.get("logprobs").is_none());
+    }
+}
+
+#[test]
+fn foundry_project_v1_chat_omits_api_version_and_rewrites_model() {
+    let p = AzureProvider;
+    let mut dep = deployment();
+    dep.oxllm_params.model = "azure/my-deployment".to_string();
+    dep.oxllm_params.api_base = Some(
+        "https://my-resource.services.ai.azure.com/api/projects/my-proj/openai/v1?api-version=old&foo=bar"
+            .to_string(),
+    );
+    dep.oxllm_params.api_version = Some("2024-10-21".to_string());
+
+    let chat_url = p.endpoint_url(&dep);
+    assert_eq!(
+        chat_url,
+        "https://my-resource.services.ai.azure.com/api/projects/my-proj/openai/v1/chat/completions?foo=bar"
+    );
+
+    let mut plain_dep = deployment();
+    plain_dep.oxllm_params.api_base = Some(
+        "https://my-resource.services.ai.azure.com/api/projects/my-proj/openai/v1/".to_string(),
+    );
+    assert_eq!(
+        p.endpoint_url(&plain_dep),
+        "https://my-resource.services.ai.azure.com/api/projects/my-proj/openai/v1/chat/completions"
+    );
+
+    // Non-chat routes keep configured deployment/api-version unless api_version is none.
+    assert_eq!(
+        EmbeddingProvider::embedding_url(&p, &dep),
+        "https://my-resource.services.ai.azure.com/api/projects/my-proj/openai/deployments/my-deployment/embeddings?foo=bar&api-version=2024-10-21"
+    );
+
+    let req = json!({
+        "model": "public-alias",
+        "messages": [{"role": "user", "content": "Hi"}],
+    });
+    let out = ChatProvider::transform_request(&p, &req, &dep).expect("ok");
+    assert_eq!(out["model"], "my-deployment");
+}
+
+#[test]
+fn api_version_none_routes_via_v1_and_omits_api_version_query() {
+    let p = AzureProvider;
+    let mut dep = deployment();
+    dep.oxllm_params.api_base = Some("https://gateway.example.com/openai".to_string());
+    dep.oxllm_params.api_version = Some("none".to_string());
+
+    assert_eq!(
+        p.endpoint_url(&dep),
+        "https://gateway.example.com/openai/v1/chat/completions"
+    );
+    assert_eq!(
+        EmbeddingProvider::embedding_url(&p, &dep),
+        "https://gateway.example.com/openai/v1/embeddings"
+    );
+
+    let req = json!({"model": "alias", "messages": [{"role": "user", "content": "hi"}]});
+    assert_eq!(
+        ChatProvider::transform_request(&p, &req, &dep).expect("ok")["model"],
+        "my-gpt4-deployment"
+    );
+    let embed_req = json!({"model": "alias", "input": "hello"});
+    assert_eq!(
+        EmbeddingProvider::transform_request(&p, &embed_req, &dep).expect("ok")["model"],
+        "my-gpt4-deployment"
+    );
+
+    let mut invalid_project = deployment();
+    invalid_project.oxllm_params.api_base = Some(
+        "https://my-resource.services.ai.azure.com/api/projects/team/sub/openai/v1".to_string(),
+    );
+    invalid_project.oxllm_params.api_version = Some("v1".to_string());
+    assert_eq!(
+        p.endpoint_url(&invalid_project),
+        "https://my-resource.services.ai.azure.com/api/projects/team/sub/openai/v1/chat/completions?api-version=v1"
+    );
+    invalid_project.oxllm_params.api_base =
+        Some("https://my-resource.services.ai.azure.com/api/projects//openai/v1".to_string());
+    assert!(
+        p.endpoint_url(&invalid_project)
+            .ends_with("?api-version=v1"),
+        "empty project segment must still include ?api-version=v1"
+    );
+}

@@ -79,18 +79,71 @@ pub fn strip_databricks_prefix(model: &str) -> &str {
     OpenAiCompatProvider::strip_one_segment(model, STRIP)
 }
 
+/// Prefix set of models hosted directly by Databricks (where Databricks validates
+/// `"json"` in the last user/system text for `response_format: {"type": "json_object"}`).
+const DATABRICKS_HOSTED_MODEL_PREFIXES: &[&str] = &["databricks-", "system.ai."];
+
+/// Validate that no `{"type": "text", "text": ...}` block carries a truthy
+/// non-string `text` value before compat flattening/filtering discards it.
+fn reject_non_string_text_blocks(request: &Value) -> Result<()> {
+    let Some(messages) = request.get("messages").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for message in messages {
+        let Some(parts) = message.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        for part in parts {
+            let Some(obj) = part.as_object() else {
+                continue;
+            };
+            if obj.get("type").and_then(Value::as_str) != Some("text") {
+                continue;
+            }
+            let Some(text) = obj.get("text") else {
+                continue;
+            };
+            let type_name = match text {
+                Value::String(_) | Value::Null => continue,
+                Value::Bool(false) => continue,
+                Value::Bool(true) => "bool",
+                Value::Number(_) => "number",
+                Value::Array(arr) if arr.is_empty() => continue,
+                Value::Array(_) => "list",
+                Value::Object(map) if map.is_empty() => continue,
+                Value::Object(_) => "dict",
+            };
+            return Err(oxllm_core::Error::BadRequest(format!(
+                "A text content block needs a string 'text', got {type_name}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Apply Databricks-specific request transforms to an already-built OpenAI
 /// chat request body (the output of the shared compat `transform_request`).
-fn apply_databricks_request_transforms(out: &mut Value) {
+fn apply_databricks_request_transforms(out: &mut Value, drop_params: bool) {
     // Databricks rejects replayed gateway extension fields on messages —
     // including reasoning text — for every role (reference
     // `strip_litellm_internal_message_fields`).
     crate::openai_compat::strip_internal_message_fields(out);
 
-    let is_claude = out
+    let model = out
         .get("model")
         .and_then(Value::as_str)
-        .is_some_and(|model| model.contains("claude"));
+        .unwrap_or("")
+        .to_string();
+    let is_claude = model.contains("claude");
+    let is_hosted_non_claude = !is_claude
+        && DATABRICKS_HOSTED_MODEL_PREFIXES
+            .iter()
+            .any(|prefix| model.starts_with(prefix));
+    let is_json_object = out
+        .get("response_format")
+        .and_then(|rf| rf.get("type"))
+        .and_then(Value::as_str)
+        == Some("json_object");
     let Some(messages) = out.get_mut("messages").and_then(Value::as_array_mut) else {
         return;
     };
@@ -101,11 +154,80 @@ fn apply_databricks_request_transforms(out: &mut Value) {
     // A thinking-only turn is now bare, which Databricks also rejects. Keep
     // this cleanup local: stripping metadata is not universal compat behavior.
     messages.retain(|message| !is_bare_assistant_message(message));
+    if is_json_object && is_hosted_non_claude {
+        join_last_turn_json_object_text_blocks(messages, drop_params);
+    }
     if !is_claude {
         for message in messages.iter_mut() {
             collapse_single_text_block(message);
         }
         *messages = split_parallel_tool_calls(std::mem::take(messages));
+    }
+}
+
+/// For Databricks-hosted non-Claude models with `response_format: {"type":"json_object"}`,
+/// Databricks checks whether the final turn (or trailing system messages)
+/// contains the word `"json"` and fails 400 when multi-part plain text blocks
+/// are sent as an array. Concatenate >=2 non-blank plain text blocks into a
+/// single string on the checked trailing slice.
+fn join_last_turn_json_object_text_blocks(messages: &mut [Value], drop_params: bool) {
+    let trailing_systems = messages
+        .iter()
+        .rev()
+        .take_while(|msg| msg.get("role").and_then(Value::as_str) == Some("system"))
+        .count();
+    let checked_start = if trailing_systems > 0 {
+        messages.len().saturating_sub(trailing_systems)
+    } else {
+        messages.len().saturating_sub(1)
+    };
+    for message in &mut messages[checked_start..] {
+        let Some(obj) = message.as_object_mut() else {
+            continue;
+        };
+        if drop_params {
+            obj.remove("cache_control");
+        } else if obj.contains_key("cache_control") {
+            continue;
+        }
+        let Some(Value::Array(parts)) = obj.get("content") else {
+            continue;
+        };
+        let mut texts: Vec<String> = Vec::with_capacity(parts.len());
+        let mut all_plain_text = true;
+        let mut stripped_parts = Vec::with_capacity(parts.len());
+        for part in parts {
+            let Some(p) = part.as_object() else {
+                all_plain_text = false;
+                break;
+            };
+            let is_plain_text = p.len() == 2
+                && p.get("type").and_then(Value::as_str) == Some("text")
+                && p.get("text").is_some_and(Value::is_string);
+            let is_cached_text = drop_params
+                && p.len() == 3
+                && p.get("type").and_then(Value::as_str) == Some("text")
+                && p.get("text").is_some_and(Value::is_string)
+                && p.contains_key("cache_control");
+            if is_plain_text || is_cached_text {
+                if let Some(t) = p.get("text").and_then(Value::as_str) {
+                    texts.push(t.to_string());
+                    stripped_parts.push(serde_json::json!({"type": "text", "text": t}));
+                }
+            } else {
+                all_plain_text = false;
+                break;
+            }
+        }
+        if !all_plain_text || texts.is_empty() {
+            continue;
+        }
+        if drop_params {
+            obj.insert("content".to_string(), Value::Array(stripped_parts));
+        }
+        if texts.iter().filter(|t| !t.trim().is_empty()).count() >= 2 {
+            obj.insert("content".to_string(), Value::String(texts.concat()));
+        }
     }
 }
 
@@ -330,8 +452,11 @@ impl ChatProvider for DatabricksProvider {
     }
 
     fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
+        reject_non_string_text_blocks(request)?;
         let mut out = ChatProvider::transform_request(&COMPAT, request, deployment)?;
-        apply_databricks_request_transforms(&mut out);
+        let drop_params = deployment.oxllm_params.drop_params == Some(true)
+            || request.get("drop_params").and_then(Value::as_bool) == Some(true);
+        apply_databricks_request_transforms(&mut out, drop_params);
         Ok(out)
     }
 

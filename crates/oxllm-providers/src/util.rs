@@ -212,17 +212,72 @@ fn path_ends_with_operation(path: &str, operation: &str) -> bool {
             .is_some_and(|prefix| prefix.ends_with('/'))
 }
 
+/// Whether a media-type header specifies a PDF payload (ignoring MIME parameters).
+#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
+pub(crate) fn is_pdf_media_type(media_type: &str) -> bool {
+    let base = media_type.split(';').next().unwrap_or("").trim();
+    base.eq_ignore_ascii_case("pdf")
+        || base.eq_ignore_ascii_case("application/pdf")
+        || base.eq_ignore_ascii_case("application/x-pdf")
+}
+
+/// Whether `model` is a Claude model whose extended thinking defaults ON
+/// (`claude-opus-5`, `claude-sonnet-5`, `claude-haiku-5-5`) while still
+/// permitting explicit opt-out via `{"type": "disabled"}`. Always-on models
+/// (`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable*`, `claude-mythos*`)
+/// reject `"disabled"` and return `false`.
+#[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
+pub(crate) fn is_optional_default_thinking_anthropic_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase().replace(['_', '.'], "-");
+    if m.contains("fable") || m.contains("mythos") {
+        return false;
+    }
+    let parse_run = |rest: &str| -> Option<(u64, usize)> {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() || digits.len() > 2 {
+            return None;
+        }
+        digits.parse().ok().map(|v| (v, digits.len()))
+    };
+    for family in ["opus-", "sonnet-", "haiku-"] {
+        let Some(idx) = m.find(family) else {
+            continue;
+        };
+        let rest = &m[idx + family.len()..];
+        let Some((major, major_len)) = parse_run(rest) else {
+            return false;
+        };
+        let minor = rest[major_len..]
+            .strip_prefix('-')
+            .and_then(|r| parse_run(r).map(|(v, _)| v));
+        return match family {
+            "opus-" | "sonnet-" => major == 5 && minor.is_none(),
+            "haiku-" => major == 5 && minor == Some(5),
+            _ => false,
+        };
+    }
+    false
+}
+
 /// Convert a `data:<media-type>;base64,<payload>` URL into the Anthropic
-/// Messages image block shape. Returns `None` for non-`data:` URLs, data URLs
-/// without a `;base64` marker (URL-encoded payloads are not forwarded as
-/// base64), or malformed data URLs (caller leaves the original block
-/// untouched). The media type is forwarded verbatim and not validated as an
-/// image type; Anthropic rejects unsupported media types upstream.
+/// Messages block shape (`document` for PDF data URLs, `image` otherwise).
+/// Returns `None` for non-`data:` URLs, data URLs without a `;base64` marker
+/// (URL-encoded payloads are not forwarded as base64), or malformed data URLs.
 ///
-/// Shared by Anthropic and Bedrock transforms to keep image conversion identical.
+/// Shared by Anthropic and Bedrock transforms to keep image/PDF conversion identical.
 #[cfg(any(test, feature = "anthropic", feature = "bedrock"))]
 pub(crate) fn data_url_to_anthropic_image(url: &str) -> Option<Value> {
     let (media_type, data) = parse_base64_data_url(url)?;
+    if is_pdf_media_type(media_type) {
+        return Some(json!({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": data,
+            }
+        }));
+    }
     Some(json!({
         "type": "image",
         "source": {

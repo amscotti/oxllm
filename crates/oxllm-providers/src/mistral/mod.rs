@@ -20,12 +20,17 @@
 //! - `max_completion_tokens` → `max_tokens`.
 //! - `$id` / `$schema` stripped recursively from `tools` (Mistral's grammar
 //!   validator rejects JSON-schema reference fields with a 422).
-//! - `reasoning_effort` and `thinking` are consumed internally and never
-//!   forwarded; for `magistral` models either triggers injection of Mistral's
-//!   recommended reasoning system prompt (reference parity). Non-magistral
-//!   models simply drop both fields.
-//! - `reasoning_content` / `thinking_blocks` stripped from `assistant`
-//!   messages (Mistral 422s on prior-turn reasoning fields).
+//! - `reasoning_effort` and `thinking`: for reasoning-capable Mistral models
+//!   (`magistral`, `devstral`, or `supports_reasoning`), `reasoning_effort`
+//!   (`none` / `high` for Magistral; `default` leaves Mistral's default; invalid
+//!   levels 400 unless `drop_params`) and `thinking` (`disabled` → `none`,
+//!   `enabled`/`adaptive` → `high`) map onto Mistral's native `reasoning_effort`
+//!   field. Non-reasoning models drop both fields.
+//! - `reasoning_content` / `thinking_blocks` stripped as top-level fields from
+//!   `assistant` messages (Mistral 422s on unknown message keys); for models
+//!   that accept reasoning, assistant reasoning is replayed inside `content` as
+//!   Mistral `{"type":"thinking","thinking":[{"type":"text","text":...}]}`
+//!   chunks (while stripping native thinking chunks on non-reasoning models).
 //! - `name` stripped from non-`tool` messages (Mistral only accepts it on
 //!   tool messages); empty `name` on tool messages is also dropped.
 //! - `tool_calls` on any message are rewritten to Mistral's strict
@@ -100,6 +105,7 @@ const MISTRAL_SUPPORTED_CHAT_PARAMS: &[&str] = &[
     "logprobs",
     "top_logprobs",
     "logit_bias",
+    "prompt_cache_key",
 ];
 
 /// The shared OpenAI-compatible engine backing URL building, bearer auth,
@@ -127,14 +133,145 @@ pub fn strip_mistral_prefix(model: &str) -> &str {
     OpenAiCompatProvider::strip_one_segment(model, STRIP)
 }
 
+const MISTRAL_REASONING_EFFORTS: &[&str] =
+    &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+fn mistral_accepts_reasoning(model: &str, deployment: &Deployment) -> bool {
+    let lower = model.to_ascii_lowercase();
+    if lower.contains("magistral")
+        || lower.contains("devstral")
+        || lower.contains("mistral-small-2603")
+        || lower.contains("mistral-small-2503")
+    {
+        return true;
+    }
+    deployment
+        .model_info
+        .as_ref()
+        .and_then(|info| info.extra.get("supports_reasoning"))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
+fn nearest_magistral_effort(level: &str) -> &'static str {
+    if level == "none" { "none" } else { "high" }
+}
+
+fn map_mistral_reasoning_params(
+    obj: &mut serde_json::Map<String, Value>,
+    model: &str,
+    deployment: &Deployment,
+    drop_params: bool,
+) -> Result<()> {
+    let raw_effort = obj.remove("reasoning_effort").filter(|v| !v.is_null());
+    let raw_thinking = obj.remove("thinking").filter(|v| !v.is_null());
+    if !mistral_accepts_reasoning(model, deployment) {
+        return Ok(());
+    }
+    let is_magistral = model.to_ascii_lowercase().contains("magistral");
+    let mut leaves_default = false;
+    let mut resolved_effort: Option<String> = None;
+    if let Some(effort_val) = raw_effort {
+        let level_val = match &effort_val {
+            Value::Object(map) if !map.contains_key("summary") => map.get("effort"),
+            Value::Object(map) => {
+                if map.get("summary").is_some_and(|v| !v.is_null()) && !drop_params {
+                    return Err(oxllm_core::Error::BadRequest(
+                        "mistral does not support reasoning_effort.summary; enable drop_params to ignore".into(),
+                    ));
+                }
+                map.get("effort")
+            }
+            other => Some(other),
+        };
+        if level_val.and_then(Value::as_str) == Some("default") {
+            leaves_default = true;
+        } else if let Some(level) = level_val.and_then(Value::as_str)
+            && MISTRAL_REASONING_EFFORTS.contains(&level)
+        {
+            let mapped = if is_magistral {
+                nearest_magistral_effort(level)
+            } else {
+                level
+            };
+            resolved_effort = Some(mapped.to_string());
+        } else if !drop_params {
+            return Err(oxllm_core::Error::BadRequest(format!(
+                "mistral does not support reasoning_effort={effort_val}; expected one of {}, or 'default'",
+                MISTRAL_REASONING_EFFORTS.join(", ")
+            )));
+        }
+    }
+    if resolved_effort.is_none()
+        && !leaves_default
+        && let Some(thinking_val) = raw_thinking
+    {
+        let mapped = match &thinking_val {
+            Value::Bool(true) => Some("high"),
+            Value::Bool(false) => Some("none"),
+            Value::Object(map) => match map.get("type").and_then(Value::as_str) {
+                Some("disabled") => Some("none"),
+                Some("adaptive") => Some(if is_magistral { "high" } else { "medium" }),
+                Some("enabled") => {
+                    let budget = map.get("budget_tokens").and_then(Value::as_u64);
+                    let raw = match budget {
+                        Some(0) => "none",
+                        Some(b) if b <= 1024 => "low",
+                        Some(b) if b <= 4096 => "medium",
+                        _ => "high",
+                    };
+                    Some(if is_magistral {
+                        nearest_magistral_effort(raw)
+                    } else {
+                        raw
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(level) = mapped {
+            resolved_effort = Some(level.to_string());
+        }
+    }
+    if let Some(level) = resolved_effort {
+        obj.insert("reasoning_effort".to_string(), Value::String(level));
+    }
+    Ok(())
+}
+
 /// Apply Mistral-specific request field remappings to an already-built OpenAI
 /// chat request body (the output of the shared compat `transform_request`).
 /// `request` is the original client body; it is consulted only for fields the
 /// shared `build_chat_request` does not copy (notably `random_seed`).
-fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
+fn apply_mistral_request_transforms(
+    out: &mut Value,
+    request: &Value,
+    deployment: &Deployment,
+    drop_params: bool,
+) -> Result<()> {
     let Some(obj) = out.as_object_mut() else {
-        return;
+        return Ok(());
     };
+
+    if let Some(cache_key) = request.get("prompt_cache_key").filter(|v| !v.is_null()) {
+        match cache_key.as_str() {
+            Some(key) if key.is_ascii() => {
+                obj.insert(
+                    "prompt_cache_key".to_string(),
+                    Value::String(key.to_string()),
+                );
+            }
+            _ if drop_params => {
+                obj.remove("prompt_cache_key");
+            }
+            _ => {
+                return Err(oxllm_core::Error::BadRequest(
+                    "mistral prompt_cache_key must be an ASCII string".into(),
+                ));
+            }
+        }
+    }
 
     // Mistral has no `"required"` tool_choice and rejects unknown string
     // values; map any non-`auto`/`none` string to `"any"` (parity with
@@ -186,36 +323,24 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
         remove_json_schema_refs(tools, MAX_SCHEMA_RECURSE_DEPTH);
     }
 
-    // Mistral does not accept `reasoning_effort` or `thinking` on the wire.
-    // For magistral models either is consumed internally as a signal to
-    // inject Mistral's recommended reasoning system prompt (parity with
-    // the reference, which treats both `reasoning_effort` and `thinking` as
-    // alternative triggers); for all other models they are simply dropped.
-    let is_magistral = obj
+    let model = obj
         .get("model")
-        .and_then(|m| m.as_str())
-        .is_some_and(|m| m.to_ascii_lowercase().contains("magistral"));
-    // Always drop both fields from the upstream body: Mistral does not accept
-    // them on the wire. For magistral models a non-null value in either field
-    // additionally triggers reasoning-prompt injection below.
-    let reasoning_effort = obj.remove("reasoning_effort");
-    let thinking = obj.remove("thinking");
-    let inject_prompt = is_magistral
-        && (reasoning_effort.is_some_and(|v| !v.is_null())
-            || thinking.is_some_and(|v| !v.is_null()));
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    map_mistral_reasoning_params(obj, &model, deployment, drop_params)?;
+    let keeps_reasoning = mistral_accepts_reasoning(&model, deployment);
 
-    // Message-level normalization: drop empty assistant messages, strip
-    // prior-turn reasoning fields from assistant messages, enforce Mistral's
+    // Message-level normalization: drop empty assistant messages, replay or
+    // strip prior-turn reasoning based on model capability, enforce Mistral's
     // `name` placement rules, and rewrite `tool_calls` to Mistral's
-    // `{id,type,function}` shape (parity with the reference
-    // `_handle_tool_call_message`).
+    // `{id,type,function}` shape.
     let Some(messages) = obj.get_mut("messages").and_then(|v| v.as_array_mut()) else {
-        return;
+        return Ok(());
     };
-    if inject_prompt {
-        inject_reasoning_into_messages(messages);
-    }
-    for message in messages.iter_mut() {
+    let last_idx = messages.len().saturating_sub(1);
+    for (idx, message) in messages.iter_mut().enumerate() {
+        let is_final_turn = idx == last_idx;
         let Some(map) = message.as_object_mut() else {
             continue;
         };
@@ -225,10 +350,7 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
             .unwrap_or("")
             .to_string();
         if role == "assistant" {
-            map.remove("reasoning_content");
-            map.remove("thinking_blocks");
-            map.remove("reasoning_items");
-            map.remove("provider_specific_fields");
+            replay_or_strip_assistant_reasoning(map, keeps_reasoning, is_final_turn);
         }
         normalize_tool_calls(map);
         // Mistral only accepts `name` on tool messages (and only when
@@ -248,6 +370,7 @@ fn apply_mistral_request_transforms(out: &mut Value, request: &Value) {
     // survive as `content: ""`, which Mistral rejects (reference order:
     // strip, then normalize, then drop).
     messages.retain(|m| !is_empty_assistant_message(m));
+    Ok(())
 }
 
 /// Rewrite a message's `tool_calls` array into Mistral's strict
@@ -344,71 +467,125 @@ fn is_empty_assistant_message(message: &Value) -> bool {
     true
 }
 
-/// Mistral's recommended reasoning system prompt for magistral models, per
-/// <https://huggingface.co/mistralai/Magistral-Small-2506> (mirrors the reference
-/// `_get_mistral_reasoning_system_prompt`).
-const MISTRAL_REASONING_SYSTEM_PROMPT: &str = r#"<s>[SYSTEM_PROMPT]system_prompt
-A user will ask you to solve a task. You should first draft your thinking process (inner monologue) until you have derived the final answer. Afterwards, write a self-contained summary of your thoughts (i.e. your summary should be succinct but contain all the critical steps you needed to reach the conclusion). You should use Markdown to format your response. Write both your thoughts and summary in the same language as the task posed by the user. NEVER use \boxed{} in your response.
+fn is_mistral_think_chunk(part: &Value) -> bool {
+    part.get("type").and_then(Value::as_str) == Some("thinking")
+        && part.get("thinking").is_some_and(Value::is_array)
+}
 
-Your thinking process must follow the template below:
-<think>
-Your thoughts or/and draft, like working through an exercise on scratch paper. Be as casual and as long as you want until you are confident to generate a correct answer.
-</think>
+fn sanitize_think_chunk(chunk: &Value, may_stay_open: bool) -> Option<Value> {
+    let items = chunk.get("thinking")?.as_array()?;
+    let text_items: Vec<Value> = items
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .map(|text| serde_json::json!({"type": "text", "text": text}))
+        .collect();
+    if text_items.is_empty() {
+        return None;
+    }
+    let mut out = serde_json::Map::new();
+    out.insert("type".to_string(), Value::String("thinking".to_string()));
+    out.insert("thinking".to_string(), Value::Array(text_items));
+    if let Some(closed) = chunk.get("closed").and_then(Value::as_bool)
+        && (closed || may_stay_open)
+    {
+        out.insert("closed".to_string(), Value::Bool(closed));
+    }
+    Some(Value::Object(out))
+}
 
-Here, provide a concise summary that reflects your reasoning and presents a clear final answer to the user. Don't mention that this is a summary.
+fn replay_or_strip_assistant_reasoning(
+    map: &mut serde_json::Map<String, Value>,
+    keeps_reasoning: bool,
+    is_final_turn: bool,
+) {
+    let reasoning_content = map.remove("reasoning_content");
+    let thinking_blocks = map.remove("thinking_blocks");
+    map.remove("reasoning_items");
+    map.remove("provider_specific_fields");
 
-Problem:
-
-[/SYSTEM_PROMPT][INST]user_message[/INST]<think>
-reasoning_traces
-</think>
-assistant_response</s>[INST]user_message[/INST]"#;
-
-/// Prepend the reasoning system prompt to the conversation. If a `system`
-/// message already exists, the prompt is prepended to its content; otherwise a
-/// new `system` message is inserted at the front (parity with the reference
-/// `_add_reasoning_system_prompt_if_needed`).
-///
-/// The original system message content shape is preserved: a string content is
-/// prepended in-place (`"{prompt}\n\n{content}"`); an array (multimodal) content
-/// has a `{"type":"text","text":"{prompt}\n\n"}` block prepended to the list.
-/// Missing/null content is replaced with the bare prompt string. This matches
-/// the reference three-way branch and avoids silently overwriting array-form
-/// system content with a bare string.
-fn inject_reasoning_into_messages(messages: &mut Vec<Value>) {
-    for message in messages.iter_mut() {
-        let is_system = message
-            .get("role")
-            .and_then(|r| r.as_str())
-            .is_some_and(|r| r == "system");
-        if !is_system {
-            continue;
-        }
-        if let Some(map) = message.as_object_mut() {
-            let existing = map.remove("content");
-            let new_content = match existing {
-                Some(Value::String(c)) => {
-                    Value::String(format!("{MISTRAL_REASONING_SYSTEM_PROMPT}\n\n{c}"))
-                }
-                Some(Value::Array(blocks)) => {
-                    let mut new_blocks = Vec::with_capacity(blocks.len() + 1);
-                    new_blocks.push(serde_json::json!({
-                        "type": "text",
-                        "text": format!("{MISTRAL_REASONING_SYSTEM_PROMPT}\n\n"),
-                    }));
-                    new_blocks.extend(blocks);
-                    Value::Array(new_blocks)
-                }
-                _ => Value::String(MISTRAL_REASONING_SYSTEM_PROMPT.to_string()),
-            };
-            map.insert("content".to_string(), new_content);
+    if !keeps_reasoning {
+        if let Some(Value::Array(parts)) = map.get_mut("content") {
+            parts.retain(|part| !is_mistral_think_chunk(part));
+            if parts.is_empty() {
+                map.insert("content".to_string(), Value::Null);
+            }
         }
         return;
     }
-    messages.insert(
-        0,
-        serde_json::json!({"role": "system", "content": MISTRAL_REASONING_SYSTEM_PROMPT}),
-    );
+
+    let is_prefix = map.get("prefix").and_then(Value::as_bool) == Some(true);
+    let may_end_open = is_final_turn && is_prefix;
+
+    if let Some(Value::Array(parts)) = map.get("content")
+        && parts.iter().any(is_mistral_think_chunk)
+    {
+        let last_pos = parts.len().saturating_sub(1);
+        let sendable: Vec<Value> = parts
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, part)| {
+                if is_mistral_think_chunk(part) {
+                    sanitize_think_chunk(part, may_end_open && pos == last_pos)
+                } else {
+                    Some(part.clone())
+                }
+            })
+            .collect();
+        if sendable.is_empty() {
+            map.insert("content".to_string(), Value::Null);
+        } else {
+            map.insert("content".to_string(), Value::Array(sendable));
+        }
+        return;
+    }
+
+    let mut reasoning_text = reasoning_content
+        .as_ref()
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string);
+    if reasoning_text.is_none()
+        && let Some(Value::Array(blocks)) = &thinking_blocks
+    {
+        let combined: String = blocks
+            .iter()
+            .filter(|b| b.get("type").and_then(Value::as_str) == Some("thinking"))
+            .filter_map(|b| b.get("thinking").and_then(Value::as_str))
+            .collect();
+        if !combined.trim().is_empty() {
+            reasoning_text = Some(combined);
+        }
+    }
+    let Some(reasoning_text) = reasoning_text else {
+        return;
+    };
+
+    let content_parts: Option<Vec<Value>> = match map.get("content") {
+        None | Some(Value::Null) => Some(Vec::new()),
+        Some(Value::String(s)) if s.is_empty() => Some(Vec::new()),
+        Some(Value::String(s)) => Some(vec![serde_json::json!({"type": "text", "text": s})]),
+        Some(Value::Array(parts)) => Some(parts.clone()),
+        Some(_) => None,
+    };
+    let Some(content_parts) = content_parts else {
+        return;
+    };
+    let has_tool_calls = map
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|arr| !arr.is_empty());
+    if content_parts.is_empty() && !has_tool_calls {
+        return;
+    }
+    let mut new_parts = Vec::with_capacity(content_parts.len() + 1);
+    new_parts.push(serde_json::json!({
+        "type": "thinking",
+        "thinking": [{"type": "text", "text": reasoning_text}],
+        "closed": true,
+    }));
+    new_parts.extend(content_parts);
+    map.insert("content".to_string(), Value::Array(new_parts));
 }
 
 /// Normalize magistral content-list responses on the non-streaming path. For
@@ -577,7 +754,9 @@ impl ChatProvider for MistralProvider {
 
     fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
         let mut out = ChatProvider::transform_request(&COMPAT, request, deployment)?;
-        apply_mistral_request_transforms(&mut out, request);
+        let drop_params = deployment.oxllm_params.drop_params == Some(true)
+            || request.get("drop_params").and_then(Value::as_bool) == Some(true);
+        apply_mistral_request_transforms(&mut out, request, deployment, drop_params)?;
         Ok(out)
     }
 

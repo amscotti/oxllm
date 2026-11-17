@@ -171,8 +171,18 @@ impl AzureProvider {
 
     /// On v1 the deployment is selected by `model` in the body. Use the same
     /// configured deployment-name precedence as the classic URL route.
-    fn rewrite_v1_model(request: &mut Value, deployment: &Deployment) -> Result<()> {
-        if !is_azure_v1_api_version(&Self::api_version(deployment)) {
+    fn rewrite_v1_model(request: &mut Value, deployment: &Deployment, is_chat: bool) -> Result<()> {
+        let api_version = Self::api_version(deployment);
+        let foundry_chat_v1 = is_chat
+            && deployment
+                .oxllm_params
+                .api_base
+                .as_deref()
+                .is_some_and(|base| is_foundry_project_v1_base(base, "chat/completions"));
+        if !is_azure_v1_api_version(&api_version)
+            && !is_api_version_opt_out(&api_version)
+            && !foundry_chat_v1
+        {
             return Ok(());
         }
         let model = Self::resolve_deployment_name(
@@ -368,13 +378,18 @@ impl AzureProvider {
                 "azure api_version must not be empty".into(),
             ));
         }
+        let foundry_chat_v1 =
+            endpoint == "chat/completions" && is_foundry_project_v1_base(path_base, endpoint);
+        let opt_out_version = is_api_version_opt_out(&api_version);
+        let omit_api_version = foundry_chat_v1 || opt_out_version;
+        let use_v1_path =
+            is_azure_v1_api_version(&api_version) || opt_out_version || foundry_chat_v1;
         // latest is a configuration alias, not a documented wire version.
         let api_version_param = if api_version == "latest" {
             "v1"
         } else {
             api_version.as_str()
         };
-        let api_version_enc = utf8_percent_encode(api_version_param, QUERY_VALUE);
         let mut path_base = path_base;
         for suffix in [
             "/chat/completions",
@@ -390,7 +405,7 @@ impl AzureProvider {
         }
         let path_base = strip_route_suffix(strip_route_suffix(path_base, "/openai/v1"), "/openai");
 
-        let path = if is_azure_v1_api_version(&api_version) {
+        let path = if use_v1_path {
             format!("{path_base}/openai/v1/{endpoint}")
         } else {
             let deployment_name = Self::resolve_deployment_name(deployment, requested_model)?;
@@ -413,9 +428,17 @@ impl AzureProvider {
                     .is_ok_and(|key| key.eq_ignore_ascii_case("api-version"))
             })
             .collect();
-        let version_param = format!("api-version={api_version_enc}");
-        query.push(&version_param);
-        let mut url = format!("{path}?{}", query.join("&"));
+        let version_param;
+        if !omit_api_version {
+            let api_version_enc = utf8_percent_encode(api_version_param, QUERY_VALUE);
+            version_param = format!("api-version={api_version_enc}");
+            query.push(&version_param);
+        }
+        let mut url = if query.is_empty() {
+            path
+        } else {
+            format!("{path}?{}", query.join("&"))
+        };
         if let Some(fragment) = fragment {
             url.push('#');
             url.push_str(fragment);
@@ -449,6 +472,45 @@ fn strip_route_suffix<'a>(path: &'a str, suffix: &str) -> &'a str {
 /// Mirrors the reference Azure v1 API-version detection.
 fn is_azure_v1_api_version(api_version: &str) -> bool {
     matches!(api_version, "preview" | "latest" | "v1")
+}
+
+/// Whether the operator explicitly opted out of sending `api-version`
+/// (`api_version: "none"`), used by Azure Foundry / gateways that route v1
+/// without an `api-version` query parameter.
+fn is_api_version_opt_out(api_version: &str) -> bool {
+    api_version.trim().eq_ignore_ascii_case("none")
+}
+
+/// Whether `base` points to an Azure AI Foundry project v1 endpoint
+/// (`/api/projects/<project>/openai/v1`). Foundry project `/v1` routes reject
+/// any `api-version` query parameter with HTTP 400.
+fn is_foundry_project_v1_base(base: &str, endpoint: &str) -> bool {
+    let base_no_fragment = base.split_once('#').map_or(base, |(b, _)| b);
+    let (path_base, _) = split_base_and_query(base_no_fragment);
+    let path = path_base
+        .strip_prefix("https://")
+        .or_else(|| path_base.strip_prefix("http://"))
+        .and_then(|rest| rest.find('/').map(|idx| &rest[idx..]))
+        .unwrap_or("");
+    let path = if endpoint == "chat/completions" {
+        strip_route_suffix(path, "/chat/completions")
+    } else {
+        path.trim_end_matches('/')
+    };
+    let trimmed = path.trim_end_matches('/');
+    let Some(end) = trimmed.len().checked_sub("/openai/v1".len()) else {
+        return false;
+    };
+    if !trimmed
+        .get(end..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case("/openai/v1"))
+    {
+        return false;
+    }
+    let prefix = &trimmed[..end];
+    prefix
+        .rsplit_once("/api/projects/")
+        .is_some_and(|(_, project)| !project.is_empty() && !project.contains('/'))
 }
 
 /// Split an `api_base` into its path and (optional) query-string parts, so a
@@ -548,9 +610,9 @@ impl ChatProvider for AzureProvider {
         }
         let mut out = normalize_azure_request(request)?;
         drop_tool_choice_without_tools(&mut out);
-        Self::rewrite_v1_model(&mut out, deployment)?;
+        Self::rewrite_v1_model(&mut out, deployment, true)?;
         if let Some(model) = Self::capability_model(request, deployment) {
-            crate::openai::apply_openai_reasoning_limits(&mut out, &model);
+            crate::openai::apply_azure_openai_reasoning_limits(&mut out, &model);
             if Self::requires_completion_token_limit(&model) {
                 crate::openai::apply_openai_token_limit_alias(&mut out);
             }
@@ -592,7 +654,7 @@ impl EmbeddingProvider for AzureProvider {
 
     fn transform_request(&self, request: &Value, deployment: &Deployment) -> Result<Value> {
         let mut out = request.clone();
-        Self::rewrite_v1_model(&mut out, deployment)?;
+        Self::rewrite_v1_model(&mut out, deployment, false)?;
         Ok(out)
     }
 
