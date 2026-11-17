@@ -770,15 +770,17 @@ fn no_stdout_or_stderr_macros_in_library_crates() {
 /// Prevent any new `.unwrap()`, `.expect()`, or `panic!()` in non-test
 /// production code while bounding known compile-time-invariant or audited sites
 /// by per-file ceilings (never brittle line numbers).
+///
+/// Ceilings are a ratchet: every allowlisted file must match its ceiling
+/// exactly, so fixing a site (e.g. the former `orchestration/upstream.rs`
+/// `.unwrap()` or the `repos/skills.rs` poisoned-lock `.expect()`s) forces the
+/// ceiling down in the same change and the fix can never silently regress.
 #[test]
 fn no_unallowlisted_unwrap_expect_or_panic_in_production_code() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let unwrap_ceilings: HashMap<&str, usize> = HashMap::from([
-        ("crates/oxllm-server/src/guardrails/injection.rs", 1),
-        // Known finding documented in review (`normalized["messages"].as_array_mut().unwrap()`):
-        ("crates/oxllm-server/src/orchestration/upstream.rs", 1),
-    ]);
+    let unwrap_ceilings: HashMap<&str, usize> =
+        HashMap::from([("crates/oxllm-server/src/guardrails/injection.rs", 1)]);
 
     let panic_ceilings: HashMap<&str, usize> = HashMap::from([
         ("crates/oxllm-core/src/cost.rs", 1),
@@ -791,7 +793,6 @@ fn no_unallowlisted_unwrap_expect_or_panic_in_production_code() {
         ("crates/oxllm-core/src/router/stores.rs", 1),
         ("crates/oxllm-providers/src/azure_ai/embeddings.rs", 3),
         ("crates/oxllm-providers/src/databricks/mod.rs", 2),
-        ("crates/oxllm-db/src/repos/skills.rs", 3),
         ("crates/oxllm-admin/src/proxy_client.rs", 1),
         ("crates/oxllm-server/src/app.rs", 1),
         ("crates/oxllm-server/src/auth/jwt.rs", 1),
@@ -810,6 +811,9 @@ fn no_unallowlisted_unwrap_expect_or_panic_in_production_code() {
         ("crates/oxllm-server/src/realtime/xai.rs", 1),
         ("crates/oxllm-server/src/routes/management.rs", 1),
     ]);
+
+    let mut seen_files: BTreeSet<String> = BTreeSet::new();
+    let mut stale: Vec<String> = Vec::new();
 
     for (_, rel, tokens) in workspace_src_files(manifest_dir) {
         let mut unwrap_lines = Vec::new();
@@ -837,27 +841,41 @@ fn no_unallowlisted_unwrap_expect_or_panic_in_production_code() {
             }
         }
 
-        let max_unwrap = unwrap_ceilings.get(rel.as_str()).copied().unwrap_or(0);
-        assert!(
-            unwrap_lines.len() <= max_unwrap,
-            "PANIC RISK: `{rel}` has {} `.unwrap()` calls (ceiling {max_unwrap}) at lines {unwrap_lines:?}",
-            unwrap_lines.len()
-        );
-
-        let max_expect = expect_ceilings.get(rel.as_str()).copied().unwrap_or(0);
-        assert!(
-            expect_lines.len() <= max_expect,
-            "PANIC RISK: `{rel}` has {} `.expect()` calls (ceiling {max_expect}) at lines {expect_lines:?}",
-            expect_lines.len()
-        );
-
-        let max_panic = panic_ceilings.get(rel.as_str()).copied().unwrap_or(0);
-        assert!(
-            panic_lines.len() <= max_panic,
-            "PANIC RISK: `{rel}` has {} `panic!()` calls (ceiling {max_panic}) at lines {panic_lines:?}",
-            panic_lines.len()
-        );
+        for (kind, lines, ceilings) in [
+            ("unwrap", &unwrap_lines, &unwrap_ceilings),
+            ("expect", &expect_lines, &expect_ceilings),
+            ("panic", &panic_lines, &panic_ceilings),
+        ] {
+            let max = ceilings.get(rel.as_str()).copied().unwrap_or(0);
+            assert!(
+                lines.len() <= max,
+                "PANIC RISK: `{rel}` has {} `{kind}` calls (ceiling {max}) at lines {lines:?}",
+                lines.len()
+            );
+            if ceilings.contains_key(rel.as_str()) && lines.len() < max {
+                stale.push(format!(
+                    "`{rel}` `{kind}` ceiling is {max} but only {} remain (lines {lines:?}); lower the ceiling",
+                    lines.len()
+                ));
+            }
+        }
+        seen_files.insert(rel);
     }
+
+    for ceilings in [&unwrap_ceilings, &expect_ceilings, &panic_ceilings] {
+        for path in ceilings.keys() {
+            if !seen_files.contains(*path) {
+                stale.push(format!(
+                    "`{path}` is allowlisted but is not a production source file"
+                ));
+            }
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "STALE PANIC CEILINGS (ratchet must be tightened):\n{}",
+        stale.join("\n")
+    );
 }
 
 #[test]
@@ -1345,6 +1363,122 @@ async fn secret_bearing_types_redact_debug_output() {
     )
     .expect("S3LogHook::new");
     assert!(!format!("{s3_hook:?}").contains(SENTINEL));
+}
+
+/// Locks in the secret-redacting `Debug` impls on every secret-bearing config
+/// and admin form type: none may go back to `#[derive(Debug)]` (which would
+/// print plaintext credentials), and each must keep a hand-written
+/// `impl Debug for <Type>`. Behavioral sentinel coverage lives next to the
+/// types (`config/types/tests.rs`, `pages/{auth,models}.rs`).
+#[test]
+fn secret_bearing_config_types_never_derive_debug() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let types_dir = "crates/oxllm-server/src/config/types";
+    let required: &[(&str, &[&str])] = &[
+        (
+            "base.rs",
+            &[
+                "ProxyConfig",
+                "OxllmSettings",
+                "GeneralSettings",
+                "PassThroughEndpoint",
+            ],
+        ),
+        (
+            "cache.rs",
+            &[
+                "CacheConfig",
+                "S3CacheConfig",
+                "GcsCacheConfig",
+                "AzureBlobCacheConfig",
+                "SemanticCacheConfig",
+            ],
+        ),
+        (
+            "guardrails.rs",
+            &[
+                "AimConfig",
+                "LakeraConfig",
+                "ModelArmorConfig",
+                "CustomGuardrailConfig",
+            ],
+        ),
+        (
+            "telemetry.rs",
+            &[
+                "LangfuseConfig",
+                "LangsmithConfig",
+                "DatadogConfig",
+                "HeliconeConfig",
+                "WandbConfig",
+                "S3LogConfig",
+            ],
+        ),
+        (
+            "alerting.rs",
+            &[
+                "WebhookAlertConfig",
+                "SlackAlertConfig",
+                "PagerDutyConfig",
+                "EmailAlertConfig",
+            ],
+        ),
+    ];
+    let mut targets: Vec<(String, &str)> = Vec::new();
+    for (file, names) in required {
+        for name in *names {
+            targets.push((format!("{types_dir}/{file}"), name));
+        }
+    }
+    targets.push((
+        "crates/oxllm-admin/src/pages/auth.rs".to_string(),
+        "LoginForm",
+    ));
+    targets.push((
+        "crates/oxllm-admin/src/pages/models.rs".to_string(),
+        "ModelCreateForm",
+    ));
+    assert_eq!(targets.len(), 25, "23 config types + 2 admin forms");
+
+    for (rel, name) in &targets {
+        let src = fs::read_to_string(manifest_dir.join(rel))
+            .unwrap_or_else(|e| panic!("read {rel}: {e}"));
+        let tokens = tokenize_rust(&src);
+
+        let struct_idx = tokens
+            .windows(2)
+            .position(|w| w[0].text == "struct" && w[1].text == *name)
+            .unwrap_or_else(|| panic!("`struct {name}` not found in {rel}"));
+
+        // Attributes between the previous item boundary and `struct`.
+        let item_start = tokens[..struct_idx]
+            .iter()
+            .rposition(|t| t.kind == TokKind::Punct && (t.text == "}" || t.text == ";"))
+            .map_or(0, |i| i + 1);
+        let attrs = &tokens[item_start..struct_idx];
+        let mut derives_debug = false;
+        for (i, tok) in attrs.iter().enumerate() {
+            if tok.text == "derive" && attrs.get(i + 1).is_some_and(|t| t.text == "(") {
+                let close = attrs[i + 1..]
+                    .iter()
+                    .position(|t| t.text == ")")
+                    .map_or(attrs.len(), |p| i + 1 + p);
+                derives_debug |= attrs[i + 1..close].iter().any(|t| t.text == "Debug");
+            }
+        }
+        assert!(
+            !derives_debug,
+            "SECRET LEAK RISK: `{name}` in {rel} derives `Debug`; keep the hand-written redacting impl"
+        );
+
+        let has_manual_impl = tokens
+            .windows(3)
+            .any(|w| w[0].text == "Debug" && w[1].text == "for" && w[2].text == *name);
+        assert!(
+            has_manual_impl,
+            "SECRET LEAK RISK: `{name}` in {rel} lost its redacting `impl Debug for {name}`"
+        );
+    }
 }
 
 #[cfg(feature = "admin")]
