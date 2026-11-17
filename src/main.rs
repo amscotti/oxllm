@@ -1,3 +1,9 @@
+// Production code is `forbid(unsafe_code)`. The crate-level attribute is
+// test-scoped off because `tests::validate_rejects_secret_less_config_when_require_auth_set`
+// mutates `OXLLM_REQUIRE_AUTH` via `std::env::set_var`/`remove_var`, which are
+// `unsafe` in edition 2024. Shipped (non-test) code contains no `unsafe`.
+#![cfg_attr(not(test), forbid(unsafe_code))]
+
 use clap::{Parser, Subcommand};
 #[cfg(feature = "db")]
 use oxllm::canonical_sqlite_url;

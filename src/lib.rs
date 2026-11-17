@@ -4,6 +4,8 @@
 //! independently of the `oxllm` binary entrypoint (and so
 //! `cargo test -p oxllm --lib --bins` has a lib target to run).
 
+#![forbid(unsafe_code)]
+
 /// Generate a random virtual key: `sk-ox-<40 hex chars>` (20 random bytes).
 pub fn generate_random_key() -> String {
     use rand::Rng;
