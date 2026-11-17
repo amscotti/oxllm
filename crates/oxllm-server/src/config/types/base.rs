@@ -24,7 +24,7 @@ where
 }
 
 /// Top-level proxy config, preserving the established gateway config shape.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
     /// The model list — one entry per upstream deployment.
     pub model_list: Vec<ConfigModel>,
@@ -50,6 +50,18 @@ pub struct ProxyConfig {
     /// Unknown top-level keys captured for forward compatibility.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for ProxyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxyConfig")
+            .field("model_list", &self.model_list)
+            .field("oxllm_settings", &self.oxllm_settings)
+            .field("general_settings", &self.general_settings)
+            .field("router_settings", &self.router_settings)
+            .field("extra", &super::RedactedExtra(&self.extra))
+            .finish()
+    }
 }
 
 /// One entry in the `model_list`.
@@ -120,7 +132,7 @@ fn warns_wildcard_with_fully_qualified_model(model_name: &str, model: &str) -> b
 }
 
 /// The `oxllm_settings` block.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct OxllmSettings {
     /// Strip unsupported params instead of erroring.
     #[serde(default)]
@@ -240,8 +252,51 @@ pub struct OxllmSettings {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+impl std::fmt::Debug for OxllmSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OxllmSettings")
+            .field("drop_params", &self.drop_params)
+            .field("modify_params", &self.modify_params)
+            .field("force_ipv4", &self.force_ipv4)
+            .field("routing", &self.routing)
+            .field("request_timeout", &self.request_timeout)
+            .field("max_budget", &self.max_budget)
+            .field("budget_duration", &self.budget_duration)
+            .field("rpm", &self.rpm)
+            .field("tpm", &self.tpm)
+            .field("cache_ttl_secs", &self.cache_ttl_secs)
+            .field("cache", &self.cache)
+            .field("quality_scores", &self.quality_scores)
+            .field("prompt_caching_min_tokens", &self.prompt_caching_min_tokens)
+            .field("prompt_caching_enabled", &self.prompt_caching_enabled)
+            .field("model_max_budget", &self.model_max_budget)
+            .field("success_callback", &self.success_callback)
+            .field("failure_callback", &self.failure_callback)
+            .field("callbacks", &self.callbacks)
+            .field("service_callback", &self.service_callback)
+            .field(
+                "callback_settings",
+                &self.callback_settings.as_ref().map(super::RedactedValueMap),
+            )
+            .field("langfuse_config", &self.langfuse_config)
+            .field("langsmith_config", &self.langsmith_config)
+            .field("datadog_config", &self.datadog_config)
+            .field("slack_alerting_config", &self.slack_alerting_config)
+            .field("helicone_config", &self.helicone_config)
+            .field("mlflow_config", &self.mlflow_config)
+            .field("pagerduty_config", &self.pagerduty_config)
+            .field("wandb_config", &self.wandb_config)
+            .field("s3_log_config", &self.s3_log_config)
+            .field("email_alert_config", &self.email_alert_config)
+            .field("alerting", &self.alerting)
+            .field("alerting_config", &self.alerting_config)
+            .field("extra", &super::RedactedExtra(&self.extra))
+            .finish()
+    }
+}
+
 /// The `general_settings` block.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct GeneralSettings {
     /// Master API key (bypasses all checks).
     #[serde(default)]
@@ -387,10 +442,50 @@ pub struct GeneralSettings {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+impl std::fmt::Debug for GeneralSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeneralSettings")
+            .field("master_key", &super::redact_opt(&self.master_key))
+            .field("database_url", &super::redact_opt(&self.database_url))
+            .field("jwt_secret", &super::redact_opt(&self.jwt_secret))
+            .field("jwt_algorithm", &self.jwt_algorithm)
+            .field("jwt_audience", &self.jwt_audience)
+            .field("jwt_issuer", &self.jwt_issuer)
+            .field("max_request_body_size_mb", &self.max_request_body_size_mb)
+            .field("log_format", &self.log_format)
+            .field("otel_endpoint", &self.otel_endpoint)
+            .field("otel_service_name", &self.otel_service_name)
+            .field("allow_private_api_base", &self.allow_private_api_base)
+            .field("management_cors_origins", &self.management_cors_origins)
+            .field("proxy_cors_origins", &self.proxy_cors_origins)
+            .field("trusted_proxy_cidrs", &self.trusted_proxy_cidrs)
+            .field("allowed_ips", &self.allowed_ips)
+            .field("pass_through_endpoints", &self.pass_through_endpoints)
+            .field("shutdown_timeout_secs", &self.shutdown_timeout_secs)
+            .field("guardrails", &self.guardrails)
+            .field("spend_log_retention_days", &self.spend_log_retention_days)
+            .field("jwt_replay_protection", &self.jwt_replay_protection)
+            .field(
+                "http_pool_max_idle_per_host",
+                &self.http_pool_max_idle_per_host,
+            )
+            .field(
+                "http_pool_idle_timeout_secs",
+                &self.http_pool_idle_timeout_secs,
+            )
+            .field("http_connect_timeout_secs", &self.http_connect_timeout_secs)
+            .field("http_force_ipv4", &self.http_force_ipv4)
+            .field("redact_secret_values", &self.redact_secret_values)
+            .field("allow_short_master_key", &self.allow_short_master_key)
+            .field("extra", &super::RedactedExtra(&self.extra))
+            .finish()
+    }
+}
+
 /// One declarative pass-through route. Requests whose path begins with
 /// `path` are forwarded to `target` with `headers` merged on top of the
 /// inbound headers.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PassThroughEndpoint {
     /// Path prefix to match (e.g. `/v1/custom-endpoint`).
@@ -401,6 +496,19 @@ pub struct PassThroughEndpoint {
     /// Extra headers to attach to the forwarded request (e.g. credentials).
     #[serde(default)]
     pub headers: Option<std::collections::HashMap<String, String>>,
+}
+
+impl std::fmt::Debug for PassThroughEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PassThroughEndpoint")
+            .field("path", &self.path)
+            .field("target", &self.target)
+            .field(
+                "headers",
+                &self.headers.as_ref().map(super::RedactedHeaders),
+            )
+            .finish()
+    }
 }
 
 #[cfg(test)]

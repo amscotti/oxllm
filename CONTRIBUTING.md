@@ -14,8 +14,8 @@ opinionated; this guide lays out the conventions.
 
 Requirements:
 
-- Rust **1.96** (see [rust-toolchain.toml](rust-toolchain.toml) for the
-  pinned channel; Docker builder images use `rust:1.96-bookworm`). Criterion
+- Rust **1.100** (see [rust-toolchain.toml](rust-toolchain.toml) for the
+  pinned channel; Docker builder images use `rust:1.100-bookworm`). Criterion
   benchmarks compile on this stable toolchain; nightly is an extra CI check.
 - (optional) `cargo-deny` for licence/CVE checks.
 - (optional) `cargo-llvm-cov` for coverage.

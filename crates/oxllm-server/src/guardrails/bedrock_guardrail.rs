@@ -436,13 +436,26 @@ impl BedrockGuardrail {
     }
 
     /// Insert a scan result into the cache, evicting expired entries
-    /// opportunistically to bound memory growth. The O(n) retain-sweep only
-    /// fires when the cache exceeds [`CACHE_MAX_SIZE`], avoiding the O(n²)
-    /// insert cost that arises when sweeping on every put within a TTL window
-    /// where no entries are expired yet.
+    /// opportunistically and enforcing [`CACHE_MAX_SIZE`] as a hard upper bound.
+    /// Sweeps only when the cache reaches [`CACHE_MAX_SIZE`] so inserts under the
+    /// cap remain O(1); if all entries are still within the TTL window, half are
+    /// evicted so both memory and amortised insert cost stay bounded.
     fn cache_put(&self, key: u64, result: GuardrailResult) {
         let now = Instant::now();
         let mut cache = self.cache.lock();
+        if cache.len() >= CACHE_MAX_SIZE && !cache.contains_key(&key) {
+            cache.retain(|_, entry| {
+                now.duration_since(entry.inserted_at).as_secs() < CACHE_TTL_SECS
+            });
+            if cache.len() >= CACHE_MAX_SIZE {
+                let target = CACHE_MAX_SIZE / 2;
+                let to_remove: Vec<u64> =
+                    cache.keys().copied().take(cache.len() - target).collect();
+                for k in to_remove {
+                    cache.remove(&k);
+                }
+            }
+        }
         cache.insert(
             key,
             CacheEntry {
@@ -450,14 +463,6 @@ impl BedrockGuardrail {
                 inserted_at: now,
             },
         );
-        // Only sweep when the cache has grown past the size cap. Within the
-        // TTL window (no entries expired) the retain is pure overhead; the
-        // periodic `cache_get` sweep covers eviction on read-heavy workloads.
-        if cache.len() > CACHE_MAX_SIZE {
-            cache.retain(|_, entry| {
-                now.duration_since(entry.inserted_at).as_secs() < CACHE_TTL_SECS
-            });
-        }
     }
 
     /// Hash a slice of text segments plus the scan `source` and the
@@ -513,6 +518,13 @@ fn collect_message_texts(body: &Value) -> Vec<String> {
     }
     out.extend(crate::guardrails::custom::tools_texts(body));
     out
+}
+
+#[cfg(test)]
+impl BedrockGuardrail {
+    pub(crate) fn shares_cache_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cache, &other.cache)
+    }
 }
 
 #[cfg(test)]
@@ -1355,5 +1367,35 @@ mod tests {
                 "entries should survive under CACHE_MAX_SIZE"
             );
         }
+    }
+
+    #[test]
+    fn cache_put_bounds_size_and_cost_under_ttl_burst() {
+        let g = BedrockGuardrail::new(
+            "gr".to_string(),
+            "1".to_string(),
+            None,
+            "AK".to_string(),
+            "sk".to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let start = Instant::now();
+        for i in 0..10_000u64 {
+            g.cache_put(i, GuardrailResult::Allow);
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_millis() < 200,
+            "10000 cache_put inserts took {elapsed:?}; expected linear time"
+        );
+        let len = g.cache.lock().len();
+        assert!(
+            len <= CACHE_MAX_SIZE,
+            "cache grew to {len} > CACHE_MAX_SIZE ({CACHE_MAX_SIZE})"
+        );
+        assert!(matches!(g.cache_get(9_999), Some(GuardrailResult::Allow)));
     }
 }

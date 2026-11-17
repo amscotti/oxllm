@@ -7,8 +7,9 @@ description = "Database persistence layer for oxllm"
 
 [dependencies]
 # Note: oxllm-db is intentionally independent of oxllm-core (persistence
-# types live here; pure domain types stay in core). Layering tests allow
-# the edge but it is unused — do not re-add without a concrete type share.
+# types live here; pure domain types stay in core). Workspace layering tests
+# forbid an `oxllm-db -> oxllm-core` edge — do not add one without updating
+# the layering contract.
 sqlx = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 serde.workspace = true

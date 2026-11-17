@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        toolchain: ["1.96"]
+        toolchain: ["1.100"]
         include:
           - os: ubuntu-latest
             toolchain: nightly
@@ -58,7 +58,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install cargo-deny
-        if: matrix.toolchain == '1.96' && matrix.os == 'ubuntu-latest'
+        if: matrix.toolchain == '1.100' && matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
         with:
           tool: cargo-deny
@@ -71,7 +71,7 @@ jobs:
           shared-key: ${{ matrix.os }}-${{ matrix.toolchain }}-dbg0
 
       - name: Format check
-        if: matrix.toolchain == '1.96'
+        if: matrix.toolchain == '1.100'
         run: cargo fmt --all -- --check
 
       - name: Clippy
@@ -81,18 +81,18 @@ jobs:
         run: cargo test --locked --workspace
 
       - name: Compile Criterion benchmarks on the pinned stable toolchain
-        if: matrix.toolchain == '1.96' && matrix.os == 'ubuntu-latest'
+        if: matrix.toolchain == '1.100' && matrix.os == 'ubuntu-latest'
         run: cargo bench --locked --workspace --no-run
 
       # NOTE: cargo-deny only runs on ubuntu-latest. Platform-specific advisories
       # (e.g. macOS-only or linux-only CVEs) would create false positives/negatives
       # if cross-checked on the other OS. The Linux graph is the canonical one.
       - name: Deny check
-        if: matrix.toolchain == '1.96' && matrix.os == 'ubuntu-latest'
+        if: matrix.toolchain == '1.100' && matrix.os == 'ubuntu-latest'
         run: cargo deny --locked check
 
       - name: Doc build
-        if: matrix.toolchain == '1.96'
+        if: matrix.toolchain == '1.100'
         run: cargo doc --locked --no-deps --workspace
         env:
           RUSTDOCFLAGS: "-D warnings"
@@ -123,7 +123,7 @@ jobs:
       - name: Install Rust (pinned stable)
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
-          toolchain: "1.96"
+          toolchain: "1.100"
           components: clippy
 
       - name: Rust cache
@@ -167,7 +167,7 @@ jobs:
       - name: Install Rust (pinned stable)
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
-          toolchain: "1.96"
+          toolchain: "1.100"
 
       - name: Rust cache
         uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
@@ -196,7 +196,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
-          toolchain: "1.96"
+          toolchain: "1.100"
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           shared-key: ubuntu-latest-stable-redis-dbg0
@@ -216,7 +216,7 @@ jobs:
       - name: Install Rust (pinned stable)
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
-          toolchain: "1.96"
+          toolchain: "1.100"
           components: clippy
 
       - name: Rust cache

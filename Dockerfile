@@ -1,4 +1,4 @@
-FROM rust:1.96-bookworm AS builder
+FROM rust:1.100-bookworm AS builder
 WORKDIR /app
 
 # Copy the real workspace (not a dummy-crate stub). The stub layer used to

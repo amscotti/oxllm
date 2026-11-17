@@ -2716,3 +2716,85 @@ async fn spend_export_csv_flags_full_page_without_cursor() {
     );
     assert!(!f.truncated_by_row_cap);
 }
+
+#[tokio::test]
+async fn spend_export_csv_respects_explicit_null_next_cursor() {
+    use crate::pages::spend::fetch_spend_pages;
+    use std::time::Duration;
+
+    let server = MockServer::start();
+    // Proxy explicitly signals `"next_cursor": null` on the final page even
+    // though rows carry an integer `id` and count matches `max_rows` (2).
+    // `fetch_spend_pages` must stop after one call without falling back to
+    // `batch.last().id` or falsely setting `truncated_by_row_cap`.
+    let m = server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/spend/logs/v2");
+        then.status(200).body(
+            r#"{"data":[{"id":10,"model":"a","cost":0.01},{"id":11,"model":"b","cost":0.02}],"next_cursor":null}"#,
+        );
+    });
+    let proxy = ProxyClient::new(&server.base_url(), "sk-test");
+    let q = SpendQuery {
+        start_date: Some("2024-01-01".to_string()),
+        end_date: Some("2024-01-31".to_string()),
+        ..Default::default()
+    };
+    let f = fetch_spend_pages(&proxy, &q, "2024-01-31", 200, 2, Duration::from_secs(5))
+        .await
+        .expect("fetch should not error");
+    assert_eq!(f.rows.len(), 2);
+    assert!(!f.truncated_by_row_cap);
+    assert!(!f.truncated_by_deadline);
+    assert!(!f.truncated_by_missing_cursor);
+    m.assert_hits(1);
+}
+
+#[tokio::test]
+async fn session_middleware_accepts_split_cookie_headers() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/key/list");
+        then.status(200).body(r#"{"keys":[]}"#);
+    });
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/team/list");
+        then.status(200).body(r#"{"teams":[]}"#);
+    });
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/user/list");
+        then.status(200).body(r#"{"users":[]}"#);
+    });
+
+    let app = build(test_state_with_proxy(&server));
+    let session = create_session("unit-test-secret-value", 1);
+    // HTTP/2 allows splitting cookies across multiple `Cookie` header lines;
+    // both `require_session` and `csrf_token_from_headers` must locate the
+    // session cookie in a later header line.
+    let mut req = Request::builder().uri("/keys").body(Body::empty()).unwrap();
+    req.headers_mut().append(
+        axum::http::header::COOKIE,
+        axum::http::HeaderValue::from_static("unrelated=1"),
+    );
+    req.headers_mut().append(
+        axum::http::header::COOKIE,
+        axum::http::HeaderValue::from_str(&format!("{SESSION_COOKIE}={}", session.cookie_value))
+            .unwrap(),
+    );
+    assert_eq!(
+        req.headers()
+            .get_all(axum::http::header::COOKIE)
+            .iter()
+            .count(),
+        2
+    );
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = body_string(resp).await;
+    let marker = r#"<meta name="csrf-token" content=""#;
+    let start = html.find(marker).expect("csrf-token meta tag present") + marker.len();
+    let end = start + html[start..].find('"').expect("closing quote");
+    assert!(
+        !html[start..end].is_empty(),
+        "CSRF meta tag must extract token across split Cookie headers"
+    );
+}

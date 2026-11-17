@@ -41,7 +41,7 @@ pub(crate) async fn models_page(
 /// The HTML form field retains its legacy name (see
 /// `templates/pages/models.html`); the serde rename keeps the parser in sync
 /// with the template until the template is renamed too.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Deserialize, Default)]
 pub(crate) struct ModelCreateForm {
     #[serde(default)]
     model_name: String,
@@ -54,6 +54,22 @@ pub(crate) struct ModelCreateForm {
     /// Optional upstream base URL (e.g. for Azure / self-hosted gateways).
     #[serde(default)]
     api_base: String,
+}
+
+impl std::fmt::Debug for ModelCreateForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let api_key = if self.api_key.is_empty() {
+            ""
+        } else {
+            "<redacted>"
+        };
+        f.debug_struct("ModelCreateForm")
+            .field("model_name", &self.model_name)
+            .field("provider_model", &self.provider_model)
+            .field("api_key", &api_key)
+            .field("api_base", &self.api_base)
+            .finish()
+    }
 }
 
 impl ModelCreateForm {
@@ -371,5 +387,19 @@ mod tests {
             elapsed < Duration::from_millis(1500),
             "enrich_models ran {elapsed:?} — deadline did not bound the fan-out"
         );
+    }
+
+    #[test]
+    fn model_create_form_debug_redacts_api_key() {
+        let form = ModelCreateForm {
+            model_name: "gpt-4o".to_string(),
+            provider_model: "openai/gpt-4o".to_string(),
+            api_key: "sk-secret-form-key".to_string(),
+            api_base: "https://api.openai.com/v1".to_string(),
+        };
+        let dbg = format!("{form:?}");
+        assert!(!dbg.contains("sk-secret-form-key"));
+        assert!(dbg.contains("<redacted>"));
+        assert!(dbg.contains("gpt-4o"));
     }
 }
