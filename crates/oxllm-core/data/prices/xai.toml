@@ -658,6 +658,12 @@ cache_read_input_token_cost = 5.000000e-7
 cache_read_input_token_cost_above_200k_tokens = 1.000000e-6
 input_cost_per_token_above_200k_tokens = 4.000000e-6
 output_cost_per_token_above_200k_tokens = 1.200000e-5
+cache_read_input_token_cost_above_200k_tokens_batches = 8.000000e-7
+cache_read_input_token_cost_batches = 4.000000e-7
+input_cost_per_token_above_200k_tokens_batches = 3.200000e-6
+input_cost_per_token_batches = 1.600000e-6
+output_cost_per_token_above_200k_tokens_batches = 9.600000e-6
+output_cost_per_token_batches = 4.800000e-6
 
 ["xai/grok-build-latest"]
 input_cost_per_token = 2.000000e-6

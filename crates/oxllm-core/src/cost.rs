@@ -2448,7 +2448,7 @@ output_cost_per_token = 2e-6
             (
                 "bedrock",
                 "bedrock/ap-northeast-1/deepseek.v3.2",
-                163_840,
+                156_000,
                 8_000,
             ),
             ("bedrock", "deepseek.v3-v1:0", 128_000, 8_000),
@@ -2495,7 +2495,7 @@ output_cost_per_token = 2e-6
             (
                 "bedrock_mantle",
                 "openai.gpt-daybreak-blue-5.6-sol",
-                1_050_000,
+                922_000,
                 128_000,
             ),
             ("bedrock", "global.openai.gpt-6.1-sol", 1_000_000, 131_072),
@@ -2521,7 +2521,7 @@ output_cost_per_token = 2e-6
             ] {
                 let key = format!("{region}.openai.{model}");
                 let pricing = lookup_pricing_with_provider(&key, "bedrock").expect("GPT card");
-                assert_eq!(pricing.max_input_tokens, Some(1_050_000), "{key}");
+                assert_eq!(pricing.max_input_tokens, Some(922_000), "{key}");
                 assert_eq!(pricing.max_output_tokens, Some(128_000), "{key}");
             }
         }
@@ -5374,5 +5374,117 @@ input_cost_per_token_above_100k_tokens = 5e-6
             classify_extra_tier_key("input_cost_per_token_above_4294968k_tokens"),
             ExtraTierKeyClass::Malformed
         );
+    }
+
+    #[test]
+    fn synced_0cc072c999_models_repricing_and_cache_rules_hold() {
+        for (provider, model, expected_in, expected_out) in [
+            ("anthropic", "claude-fable-5-2", 8e-6, 4e-5),
+            ("anthropic", "claude-mythos-5-2", 8e-6, 4e-5),
+            (
+                "bedrock",
+                "bedrock/claude_platform/claude-sonnet-5-5",
+                2e-6,
+                1e-5,
+            ),
+            (
+                "bedrock",
+                "bedrock/mantle/anthropic.claude-haiku-4-5",
+                1.1e-6,
+                5.5e-6,
+            ),
+            (
+                "bedrock_mantle",
+                "bedrock_mantle/anthropic.claude-haiku-4-5",
+                1.1e-6,
+                5.5e-6,
+            ),
+            ("openai", "gpt-6.1-terra", 1e-6, 5e-6),
+            ("bedrock", "global.openai.gpt-6.1-terra", 1e-6, 5e-6),
+            (
+                "bedrock_mantle",
+                "bedrock_mantle/openai.gpt-6.1-terra",
+                1.1e-6,
+                5.5e-6,
+            ),
+            ("azure", "azure/us-gov/gpt-5.6-luna", 2.75e-7, 1.65e-6),
+            ("azure_ai", "azure_ai/jais-30b-chat", 3.2e-6, 9.71e-6),
+            ("watsonx", "watsonx/core42/jais-13b-chat", 1.8e-6, 1.8e-6),
+            (
+                "deepinfra",
+                "deepinfra/anthropic/claude-sonnet-5",
+                3e-6,
+                1.5e-5,
+            ),
+            (
+                "together_ai",
+                "together_ai/Qwen/Qwen3.7-Max",
+                2.5e-6,
+                7.5e-6,
+            ),
+            ("mistral", "mistral/mistral-large-4", 7e-7, 2.1e-6),
+            ("gemini", "gemini/gemini-4-carbon", 2e-6, 1e-5),
+            ("vertex_ai", "vertex_ai/gemini-4-hydrogen", 1.5e-6, 7.5e-6),
+            ("baseten", "baseten/moonshotai/Kimi-K3.1-Pro", 2e-6, 1e-5),
+            (
+                "databricks",
+                "databricks/databricks-gpt-6-astra",
+                9.99999e-6,
+                5.000002e-5,
+            ),
+            (
+                "replicate",
+                "replicate/anthropic/claude-fable-5.2",
+                8e-6,
+                4e-5,
+            ),
+            ("bedrock", "global.zai.glm-5.3", 1.68e-6, 5.28e-6),
+        ] {
+            let p = lookup_pricing_with_provider(model, provider)
+                .unwrap_or_else(|| panic!("missing {provider}/{model}"));
+            assert!(
+                (p.input_cost_per_token - expected_in).abs() < 1e-12,
+                "{provider}/{model} input"
+            );
+            assert!(
+                (p.output_cost_per_token - expected_out).abs() < 1e-12,
+                "{provider}/{model} output"
+            );
+        }
+
+        // Cache read updates and removals.
+        let azure_s55 =
+            lookup_pricing_with_provider("azure_ai/claude-sonnet-5-5", "azure_ai").unwrap();
+        assert_eq!(azure_s55.cache_read_input_token_cost, Some(1e-7));
+        let pplx_s55 =
+            lookup_pricing_with_provider("perplexity/anthropic/claude-sonnet-5-5", "perplexity")
+                .unwrap();
+        assert_eq!(pplx_s55.cache_read_input_token_cost, Some(1e-7));
+
+        let embed = lookup_pricing_with_provider(
+            "bedrock/us-gov-east-1/amazon.titan-embed-text-v2:0",
+            "bedrock",
+        )
+        .unwrap();
+        assert_eq!(embed.input_cost_per_token, 3e-8);
+
+        for tts in [
+            "gemini/gemini-3.8-flash-tts",
+            "gemini/gemini-3.8-flash-lite-tts",
+        ] {
+            let p = lookup_pricing_with_provider(tts, "gemini").unwrap();
+            assert_eq!(p.cache_read_input_token_cost, None, "{tts}");
+        }
+
+        // Pro 200k+ context tier drops cache_creation_input_token_cost.
+        for pro in [
+            "gemini-2.5-pro",
+            "vertex_ai/gemini-3-pro-preview",
+            "vertex_ai/gemini-3.1-pro-preview",
+        ] {
+            let p = lookup_pricing_with_provider(pro, "vertex_ai").unwrap();
+            let rates = p.rates_for_prompt(250_000, 100);
+            assert_eq!(rates.cache_creation, 0.0, "{pro} 250k cache_creation");
+        }
     }
 }

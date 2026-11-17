@@ -57,7 +57,7 @@ output_cost_per_token_above_200k_tokens = 1.500000e-5
 input_cost_per_token = 3.000000e-7
 output_cost_per_token = 2.500000e-6
 max_input_tokens = 1048576
-max_output_tokens = 65535
+max_output_tokens = 65536
 cache_read_input_token_cost = 3.000000e-8
 output_cost_per_reasoning_token = 2.500000e-6
 input_cost_per_audio_token = 1.000000e-6
@@ -74,7 +74,7 @@ input_cost_per_audio_token = 1.000000e-6
 input_cost_per_token = 1.000000e-7
 output_cost_per_token = 4.000000e-7
 max_input_tokens = 1048576
-max_output_tokens = 65535
+max_output_tokens = 65536
 cache_read_input_token_cost = 1.000000e-8
 output_cost_per_reasoning_token = 4.000000e-7
 input_cost_per_audio_token = 3.000000e-7
@@ -109,12 +109,11 @@ input_cost_per_audio_token = 1.000000e-6
 input_cost_per_token = 1.250000e-6
 output_cost_per_token = 1.000000e-5
 max_input_tokens = 1048576
-max_output_tokens = 65535
+max_output_tokens = 65536
 cache_read_input_token_cost = 1.250000e-7
 prompt_cache_min_tokens = 2048
 cache_read_input_token_cost_above_200k_tokens = 2.500000e-7
 input_cost_per_token_above_200k_tokens = 2.500000e-6
-cache_creation_input_token_cost_above_200k_tokens = 2.500000e-7
 output_cost_per_token_above_200k_tokens = 1.500000e-5
 
 ["gemini-2.5-pro-preview-tts"]
@@ -130,7 +129,7 @@ input_cost_per_token_batches = 5.000000e-7
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 3.000000e-6
 max_input_tokens = 1048576
-max_output_tokens = 65535
+max_output_tokens = 65536
 cache_read_input_token_cost = 5.000000e-8
 output_cost_per_reasoning_token = 3.000000e-6
 input_cost_per_audio_token = 1.000000e-6
@@ -172,7 +171,7 @@ cache_creation_input_token_cost_above_200k_tokens = 2.500000e-7
 ["gemini-3.1-flash-image"]
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 3.000000e-6
-max_input_tokens = 65536
+max_input_tokens = 131072
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-8
 cache_read_input_token_cost_priority = 9.000000e-8
@@ -216,7 +215,6 @@ cache_read_input_token_cost = 2.000000e-7
 prompt_cache_min_tokens = 4096
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
-cache_creation_input_token_cost_above_200k_tokens = 2.500000e-7
 output_cost_per_token_above_200k_tokens = 1.800000e-5
 
 ["gemini-3.1-pro-preview-customtools"]
@@ -228,7 +226,6 @@ cache_read_input_token_cost = 2.000000e-7
 prompt_cache_min_tokens = 4096
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
-cache_creation_input_token_cost_above_200k_tokens = 2.500000e-7
 output_cost_per_token_above_200k_tokens = 1.800000e-5
 input_cost_per_token_batches = 1.000000e-6
 output_cost_per_token_batches = 6.000000e-6
@@ -237,7 +234,7 @@ output_cost_per_token_batches = 6.000000e-6
 input_cost_per_token = 1.500000e-6
 output_cost_per_token = 9.000000e-6
 max_input_tokens = 1048576
-max_output_tokens = 65535
+max_output_tokens = 65536
 cache_read_input_token_cost = 1.500000e-7
 output_cost_per_reasoning_token = 9.000000e-6
 input_cost_per_audio_token = 1.500000e-6
@@ -298,8 +295,8 @@ input_cost_per_audio_token = 3.000000e-6
 ["gemini-omni-flash-preview"]
 input_cost_per_token = 1.500000e-6
 output_cost_per_token = 9.000000e-6
-max_input_tokens = 1048576
-max_output_tokens = 65535
+max_input_tokens = 131072
+max_output_tokens = 57920
 output_cost_per_reasoning_token = 9.000000e-6
 input_cost_per_audio_token = 1.500000e-6
 
@@ -470,6 +467,7 @@ cache_creation_input_token_cost_batches = 6.250000e-7
 cache_read_input_token_cost_batches = 5.000000e-8
 input_cost_per_token_batches = 5.000000e-7
 output_cost_per_token_batches = 2.500000e-6
+search_queries_cost_per_query = 1.000000e-02
 
 ["vertex_ai/claude-haiku-4-5@20251001"]
 input_cost_per_token = 1.000000e-6
@@ -484,6 +482,7 @@ cache_creation_input_token_cost_batches = 6.250000e-7
 cache_read_input_token_cost_batches = 5.000000e-8
 input_cost_per_token_batches = 5.000000e-7
 output_cost_per_token_batches = 2.500000e-6
+search_queries_cost_per_query = 1.000000e-02
 
 ["vertex_ai/claude-haiku-5-5"]
 input_cost_per_token = 1.000000e-7
@@ -735,6 +734,7 @@ cache_creation_input_token_cost_batches = 1.880000e-6
 cache_read_input_token_cost_batches = 1.500000e-7
 input_cost_per_token_batches = 1.500000e-6
 output_cost_per_token_batches = 7.500000e-6
+search_queries_cost_per_query = 1.000000e-02
 
 ["vertex_ai/claude-sonnet-4-5@20250929"]
 input_cost_per_token = 3.000000e-6
@@ -754,6 +754,7 @@ cache_creation_input_token_cost_batches = 1.880000e-6
 cache_read_input_token_cost_batches = 1.500000e-7
 input_cost_per_token_batches = 1.500000e-6
 output_cost_per_token_batches = 7.500000e-6
+search_queries_cost_per_query = 1.000000e-02
 
 ["vertex_ai/claude-sonnet-4-6"]
 input_cost_per_token = 3.000000e-6
@@ -906,7 +907,7 @@ input_cost_per_audio_token = 1.000000e-6
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 3.000000e-6
 max_input_tokens = 1048576
-max_output_tokens = 65535
+max_output_tokens = 65536
 cache_read_input_token_cost = 5.000000e-8
 input_cost_per_audio_token = 1.000000e-6
 
@@ -942,14 +943,13 @@ cache_read_input_token_cost = 2.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
 output_cost_per_token_above_200k_tokens = 1.800000e-5
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
-cache_creation_input_token_cost_above_200k_tokens = 2.500000e-7
 input_cost_per_token_batches = 1.000000e-6
 output_cost_per_token_batches = 6.000000e-6
 
 ["vertex_ai/gemini-3.1-flash-image"]
 input_cost_per_token = 5.000000e-7
 output_cost_per_token = 3.000000e-6
-max_input_tokens = 65536
+max_input_tokens = 131072
 max_output_tokens = 32768
 cache_read_input_token_cost = 5.000000e-8
 cache_read_input_token_cost_priority = 9.000000e-8
@@ -993,7 +993,6 @@ cache_read_input_token_cost = 2.000000e-7
 prompt_cache_min_tokens = 4096
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
-cache_creation_input_token_cost_above_200k_tokens = 2.500000e-7
 output_cost_per_token_above_200k_tokens = 1.800000e-5
 
 ["vertex_ai/gemini-3.1-pro-preview-customtools"]
@@ -1005,7 +1004,6 @@ cache_read_input_token_cost = 2.000000e-7
 prompt_cache_min_tokens = 4096
 cache_read_input_token_cost_above_200k_tokens = 4.000000e-7
 input_cost_per_token_above_200k_tokens = 4.000000e-6
-cache_creation_input_token_cost_above_200k_tokens = 2.500000e-7
 output_cost_per_token_above_200k_tokens = 1.800000e-5
 input_cost_per_token_batches = 1.000000e-6
 output_cost_per_token_batches = 6.000000e-6
@@ -1014,7 +1012,7 @@ output_cost_per_token_batches = 6.000000e-6
 input_cost_per_token = 1.500000e-6
 output_cost_per_token = 9.000000e-6
 max_input_tokens = 1048576
-max_output_tokens = 65535
+max_output_tokens = 65536
 cache_read_input_token_cost = 1.500000e-7
 output_cost_per_reasoning_token = 9.000000e-6
 input_cost_per_audio_token = 1.500000e-6
@@ -1560,6 +1558,7 @@ input_cost_per_token = 1.500000e-6
 output_cost_per_token = 9.000000e-6
 max_output_tokens = 57920
 output_cost_per_reasoning_token = 9.000000e-6
+max_input_tokens = 131072
 
 ["vertex_ai/gemma-4-26b-a4b-it"]
 input_cost_per_token = 1.500000e-7
@@ -1705,9 +1704,6 @@ input_cost_per_audio_token = 2.000000e-6
 output_cost_per_reasoning_token = 1.000000e-5
 prompt_cache_min_tokens = 6144
 search_queries_cost_per_query = 1.400000e-2
-input_cost_per_token_flex = 1.000000e-6
-output_cost_per_token_flex = 5.000000e-6
-cache_read_input_token_cost_flex = 5.000000e-8
 input_cost_per_token_priority = 3.600000e-6
 output_cost_per_token_priority = 1.800000e-5
 cache_read_input_token_cost_priority = 1.800000e-7
@@ -1727,9 +1723,6 @@ input_cost_per_audio_token = 4.000000e-6
 output_cost_per_reasoning_token = 2.000000e-5
 prompt_cache_min_tokens = 6144
 search_queries_cost_per_query = 1.400000e-2
-input_cost_per_token_flex = 2.000000e-6
-output_cost_per_token_flex = 1.000000e-5
-cache_read_input_token_cost_flex = 1.000000e-7
 input_cost_per_token_priority = 7.200000e-6
 output_cost_per_token_priority = 3.600000e-5
 cache_read_input_token_cost_priority = 3.600000e-7
@@ -1738,3 +1731,208 @@ input_cost_per_token_batches = 2.000000e-6
 output_cost_per_token_batches = 1.000000e-5
 cache_read_input_token_cost_batches = 1.000000e-7
 input_cost_per_audio_token_batches = 2.000000e-6
+
+["gemini-nano-banana-2.1"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 131072
+max_output_tokens = 32768
+mode = "image_generation"
+cache_read_input_token_cost = 1.500000e-7
+output_cost_per_image_token = 3.000000e-5
+input_cost_per_image = 1.680000e-3
+output_cost_per_image = 3.360000e-2
+search_queries_cost_per_query = 1.400000e-02
+cache_read_input_token_cost_batches = 7.500000e-8
+cache_read_input_token_cost_priority = 2.700000e-7
+input_cost_per_token_batches = 7.500000e-7
+input_cost_per_token_priority = 2.700000e-6
+output_cost_per_token_batches = 3.750000e-6
+output_cost_per_token_priority = 1.350000e-5
+
+["gemini-robotics-er-2-preview"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 65536
+mode = "chat"
+cache_read_input_token_cost = 1.000000e-7
+input_cost_per_audio_token = 1.000000e-6
+output_cost_per_reasoning_token = 5.000000e-6
+search_queries_cost_per_query = 1.400000e-02
+
+["vertex_ai/claude-fable-5-2"]
+input_cost_per_token = 8.000000e-6
+output_cost_per_token = 4.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-7
+cache_creation_input_token_cost = 1.000000e-5
+cache_creation_input_token_cost_above_1hr = 1.600000e-5
+prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 5.000000e-6
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-5
+
+["vertex_ai/claude-fable-5-2@default"]
+input_cost_per_token = 8.000000e-6
+output_cost_per_token = 4.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-7
+cache_creation_input_token_cost = 1.000000e-5
+cache_creation_input_token_cost_above_1hr = 1.600000e-5
+prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 5.000000e-6
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-5
+
+["vertex_ai/claude-mythos-5-2"]
+input_cost_per_token = 8.000000e-6
+output_cost_per_token = 4.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-7
+cache_creation_input_token_cost = 1.000000e-5
+cache_creation_input_token_cost_above_1hr = 1.600000e-5
+prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 5.000000e-6
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-5
+
+["vertex_ai/claude-mythos-5-2@default"]
+input_cost_per_token = 8.000000e-6
+output_cost_per_token = 4.000000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-7
+cache_creation_input_token_cost = 1.000000e-5
+cache_creation_input_token_cost_above_1hr = 1.600000e-5
+prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_batches = 5.000000e-6
+cache_read_input_token_cost_batches = 1.000000e-7
+input_cost_per_token_batches = 4.000000e-6
+output_cost_per_token_batches = 2.000000e-5
+
+["vertex_ai/deep-research-preview-04-2026"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.200000e-5
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-7
+search_queries_cost_per_query = 1.400000e-02
+
+["vertex_ai/deepseek-ai/deepseek-v4.1-flash-maas"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 3.000000e-8
+
+["vertex_ai/gemini-4-carbon"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 1.000000e-7
+input_cost_per_audio_token = 2.000000e-6
+output_cost_per_reasoning_token = 1.000000e-5
+prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.400000e-02
+cache_read_input_token_cost_batches = 5.000000e-8
+cache_read_input_token_cost_priority = 1.800000e-7
+input_cost_per_audio_token_batches = 1.000000e-6
+input_cost_per_audio_token_priority = 3.600000e-6
+input_cost_per_token_batches = 1.000000e-6
+input_cost_per_token_priority = 3.600000e-6
+output_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_priority = 1.800000e-5
+
+["vertex_ai/gemini-4-carbon-cyber-permissive"]
+input_cost_per_token = 4.000000e-6
+output_cost_per_token = 2.000000e-5
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-7
+input_cost_per_audio_token = 4.000000e-6
+output_cost_per_reasoning_token = 2.000000e-5
+prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.400000e-02
+cache_read_input_token_cost_batches = 1.000000e-7
+cache_read_input_token_cost_priority = 3.600000e-7
+input_cost_per_audio_token_batches = 2.000000e-6
+input_cost_per_audio_token_priority = 7.200000e-6
+input_cost_per_token_batches = 2.000000e-6
+input_cost_per_token_priority = 7.200000e-6
+output_cost_per_token_batches = 1.000000e-5
+output_cost_per_token_priority = 3.600000e-5
+
+["vertex_ai/gemini-4-hydrogen"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 7.500000e-8
+input_cost_per_audio_token = 1.500000e-6
+output_cost_per_reasoning_token = 7.500000e-6
+prompt_cache_min_tokens = 4096
+search_queries_cost_per_query = 1.400000e-02
+cache_read_input_token_cost_batches = 3.750000e-8
+cache_read_input_token_cost_priority = 1.350000e-7
+input_cost_per_audio_token_batches = 7.500000e-7
+input_cost_per_audio_token_priority = 2.700000e-6
+input_cost_per_token_batches = 7.500000e-7
+input_cost_per_token_priority = 2.700000e-6
+output_cost_per_token_batches = 3.750000e-6
+output_cost_per_token_priority = 1.350000e-5
+
+["vertex_ai/gemini-nano-banana-2.1"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 7.500000e-6
+max_input_tokens = 131072
+max_output_tokens = 32768
+mode = "image_generation"
+cache_read_input_token_cost = 1.500000e-7
+output_cost_per_image_token = 3.000000e-5
+input_cost_per_image = 1.680000e-3
+output_cost_per_image = 3.360000e-2
+search_queries_cost_per_query = 1.400000e-02
+cache_read_input_token_cost_batches = 7.500000e-8
+cache_read_input_token_cost_priority = 2.700000e-7
+input_cost_per_token_batches = 7.500000e-7
+input_cost_per_token_priority = 2.700000e-6
+output_cost_per_token_batches = 3.750000e-6
+output_cost_per_token_priority = 1.350000e-5
+
+["vertex_ai/gemini-omni-1.2-flash"]
+input_cost_per_token = 1.500000e-6
+output_cost_per_token = 9.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 260640
+mode = "chat"
+output_cost_per_reasoning_token = 9.000000e-6
+
+["vertex_ai/gemini-robotics-er-2-preview"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 5.000000e-6
+max_input_tokens = 131072
+max_output_tokens = 65536
+mode = "chat"
+cache_read_input_token_cost = 1.000000e-7
+input_cost_per_audio_token = 1.000000e-6
+output_cost_per_reasoning_token = 5.000000e-6
+search_queries_cost_per_query = 1.400000e-02

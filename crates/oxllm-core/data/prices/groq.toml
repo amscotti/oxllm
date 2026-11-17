@@ -66,7 +66,7 @@ input_cost_per_token = 7.500000e-8
 output_cost_per_token = 3.000000e-7
 max_input_tokens = 131072
 max_output_tokens = 65536
-cache_read_input_token_cost = 3.700000e-8
+cache_read_input_token_cost = 3.750000e-8
 search_queries_cost_per_query = 5.000000e-03
 
 ["groq/qwen/qwen3-32b"]

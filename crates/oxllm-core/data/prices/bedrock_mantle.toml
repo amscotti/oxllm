@@ -46,7 +46,7 @@ output_cost_per_token_priority = 1.400000e-7
 ["openai.gpt-5.4"]
 input_cost_per_token = 2.750000e-6
 output_cost_per_token = 1.650000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.750000e-7
 input_cost_per_token_above_272k_tokens = 5.500000e-6
@@ -57,7 +57,7 @@ search_queries_cost_per_query = 1.200000e-02
 ["openai.gpt-5.5"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 3.300000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 5.500000e-7
 input_cost_per_token_above_272k_tokens = 1.100000e-5
@@ -68,7 +68,7 @@ search_queries_cost_per_query = 1.200000e-02
 ["openai.gpt-5.6-luna"]
 input_cost_per_token = 2.200000e-7
 output_cost_per_token = 1.320000e-6
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.200000e-8
 cache_creation_input_token_cost = 2.750000e-7
@@ -82,7 +82,7 @@ search_queries_cost_per_query = 1.200000e-02
 ["openai.gpt-5.6-sol"]
 input_cost_per_token = 4.400000e-6
 output_cost_per_token = 2.200000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 4.400000e-7
 cache_creation_input_token_cost = 5.500000e-6
@@ -96,7 +96,7 @@ search_queries_cost_per_query = 1.200000e-02
 ["openai.gpt-5.6-terra"]
 input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.320000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 2.750000e-6
@@ -148,16 +148,16 @@ output_cost_per_token_batches = 1.250000e-6
 cache_read_input_token_cost_batches = 1.000000e-7
 
 ["bedrock_mantle/anthropic.claude-haiku-4-5"]
-input_cost_per_token = 1.000000e-6
-output_cost_per_token = 5.000000e-6
+input_cost_per_token = 1.100000e-6
+output_cost_per_token = 5.500000e-6
 max_input_tokens = 200000
 max_output_tokens = 64000
-cache_read_input_token_cost = 1.000000e-7
-cache_creation_input_token_cost = 1.250000e-6
-cache_creation_input_token_cost_above_1hr = 2.000000e-6
+cache_read_input_token_cost = 1.100000e-7
+cache_creation_input_token_cost = 1.375000e-6
+cache_creation_input_token_cost_above_1hr = 2.200000e-6
 prompt_cache_min_tokens = 4096
-input_cost_per_token_batches = 5.000000e-7
-output_cost_per_token_batches = 2.500000e-6
+input_cost_per_token_batches = 5.500000e-7
+output_cost_per_token_batches = 2.750000e-6
 ["bedrock_mantle/anthropic.claude-haiku-5-5"]
 input_cost_per_token = 1.100000e-7
 output_cost_per_token = 5.500000e-7
@@ -231,7 +231,7 @@ output_cost_per_token_priority = 4.380000e-6
 ["bedrock_mantle/openai.gpt-5.4"]
 input_cost_per_token = 2.750000e-6
 output_cost_per_token = 1.650000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.750000e-7
 input_cost_per_token_above_272k_tokens = 5.500000e-6
@@ -241,7 +241,7 @@ search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.5"]
 input_cost_per_token = 5.500000e-6
 output_cost_per_token = 3.300000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 5.500000e-7
 input_cost_per_token_above_272k_tokens = 1.100000e-5
@@ -251,15 +251,16 @@ search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.6-cyber"]
 input_cost_per_token = 1.375000e-5
 output_cost_per_token = 8.250000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.375000e-6
 cache_creation_input_token_cost = 1.718750e-5
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.6-luna"]
 input_cost_per_token = 2.200000e-7
 output_cost_per_token = 1.320000e-6
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.200000e-8
 cache_creation_input_token_cost = 2.750000e-7
@@ -272,7 +273,7 @@ search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.6-sol"]
 input_cost_per_token = 4.400000e-6
 output_cost_per_token = 2.200000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 4.400000e-7
 cache_creation_input_token_cost = 5.500000e-6
@@ -285,7 +286,7 @@ search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-5.6-terra"]
 input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.320000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 2.750000e-6
@@ -298,7 +299,7 @@ search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-6-astra"]
 input_cost_per_token = 1.100000e-5
 output_cost_per_token = 5.500000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.100000e-6
 cache_creation_input_token_cost = 1.375000e-5
@@ -315,10 +316,11 @@ input_cost_per_token_ultrafast = 6.600000e-5
 output_cost_per_token_above_272k_tokens_ultrafast = 4.950000e-4
 output_cost_per_token_ultrafast = 3.300000e-4
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-6-luna"]
 input_cost_per_token = 1.100000e-7
 output_cost_per_token = 5.500000e-7
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 1.100000e-8
 cache_creation_input_token_cost = 1.375000e-7
@@ -327,10 +329,11 @@ output_cost_per_token_above_272k_tokens = 8.250000e-7
 cache_read_input_token_cost_above_272k_tokens = 2.200000e-8
 cache_creation_input_token_cost_above_272k_tokens = 2.750000e-7
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-6-sol"]
 input_cost_per_token = 2.200000e-6
 output_cost_per_token = 1.100000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 2.200000e-7
 cache_creation_input_token_cost = 2.750000e-6
@@ -339,10 +342,11 @@ output_cost_per_token_above_272k_tokens = 1.650000e-5
 cache_read_input_token_cost_above_272k_tokens = 4.400000e-7
 cache_creation_input_token_cost_above_272k_tokens = 5.500000e-6
 supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-daybreak-blue-5.6-sol"]
 input_cost_per_token = 4.400000e-6
 output_cost_per_token = 2.200000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 4.400000e-7
 cache_creation_input_token_cost = 5.500000e-6
@@ -350,6 +354,7 @@ input_cost_per_token_above_272k_tokens = 8.800000e-6
 output_cost_per_token_above_272k_tokens = 3.300000e-5
 cache_read_input_token_cost_above_272k_tokens = 8.800000e-7
 cache_creation_input_token_cost_above_272k_tokens = 1.100000e-5
+search_queries_cost_per_query = 1.200000e-02
 ["bedrock_mantle/openai.gpt-oss-120b"]
 input_cost_per_token = 1.500000e-7
 output_cost_per_token = 6.000000e-7
@@ -463,7 +468,7 @@ output_cost_per_token_priority = 4.660000e-6
 ["bedrock_mantle/us-gov-east-1/openai.gpt-5.4"]
 input_cost_per_token = 3.300000e-6
 output_cost_per_token = 1.980000e-5
-max_input_tokens = 1050000
+max_input_tokens = 922000
 max_output_tokens = 128000
 cache_read_input_token_cost = 3.300000e-7
 ["bedrock_mantle/us-gov-east-1/openai.gpt-oss-120b"]
@@ -471,82 +476,179 @@ input_cost_per_token = 1.800000e-7
 output_cost_per_token = 7.200000e-7
 max_input_tokens = 131072
 max_output_tokens = 16384
+input_cost_per_token_batches = 9.000000e-8
+input_cost_per_token_flex = 9.000000e-8
+input_cost_per_token_priority = 3.150000e-7
+output_cost_per_token_batches = 3.600000e-7
+output_cost_per_token_flex = 3.600000e-7
+output_cost_per_token_priority = 1.260000e-6
 ["bedrock_mantle/us-gov-east-1/openai.gpt-oss-20b"]
 input_cost_per_token = 8.400000e-8
 output_cost_per_token = 3.600000e-7
 max_input_tokens = 131072
 max_output_tokens = 16384
+input_cost_per_token_batches = 4.200000e-8
+input_cost_per_token_flex = 4.200000e-8
+input_cost_per_token_priority = 1.470000e-7
+output_cost_per_token_batches = 1.800000e-7
+output_cost_per_token_flex = 1.800000e-7
+output_cost_per_token_priority = 6.300000e-7
 ["bedrock_mantle/us-gov-east-1/xai.grok-4.6"]
 input_cost_per_token = 2.640000e-6
 output_cost_per_token = 7.920000e-6
 max_input_tokens = 500000
 max_output_tokens = 500000
 cache_read_input_token_cost = 6.600000e-7
+cache_read_input_token_cost_flex = 3.300000e-7
+cache_read_input_token_cost_priority = 1.155000e-6
+input_cost_per_token_flex = 1.320000e-6
+input_cost_per_token_priority = 4.620000e-6
+output_cost_per_token_flex = 3.960000e-6
+output_cost_per_token_priority = 1.386000e-5
 ["bedrock_mantle/us-gov-west-1/google.gemma-4-26b-a4b"]
 input_cost_per_token = 1.560000e-7
 output_cost_per_token = 4.800000e-7
 max_input_tokens = 256000
 max_output_tokens = 256000
+input_cost_per_token_batches = 7.800000e-8
+input_cost_per_token_flex = 7.800000e-8
+input_cost_per_token_priority = 2.730000e-7
+output_cost_per_token_batches = 2.400000e-7
+output_cost_per_token_flex = 2.400000e-7
+output_cost_per_token_priority = 8.400000e-7
 ["bedrock_mantle/us-gov-west-1/google.gemma-4-31b"]
 input_cost_per_token = 1.680000e-7
 output_cost_per_token = 4.800000e-7
 max_input_tokens = 256000
 max_output_tokens = 256000
+input_cost_per_token_batches = 8.400000e-8
+input_cost_per_token_flex = 8.400000e-8
+input_cost_per_token_priority = 2.940000e-7
+output_cost_per_token_batches = 2.400000e-7
+output_cost_per_token_flex = 2.400000e-7
+output_cost_per_token_priority = 8.400000e-7
 ["bedrock_mantle/us-gov-west-1/google.gemma-4-e2b"]
 input_cost_per_token = 4.800000e-8
 output_cost_per_token = 9.600000e-8
 max_input_tokens = 128000
 max_output_tokens = 128000
+input_cost_per_token_flex = 2.400000e-8
+input_cost_per_token_priority = 8.400000e-8
+output_cost_per_token_batches = 4.800000e-8
+output_cost_per_token_flex = 4.800000e-8
+output_cost_per_token_priority = 1.680000e-7
 ["bedrock_mantle/us-gov-west-1/openai.gpt-5.4"]
-input_cost_per_token = 3.375000e-6
-output_cost_per_token = 2.025000e-5
-max_input_tokens = 1050000
+input_cost_per_token = 3.300000e-6
+output_cost_per_token = 1.980000e-5
+max_input_tokens = 922000
 max_output_tokens = 128000
-cache_read_input_token_cost = 3.375000e-7
+cache_read_input_token_cost = 3.300000e-7
+search_queries_cost_per_query = 1.440000e-02
 ["bedrock_mantle/us-gov-west-1/openai.gpt-5.6-luna"]
-input_cost_per_token = 2.700000e-7
-output_cost_per_token = 1.620000e-6
-max_input_tokens = 1050000
+input_cost_per_token = 2.640000e-7
+output_cost_per_token = 1.584000e-6
+max_input_tokens = 922000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.700000e-8
-cache_creation_input_token_cost = 3.375000e-7
-input_cost_per_token_above_272k_tokens = 5.400000e-7
-output_cost_per_token_above_272k_tokens = 2.430000e-6
-cache_read_input_token_cost_above_272k_tokens = 5.400000e-8
-cache_creation_input_token_cost_above_272k_tokens = 6.750000e-7
+cache_read_input_token_cost = 2.640000e-8
+cache_creation_input_token_cost = 3.300000e-7
+input_cost_per_token_above_272k_tokens = 5.280000e-7
+output_cost_per_token_above_272k_tokens = 2.376000e-6
+cache_read_input_token_cost_above_272k_tokens = 5.280000e-8
+cache_creation_input_token_cost_above_272k_tokens = 6.600000e-7
+search_queries_cost_per_query = 1.440000e-02
+cache_creation_input_token_cost_above_272k_tokens_flex = 3.300000e-7
+cache_creation_input_token_cost_above_272k_tokens_priority = 1.320000e-6
+cache_creation_input_token_cost_flex = 1.650000e-7
+cache_creation_input_token_cost_priority = 6.600000e-7
+cache_read_input_token_cost_above_272k_tokens_flex = 2.640000e-8
+cache_read_input_token_cost_above_272k_tokens_priority = 1.056000e-7
+cache_read_input_token_cost_flex = 1.320000e-8
+cache_read_input_token_cost_priority = 5.280000e-8
+input_cost_per_token_above_272k_tokens_flex = 2.640000e-7
+input_cost_per_token_above_272k_tokens_priority = 1.056000e-6
+input_cost_per_token_flex = 1.320000e-7
+input_cost_per_token_priority = 5.280000e-7
+output_cost_per_token_above_272k_tokens_flex = 1.188000e-6
+output_cost_per_token_above_272k_tokens_priority = 4.752000e-6
+output_cost_per_token_flex = 7.920000e-7
+output_cost_per_token_priority = 3.168000e-6
 ["bedrock_mantle/us-gov-west-1/openai.gpt-5.6-terra"]
-input_cost_per_token = 2.700000e-6
-output_cost_per_token = 1.620000e-5
-max_input_tokens = 1050000
+input_cost_per_token = 2.640000e-6
+output_cost_per_token = 1.584000e-5
+max_input_tokens = 922000
 max_output_tokens = 128000
-cache_read_input_token_cost = 2.700000e-7
-cache_creation_input_token_cost = 3.375000e-6
-input_cost_per_token_above_272k_tokens = 5.400000e-6
-output_cost_per_token_above_272k_tokens = 2.430000e-5
-cache_read_input_token_cost_above_272k_tokens = 5.400000e-7
-cache_creation_input_token_cost_above_272k_tokens = 6.750000e-6
+cache_read_input_token_cost = 2.640000e-7
+cache_creation_input_token_cost = 3.300000e-6
+input_cost_per_token_above_272k_tokens = 5.280000e-6
+output_cost_per_token_above_272k_tokens = 2.376000e-5
+cache_read_input_token_cost_above_272k_tokens = 5.280000e-7
+cache_creation_input_token_cost_above_272k_tokens = 6.600000e-6
+search_queries_cost_per_query = 1.440000e-02
+cache_creation_input_token_cost_above_272k_tokens_flex = 3.300000e-6
+cache_creation_input_token_cost_above_272k_tokens_priority = 1.320000e-5
+cache_creation_input_token_cost_flex = 1.650000e-6
+cache_creation_input_token_cost_priority = 6.600000e-6
+cache_read_input_token_cost_above_272k_tokens_flex = 2.640000e-7
+cache_read_input_token_cost_above_272k_tokens_priority = 1.056000e-6
+cache_read_input_token_cost_flex = 1.320000e-7
+cache_read_input_token_cost_priority = 5.280000e-7
+input_cost_per_token_above_272k_tokens_flex = 2.640000e-6
+input_cost_per_token_above_272k_tokens_priority = 1.056000e-5
+input_cost_per_token_flex = 1.320000e-6
+input_cost_per_token_priority = 5.280000e-6
+output_cost_per_token_above_272k_tokens_flex = 1.188000e-5
+output_cost_per_token_above_272k_tokens_priority = 4.752000e-5
+output_cost_per_token_flex = 7.920000e-6
+output_cost_per_token_priority = 3.168000e-5
 ["bedrock_mantle/us-gov-west-1/openai.gpt-oss-120b"]
 input_cost_per_token = 1.800000e-7
 output_cost_per_token = 7.200000e-7
 max_input_tokens = 131072
 max_output_tokens = 16384
+input_cost_per_token_batches = 9.000000e-8
+input_cost_per_token_flex = 9.000000e-8
+input_cost_per_token_priority = 3.150000e-7
+output_cost_per_token_batches = 3.600000e-7
+output_cost_per_token_flex = 3.600000e-7
+output_cost_per_token_priority = 1.260000e-6
 ["bedrock_mantle/us-gov-west-1/openai.gpt-oss-20b"]
 input_cost_per_token = 8.400000e-8
 output_cost_per_token = 3.600000e-7
 max_input_tokens = 131072
 max_output_tokens = 16384
+input_cost_per_token_batches = 4.200000e-8
+input_cost_per_token_flex = 4.200000e-8
+input_cost_per_token_priority = 1.470000e-7
+output_cost_per_token_batches = 1.800000e-7
+output_cost_per_token_flex = 1.800000e-7
+output_cost_per_token_priority = 6.300000e-7
 ["bedrock_mantle/us-gov-west-1/xai.grok-4.3"]
 input_cost_per_token = 1.500000e-6
 output_cost_per_token = 3.000000e-6
 max_input_tokens = 1048576
 max_output_tokens = 16384
 cache_read_input_token_cost = 2.400000e-7
+cache_read_input_token_cost_batches = 1.200000e-7
+cache_read_input_token_cost_flex = 1.200000e-7
+cache_read_input_token_cost_priority = 4.200000e-7
+input_cost_per_token_batches = 7.500000e-7
+input_cost_per_token_flex = 7.500000e-7
+input_cost_per_token_priority = 2.625000e-6
+output_cost_per_token_batches = 1.500000e-6
+output_cost_per_token_flex = 1.500000e-6
+output_cost_per_token_priority = 5.250000e-6
 ["bedrock_mantle/us-gov-west-1/xai.grok-4.6"]
 input_cost_per_token = 2.640000e-6
 output_cost_per_token = 7.920000e-6
 max_input_tokens = 500000
 max_output_tokens = 500000
 cache_read_input_token_cost = 6.600000e-7
+cache_read_input_token_cost_flex = 3.300000e-7
+cache_read_input_token_cost_priority = 1.155000e-6
+input_cost_per_token_flex = 1.320000e-6
+input_cost_per_token_priority = 4.620000e-6
+output_cost_per_token_flex = 3.960000e-6
+output_cost_per_token_priority = 1.386000e-5
 ["bedrock_mantle/xai.grok-4.3"]
 input_cost_per_token = 1.250000e-6
 output_cost_per_token = 2.500000e-6
@@ -651,3 +753,577 @@ input_cost_per_token_above_272k_tokens_ultrafast = 2.640000e-5
 input_cost_per_token_ultrafast = 1.320000e-5
 output_cost_per_token_above_272k_tokens_ultrafast = 9.900000e-5
 output_cost_per_token_ultrafast = 6.600000e-5
+search_queries_cost_per_query = 1.200000e-02
+
+["bedrock_mantle/anthropic.claude-fable-5"]
+input_cost_per_token = 1.100000e-5
+output_cost_per_token = 5.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 1.100000e-6
+cache_creation_input_token_cost = 1.375000e-5
+cache_creation_input_token_cost_above_1hr = 2.200000e-5
+prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
+
+["bedrock_mantle/anthropic.claude-mythos-5"]
+input_cost_per_token = 1.100000e-5
+output_cost_per_token = 5.500000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 1.100000e-6
+cache_creation_input_token_cost = 1.375000e-5
+cache_creation_input_token_cost_above_1hr = 2.200000e-5
+prompt_cache_min_tokens = 512
+
+["bedrock_mantle/anthropic.claude-opus-4-7"]
+input_cost_per_token = 5.500000e-6
+output_cost_per_token = 2.750000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 5.500000e-7
+cache_creation_input_token_cost = 6.875000e-6
+cache_creation_input_token_cost_above_1hr = 1.100000e-5
+prompt_cache_min_tokens = 2048
+search_queries_cost_per_query = 1.000000e-02
+
+["bedrock_mantle/anthropic.claude-opus-4-8"]
+input_cost_per_token = 5.500000e-6
+output_cost_per_token = 2.750000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 5.500000e-7
+cache_creation_input_token_cost = 6.875000e-6
+cache_creation_input_token_cost_above_1hr = 1.100000e-5
+prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
+
+["bedrock_mantle/anthropic.claude-opus-5"]
+input_cost_per_token = 5.500000e-6
+output_cost_per_token = 2.750000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 5.500000e-7
+cache_creation_input_token_cost = 6.875000e-6
+cache_creation_input_token_cost_above_1hr = 1.100000e-5
+prompt_cache_min_tokens = 512
+search_queries_cost_per_query = 1.000000e-02
+
+["bedrock_mantle/anthropic.claude-sonnet-5"]
+input_cost_per_token = 2.200000e-6
+output_cost_per_token = 1.100000e-5
+max_input_tokens = 1000000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 2.200000e-7
+cache_creation_input_token_cost = 2.750000e-6
+cache_creation_input_token_cost_above_1hr = 4.400000e-6
+prompt_cache_min_tokens = 1024
+search_queries_cost_per_query = 1.000000e-02
+
+["bedrock_mantle/deepseek.v3.2"]
+input_cost_per_token = 6.200000e-7
+output_cost_per_token = 1.850000e-6
+max_input_tokens = 156000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 3.100000e-7
+input_cost_per_token_flex = 3.100000e-7
+input_cost_per_token_priority = 1.085000e-6
+output_cost_per_token_batches = 9.250000e-7
+output_cost_per_token_flex = 9.250000e-7
+output_cost_per_token_priority = 3.237500e-6
+
+["bedrock_mantle/google.gemma-3-12b-it"]
+input_cost_per_token = 9.000000e-8
+output_cost_per_token = 2.900000e-7
+max_input_tokens = 128000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 5.000000e-8
+input_cost_per_token_flex = 5.000000e-8
+input_cost_per_token_priority = 1.600000e-7
+output_cost_per_token_batches = 1.500000e-7
+output_cost_per_token_flex = 1.500000e-7
+output_cost_per_token_priority = 5.100000e-7
+
+["bedrock_mantle/google.gemma-3-27b-it"]
+input_cost_per_token = 2.300000e-7
+output_cost_per_token = 3.800000e-7
+max_input_tokens = 128000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 1.200000e-7
+input_cost_per_token_flex = 1.200000e-7
+input_cost_per_token_priority = 4.000000e-7
+output_cost_per_token_batches = 1.900000e-7
+output_cost_per_token_flex = 1.900000e-7
+output_cost_per_token_priority = 6.700000e-7
+
+["bedrock_mantle/google.gemma-3-4b-it"]
+input_cost_per_token = 4.000000e-8
+output_cost_per_token = 8.000000e-8
+max_input_tokens = 128000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 2.000000e-8
+input_cost_per_token_flex = 2.000000e-8
+input_cost_per_token_priority = 7.000000e-8
+output_cost_per_token_batches = 4.000000e-8
+output_cost_per_token_flex = 4.000000e-8
+output_cost_per_token_priority = 1.400000e-7
+
+["bedrock_mantle/minimax.minimax-m2"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1000000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 1.500000e-7
+input_cost_per_token_flex = 1.500000e-7
+input_cost_per_token_priority = 5.200000e-7
+output_cost_per_token_batches = 6.000000e-7
+output_cost_per_token_flex = 6.000000e-7
+output_cost_per_token_priority = 2.100000e-6
+
+["bedrock_mantle/minimax.minimax-m2.1"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 196000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 1.500000e-7
+input_cost_per_token_flex = 1.500000e-7
+input_cost_per_token_priority = 5.250000e-7
+output_cost_per_token_batches = 6.000000e-7
+output_cost_per_token_flex = 6.000000e-7
+output_cost_per_token_priority = 2.100000e-6
+
+["bedrock_mantle/minimax.minimax-m2.5"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 196000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 1.500000e-7
+input_cost_per_token_flex = 1.500000e-7
+input_cost_per_token_priority = 5.250000e-7
+output_cost_per_token_batches = 6.000000e-7
+output_cost_per_token_flex = 6.000000e-7
+output_cost_per_token_priority = 2.100000e-6
+
+["bedrock_mantle/mistral.devstral-2-123b"]
+input_cost_per_token = 4.000000e-7
+output_cost_per_token = 2.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 32000
+mode = "chat"
+input_cost_per_token_batches = 2.000000e-7
+input_cost_per_token_flex = 2.000000e-7
+input_cost_per_token_priority = 7.000000e-7
+output_cost_per_token_batches = 1.000000e-6
+output_cost_per_token_flex = 1.000000e-6
+output_cost_per_token_priority = 3.500000e-6
+
+["bedrock_mantle/mistral.magistral-small-2509"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 128000
+max_output_tokens = 40000
+mode = "chat"
+input_cost_per_token_batches = 2.500000e-7
+input_cost_per_token_flex = 2.500000e-7
+input_cost_per_token_priority = 8.800000e-7
+output_cost_per_token_batches = 7.500000e-7
+output_cost_per_token_flex = 7.500000e-7
+output_cost_per_token_priority = 2.630000e-6
+
+["bedrock_mantle/mistral.ministral-3-14b-instruct"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 2.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 1.000000e-7
+input_cost_per_token_flex = 1.000000e-7
+input_cost_per_token_priority = 3.500000e-7
+output_cost_per_token_batches = 1.000000e-7
+output_cost_per_token_flex = 1.000000e-7
+output_cost_per_token_priority = 3.500000e-7
+
+["bedrock_mantle/mistral.ministral-3-3b-instruct"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 1.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 5.000000e-8
+input_cost_per_token_flex = 5.000000e-8
+input_cost_per_token_priority = 1.700000e-7
+output_cost_per_token_batches = 5.000000e-8
+output_cost_per_token_flex = 5.000000e-8
+output_cost_per_token_priority = 1.700000e-7
+
+["bedrock_mantle/mistral.ministral-3-8b-instruct"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 1.500000e-7
+max_input_tokens = 128000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 7.000000e-8
+input_cost_per_token_flex = 7.000000e-8
+input_cost_per_token_priority = 2.600000e-7
+output_cost_per_token_batches = 7.000000e-8
+output_cost_per_token_flex = 7.000000e-8
+output_cost_per_token_priority = 2.600000e-7
+
+["bedrock_mantle/mistral.mistral-large-3-675b-instruct"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+max_input_tokens = 256000
+max_output_tokens = 32000
+mode = "chat"
+input_cost_per_token_batches = 2.500000e-7
+input_cost_per_token_flex = 2.500000e-7
+input_cost_per_token_priority = 8.800000e-7
+output_cost_per_token_batches = 7.500000e-7
+output_cost_per_token_flex = 7.500000e-7
+output_cost_per_token_priority = 2.630000e-6
+
+["bedrock_mantle/mistral.voxtral-mini-3b-2507"]
+input_cost_per_token = 4.000000e-8
+output_cost_per_token = 4.000000e-8
+max_input_tokens = 32768
+max_output_tokens = 8192
+mode = "chat"
+input_cost_per_token_batches = 2.000000e-8
+input_cost_per_token_flex = 2.000000e-8
+input_cost_per_token_priority = 7.000000e-8
+output_cost_per_token_batches = 2.000000e-8
+output_cost_per_token_flex = 2.000000e-8
+output_cost_per_token_priority = 7.000000e-8
+
+["bedrock_mantle/mistral.voxtral-small-24b-2507"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 3.000000e-7
+max_input_tokens = 32768
+max_output_tokens = 8192
+mode = "chat"
+input_cost_per_token_batches = 5.000000e-8
+input_cost_per_token_flex = 5.000000e-8
+input_cost_per_token_priority = 1.700000e-7
+output_cost_per_token_batches = 1.500000e-7
+output_cost_per_token_flex = 1.500000e-7
+output_cost_per_token_priority = 5.200000e-7
+
+["bedrock_mantle/moonshotai.kimi-k2.5"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 3.000000e-6
+max_input_tokens = 256000
+max_output_tokens = 16000
+mode = "chat"
+input_cost_per_token_batches = 3.000000e-7
+input_cost_per_token_flex = 3.000000e-7
+input_cost_per_token_priority = 1.050000e-6
+output_cost_per_token_batches = 1.500000e-6
+output_cost_per_token_flex = 1.500000e-6
+output_cost_per_token_priority = 5.250000e-6
+
+["bedrock_mantle/nvidia.nemotron-nano-12b-v2"]
+input_cost_per_token = 2.000000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 128000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 1.000000e-7
+input_cost_per_token_flex = 1.000000e-7
+input_cost_per_token_priority = 3.500000e-7
+output_cost_per_token_batches = 3.000000e-7
+output_cost_per_token_flex = 3.000000e-7
+output_cost_per_token_priority = 1.050000e-6
+
+["bedrock_mantle/nvidia.nemotron-nano-3-30b"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 2.400000e-7
+max_input_tokens = 256000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 3.000000e-8
+input_cost_per_token_flex = 3.000000e-8
+input_cost_per_token_priority = 1.100000e-7
+output_cost_per_token_batches = 1.200000e-7
+output_cost_per_token_flex = 1.200000e-7
+output_cost_per_token_priority = 4.200000e-7
+
+["bedrock_mantle/nvidia.nemotron-nano-9b-v2"]
+input_cost_per_token = 6.000000e-8
+output_cost_per_token = 2.300000e-7
+max_input_tokens = 128000
+max_output_tokens = 8000
+mode = "chat"
+input_cost_per_token_batches = 3.000000e-8
+input_cost_per_token_flex = 3.000000e-8
+input_cost_per_token_priority = 1.100000e-7
+output_cost_per_token_batches = 1.200000e-7
+output_cost_per_token_flex = 1.200000e-7
+output_cost_per_token_priority = 4.000000e-7
+
+["bedrock_mantle/nvidia.nemotron-super-3-120b"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.500000e-7
+max_input_tokens = 256000
+max_output_tokens = 32000
+mode = "chat"
+input_cost_per_token_batches = 7.500000e-8
+input_cost_per_token_flex = 7.500000e-8
+input_cost_per_token_priority = 2.625000e-7
+output_cost_per_token_batches = 3.250000e-7
+output_cost_per_token_flex = 3.250000e-7
+output_cost_per_token_priority = 1.137500e-6
+
+["bedrock_mantle/openai.gpt-6.1-terra"]
+input_cost_per_token = 1.100000e-6
+output_cost_per_token = 5.500000e-6
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "responses"
+cache_read_input_token_cost = 5.500000e-8
+cache_creation_input_token_cost = 1.375000e-6
+supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.200000e-02
+input_cost_per_token_above_272k_tokens = 2.200000e-6
+output_cost_per_token_above_272k_tokens = 8.250000e-6
+cache_read_input_token_cost_above_272k_tokens = 1.100000e-7
+cache_creation_input_token_cost_above_272k_tokens = 2.750000e-6
+
+["bedrock_mantle/qwen.qwen3-coder-next"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 256000
+max_output_tokens = 16000
+mode = "chat"
+input_cost_per_token_batches = 2.500000e-7
+input_cost_per_token_flex = 2.500000e-7
+input_cost_per_token_priority = 8.750000e-7
+output_cost_per_token_batches = 6.000000e-7
+output_cost_per_token_flex = 6.000000e-7
+output_cost_per_token_priority = 2.100000e-6
+
+["bedrock_mantle/us-gov-east-1/nvidia.nemotron-nano-12b-v2"]
+input_cost_per_token = 2.400000e-7
+output_cost_per_token = 7.200000e-7
+max_input_tokens = 128000
+max_output_tokens = 8192
+mode = "chat"
+input_cost_per_token_batches = 1.200000e-7
+input_cost_per_token_flex = 1.200000e-7
+input_cost_per_token_priority = 4.200000e-7
+output_cost_per_token_batches = 3.600000e-7
+output_cost_per_token_flex = 3.600000e-7
+output_cost_per_token_priority = 1.260000e-6
+
+["bedrock_mantle/us-gov-east-1/nvidia.nemotron-nano-3-30b"]
+input_cost_per_token = 7.200000e-8
+output_cost_per_token = 2.880000e-7
+max_input_tokens = 262144
+max_output_tokens = 8192
+mode = "chat"
+input_cost_per_token_batches = 3.600000e-8
+input_cost_per_token_flex = 3.600000e-8
+input_cost_per_token_priority = 1.320000e-7
+output_cost_per_token_batches = 1.440000e-7
+output_cost_per_token_flex = 1.440000e-7
+output_cost_per_token_priority = 5.040000e-7
+
+["bedrock_mantle/us-gov-east-1/nvidia.nemotron-nano-9b-v2"]
+input_cost_per_token = 7.200000e-8
+output_cost_per_token = 2.760000e-7
+max_input_tokens = 128000
+max_output_tokens = 8192
+mode = "chat"
+input_cost_per_token_batches = 3.600000e-8
+input_cost_per_token_flex = 3.600000e-8
+input_cost_per_token_priority = 1.320000e-7
+output_cost_per_token_batches = 1.440000e-7
+output_cost_per_token_flex = 1.440000e-7
+output_cost_per_token_priority = 4.800000e-7
+
+["bedrock_mantle/us-gov-east-1/nvidia.nemotron-super-3-120b"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 7.800000e-7
+max_input_tokens = 256000
+max_output_tokens = 32768
+mode = "chat"
+input_cost_per_token_batches = 9.000000e-8
+input_cost_per_token_flex = 9.000000e-8
+input_cost_per_token_priority = 3.150000e-7
+output_cost_per_token_batches = 3.900000e-7
+output_cost_per_token_flex = 3.900000e-7
+output_cost_per_token_priority = 1.365000e-6
+
+["bedrock_mantle/us-gov-east-1/openai.gpt-5.6-cyber"]
+input_cost_per_token = 1.687500e-5
+output_cost_per_token = 1.012500e-4
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "responses"
+cache_read_input_token_cost = 1.687500e-6
+cache_creation_input_token_cost = 2.109375e-5
+supports_prompt_cache_breakpoint = true
+
+["bedrock_mantle/us-gov-east-1/xai.grok-4.7"]
+input_cost_per_token = 2.640000e-6
+output_cost_per_token = 7.920000e-6
+max_input_tokens = 524288
+max_output_tokens = 524288
+mode = "chat"
+cache_read_input_token_cost = 6.600000e-7
+cache_read_input_token_cost_flex = 3.300000e-7
+cache_read_input_token_cost_priority = 1.155000e-6
+input_cost_per_token_batches = 1.320000e-6
+input_cost_per_token_flex = 1.320000e-6
+input_cost_per_token_priority = 4.620000e-6
+output_cost_per_token_batches = 3.960000e-6
+output_cost_per_token_flex = 3.960000e-6
+output_cost_per_token_priority = 1.386000e-5
+
+["bedrock_mantle/us-gov-west-1/nvidia.nemotron-nano-12b-v2"]
+input_cost_per_token = 2.400000e-7
+output_cost_per_token = 7.200000e-7
+max_input_tokens = 128000
+max_output_tokens = 8192
+mode = "chat"
+input_cost_per_token_batches = 1.200000e-7
+input_cost_per_token_flex = 1.200000e-7
+input_cost_per_token_priority = 4.200000e-7
+output_cost_per_token_batches = 3.600000e-7
+output_cost_per_token_flex = 3.600000e-7
+output_cost_per_token_priority = 1.260000e-6
+
+["bedrock_mantle/us-gov-west-1/nvidia.nemotron-nano-3-30b"]
+input_cost_per_token = 7.200000e-8
+output_cost_per_token = 2.880000e-7
+max_input_tokens = 262144
+max_output_tokens = 8192
+mode = "chat"
+input_cost_per_token_batches = 3.600000e-8
+input_cost_per_token_flex = 3.600000e-8
+input_cost_per_token_priority = 1.320000e-7
+output_cost_per_token_batches = 1.440000e-7
+output_cost_per_token_flex = 1.440000e-7
+output_cost_per_token_priority = 5.040000e-7
+
+["bedrock_mantle/us-gov-west-1/nvidia.nemotron-nano-9b-v2"]
+input_cost_per_token = 7.200000e-8
+output_cost_per_token = 2.760000e-7
+max_input_tokens = 128000
+max_output_tokens = 8192
+mode = "chat"
+input_cost_per_token_batches = 3.600000e-8
+input_cost_per_token_flex = 3.600000e-8
+input_cost_per_token_priority = 1.320000e-7
+output_cost_per_token_batches = 1.440000e-7
+output_cost_per_token_flex = 1.440000e-7
+output_cost_per_token_priority = 4.800000e-7
+
+["bedrock_mantle/us-gov-west-1/nvidia.nemotron-super-3-120b"]
+input_cost_per_token = 1.800000e-7
+output_cost_per_token = 7.800000e-7
+max_input_tokens = 256000
+max_output_tokens = 32768
+mode = "chat"
+input_cost_per_token_batches = 9.000000e-8
+input_cost_per_token_flex = 9.000000e-8
+input_cost_per_token_priority = 3.150000e-7
+output_cost_per_token_batches = 3.900000e-7
+output_cost_per_token_flex = 3.900000e-7
+output_cost_per_token_priority = 1.365000e-6
+
+["bedrock_mantle/us-gov-west-1/xai.grok-4.7"]
+input_cost_per_token = 2.640000e-6
+output_cost_per_token = 7.920000e-6
+max_input_tokens = 524288
+max_output_tokens = 524288
+mode = "chat"
+cache_read_input_token_cost = 6.600000e-7
+cache_read_input_token_cost_flex = 3.300000e-7
+cache_read_input_token_cost_priority = 1.155000e-6
+input_cost_per_token_batches = 1.320000e-6
+input_cost_per_token_flex = 1.320000e-6
+input_cost_per_token_priority = 4.620000e-6
+output_cost_per_token_batches = 3.960000e-6
+output_cost_per_token_flex = 3.960000e-6
+output_cost_per_token_priority = 1.386000e-5
+
+["bedrock_mantle/writer.palmyra-vision-7b"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 6.000000e-7
+max_input_tokens = 4096
+max_output_tokens = 4096
+mode = "chat"
+input_cost_per_token_batches = 7.500000e-8
+input_cost_per_token_flex = 7.500000e-8
+input_cost_per_token_priority = 2.625000e-7
+output_cost_per_token_batches = 3.000000e-7
+output_cost_per_token_flex = 3.000000e-7
+output_cost_per_token_priority = 1.050000e-6
+
+["bedrock_mantle/xai.grok-4.7"]
+input_cost_per_token = 2.200000e-6
+output_cost_per_token = 6.600000e-6
+max_input_tokens = 524288
+max_output_tokens = 524288
+mode = "chat"
+cache_read_input_token_cost = 5.500000e-7
+cache_read_input_token_cost_flex = 2.750000e-7
+cache_read_input_token_cost_priority = 9.625000e-7
+input_cost_per_token_batches = 1.100000e-6
+input_cost_per_token_flex = 1.100000e-6
+input_cost_per_token_priority = 3.850000e-6
+output_cost_per_token_batches = 3.300000e-6
+output_cost_per_token_flex = 3.300000e-6
+output_cost_per_token_priority = 1.155000e-5
+
+["bedrock_mantle/zai.glm-4.7"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.200000e-6
+max_input_tokens = 203000
+max_output_tokens = 128000
+mode = "chat"
+input_cost_per_token_batches = 3.000000e-7
+input_cost_per_token_flex = 3.000000e-7
+input_cost_per_token_priority = 1.050000e-6
+output_cost_per_token_batches = 1.100000e-6
+output_cost_per_token_flex = 1.100000e-6
+output_cost_per_token_priority = 3.850000e-6
+
+["bedrock_mantle/zai.glm-4.7-flash"]
+input_cost_per_token = 7.000000e-8
+output_cost_per_token = 4.000000e-7
+max_input_tokens = 203000
+max_output_tokens = 128000
+mode = "chat"
+input_cost_per_token_batches = 3.500000e-8
+input_cost_per_token_flex = 3.500000e-8
+input_cost_per_token_priority = 1.225000e-7
+output_cost_per_token_batches = 2.000000e-7
+output_cost_per_token_flex = 2.000000e-7
+output_cost_per_token_priority = 7.000000e-7
+
+["bedrock_mantle/zai.glm-5"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 3.200000e-6
+max_input_tokens = 200000
+max_output_tokens = 128000
+mode = "chat"
+input_cost_per_token_batches = 5.000000e-7
+input_cost_per_token_flex = 5.000000e-7
+input_cost_per_token_priority = 1.750000e-6
+output_cost_per_token_batches = 1.600000e-6
+output_cost_per_token_flex = 1.600000e-6
+output_cost_per_token_priority = 5.600000e-6

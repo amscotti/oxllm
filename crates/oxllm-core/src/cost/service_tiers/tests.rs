@@ -1201,3 +1201,88 @@ fn every_vendored_service_rate_reaches_the_resolved_price_table() {
         }
     }
 }
+
+#[test]
+fn synced_0cc072c999_service_tier_corrections_hold() {
+    use crate::cost::lookup_pricing_with_provider;
+
+    // gpt-5-nano dropped priority pricing (retaining flex).
+    for nano in ["gpt-5-nano", "gpt-5-nano-2025-08-07"] {
+        let p = lookup_pricing_with_provider(nano, "openai").unwrap();
+        let flex = p.rates_for_service_tier(1000, 0, Some("flex"));
+        assert_eq!(flex.input, 2.5e-8, "{nano} flex");
+        let prio = p.rates_for_service_tier(1000, 0, Some("priority"));
+        assert_eq!(prio.input, 5e-8, "{nano} priority falls back to standard");
+    }
+
+    // Vertex Gemini 4 has Priority and Batches but no Flex fallback.
+    let v_carbon = lookup_pricing_with_provider("vertex_ai/gemini-4-carbon", "vertex_ai").unwrap();
+    assert_eq!(
+        v_carbon.rates_for_service_tier(1000, 0, Some("flex")).input,
+        2e-6
+    );
+    assert_eq!(
+        v_carbon
+            .rates_for_service_tier(1000, 0, Some("batches"))
+            .input,
+        1e-6
+    );
+    assert_eq!(
+        v_carbon
+            .rates_for_service_tier(1000, 0, Some("priority"))
+            .input,
+        3.6e-6
+    );
+
+    // Gemini API 3.8 TTS retains flex/priority without cache_read rates.
+    let tts = lookup_pricing_with_provider("gemini/gemini-3.8-flash-tts", "gemini").unwrap();
+    let tts_flex = tts.rates_for_service_tier(1000, 0, Some("flex"));
+    assert_eq!(tts_flex.input, 2.5e-7);
+    assert_eq!(tts_flex.cache_read, 0.0);
+    let tts_prio = tts.rates_for_service_tier(1000, 0, Some("priority"));
+    assert_eq!(tts_prio.input, 9e-7);
+    assert_eq!(tts_prio.cache_read, 0.0);
+
+    // gpt-5.5-pro dropped >272k batch surcharges: standard doubles above 272k while batches stays flat.
+    let g55p = lookup_pricing_with_provider("gpt-5.5-pro", "openai").unwrap();
+    assert_eq!(g55p.rates_for_prompt(300_000, 0).input, 6e-5);
+    assert_eq!(
+        g55p.rates_for_service_tier(100_000, 0, Some("batches"))
+            .input,
+        1.5e-5
+    );
+    assert_eq!(
+        g55p.rates_for_service_tier(300_000, 0, Some("batches"))
+            .input,
+        1.5e-5
+    );
+
+    // bedrock_mantle/anthropic.claude-haiku-4-5 updated batch rate.
+    let m_haiku = lookup_pricing_with_provider(
+        "bedrock_mantle/anthropic.claude-haiku-4-5",
+        "bedrock_mantle",
+    )
+    .unwrap();
+    let m_batch = m_haiku.rates_for_service_tier(1000, 0, Some("batches"));
+    assert_eq!(m_batch.input, 5.5e-7);
+    assert_eq!(m_batch.output, 2.75e-6);
+
+    // gpt-6.1-terra tiers.
+    let terra = lookup_pricing_with_provider("gpt-6.1-terra", "openai").unwrap();
+    assert_eq!(
+        terra.rates_for_service_tier(1000, 0, Some("flex")).input,
+        5e-7
+    );
+    assert_eq!(
+        terra
+            .rates_for_service_tier(1000, 0, Some("priority"))
+            .input,
+        2e-6
+    );
+    assert_eq!(
+        terra
+            .rates_for_service_tier(300_000, 0, Some("priority"))
+            .input,
+        4e-6
+    );
+}

@@ -28,6 +28,7 @@ output_cost_per_token = 1.200000e-6
 max_input_tokens = 1048576
 max_output_tokens = 262144
 cache_read_input_token_cost = 7.000000e-9
+mode = "chat"
 
 ["baseten/deepseek-ai/DeepSeek-V4.1-Flash-1017-Fast"]
 input_cost_per_token = 6.000000e-7
@@ -35,6 +36,7 @@ output_cost_per_token = 2.400000e-6
 max_input_tokens = 1048576
 max_output_tokens = 262144
 cache_read_input_token_cost = 1.400000e-8
+mode = "chat"
 
 ["baseten/reflection/Beam-1.0"]
 input_cost_per_token = 4.000000e-7
@@ -42,3 +44,193 @@ output_cost_per_token = 1.200000e-6
 max_input_tokens = 1048576
 max_output_tokens = 131072
 cache_read_input_token_cost = 4.000000e-8
+mode = "chat"
+
+["baseten/MiniMaxAI/MiniMax-M2.5"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+mode = "chat"
+
+["baseten/deepseek-ai/DeepSeek-V3-0324"]
+input_cost_per_token = 7.700000e-7
+output_cost_per_token = 7.700000e-7
+mode = "chat"
+
+["baseten/deepseek-ai/DeepSeek-V3.1"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.500000e-6
+mode = "chat"
+
+["baseten/deepseek-ai/DeepSeek-V4-Flash-0731"]
+input_cost_per_token = 1.300000e-7
+output_cost_per_token = 2.600000e-7
+max_input_tokens = 1048576
+max_output_tokens = 384000
+mode = "chat"
+cache_read_input_token_cost = 2.800000e-8
+
+["baseten/deepseek-ai/DeepSeek-V4-Pro"]
+input_cost_per_token = 1.740000e-6
+output_cost_per_token = 3.480000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 1.450000e-7
+
+["baseten/deepseek-ai/DeepSeek-V4-Pro-0813"]
+input_cost_per_token = 1.320000e-6
+output_cost_per_token = 3.960000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 1.320000e-7
+
+["baseten/deepseek-ai/DeepSeek-V4.1-Flash"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 7.000000e-9
+
+["baseten/moonshotai/Kimi-K2-Instruct-0905"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.500000e-6
+mode = "chat"
+
+["baseten/moonshotai/Kimi-K2-Thinking"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.500000e-6
+mode = "chat"
+
+["baseten/moonshotai/Kimi-K2.5"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 3.000000e-6
+mode = "chat"
+
+["baseten/moonshotai/Kimi-K2.6"]
+input_cost_per_token = 9.500000e-7
+output_cost_per_token = 4.000000e-6
+max_input_tokens = 262000
+max_output_tokens = 262000
+mode = "chat"
+cache_read_input_token_cost = 1.600000e-7
+
+["baseten/moonshotai/Kimi-K2.7-Code"]
+input_cost_per_token = 9.500000e-7
+output_cost_per_token = 4.000000e-6
+max_input_tokens = 262000
+max_output_tokens = 262000
+mode = "chat"
+cache_read_input_token_cost = 1.600000e-7
+
+["baseten/moonshotai/Kimi-K3"]
+input_cost_per_token = 3.000000e-6
+output_cost_per_token = 1.500000e-5
+max_input_tokens = 1048576
+max_output_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 3.000000e-7
+
+["baseten/moonshotai/Kimi-K3.1-Pro"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 1048576
+max_output_tokens = 1048576
+mode = "chat"
+cache_read_input_token_cost = 2.000000e-7
+
+["baseten/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.400000e-6
+max_input_tokens = 202800
+max_output_tokens = 202800
+mode = "chat"
+cache_read_input_token_cost = 1.200000e-7
+
+["baseten/nvidia/Nemotron-120B-A12B"]
+input_cost_per_token = 3.000000e-7
+output_cost_per_token = 7.500000e-7
+mode = "chat"
+
+["baseten/openai/gpt-oss-120b"]
+input_cost_per_token = 1.000000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 128072
+max_output_tokens = 128072
+mode = "chat"
+cache_read_input_token_cost = 1.000000e-7
+
+["baseten/thinkingmachines/inkling"]
+input_cost_per_token = 1.000000e-6
+output_cost_per_token = 4.050000e-6
+max_input_tokens = 1048576
+max_output_tokens = 32768
+mode = "chat"
+cache_read_input_token_cost = 1.700000e-7
+
+["baseten/thinkingmachines/inkling-small"]
+input_cost_per_token = 5.000000e-7
+output_cost_per_token = 1.200000e-6
+max_input_tokens = 1048576
+max_output_tokens = 32768
+mode = "chat"
+cache_read_input_token_cost = 1.000000e-7
+
+["baseten/zai-org/GLM-4.6"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.200000e-6
+mode = "chat"
+
+["baseten/zai-org/GLM-4.7"]
+input_cost_per_token = 6.000000e-7
+output_cost_per_token = 2.200000e-6
+max_input_tokens = 200000
+max_output_tokens = 200000
+mode = "chat"
+cache_read_input_token_cost = 1.200000e-7
+
+["baseten/zai-org/GLM-5"]
+input_cost_per_token = 9.500000e-7
+output_cost_per_token = 3.150000e-6
+mode = "chat"
+
+["baseten/zai-org/GLM-5.2"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 1.400000e-7
+
+["baseten/zai-org/GLM-5.2-Fast"]
+input_cost_per_token = 2.100000e-6
+output_cost_per_token = 6.600000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 2.100000e-7
+
+["baseten/zai-org/GLM-5.3"]
+input_cost_per_token = 1.400000e-6
+output_cost_per_token = 4.400000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 1.400000e-7
+
+["baseten/zai-org/GLM-5.3-Fast"]
+input_cost_per_token = 2.100000e-6
+output_cost_per_token = 6.600000e-6
+max_input_tokens = 1048576
+max_output_tokens = 262144
+mode = "chat"
+cache_read_input_token_cost = 2.100000e-7
+
+["baseten/zai-org/GLM-5.3-Flash"]
+input_cost_per_token = 1.500000e-7
+output_cost_per_token = 5.000000e-7
+max_input_tokens = 1048576
+max_output_tokens = 131072
+mode = "chat"
+cache_read_input_token_cost = 3.000000e-8

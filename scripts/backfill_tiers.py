@@ -100,7 +100,7 @@ def normalized_price_key(key, tier):
         return normalized
     if "_above_" in normalized:
         base = normalized.rsplit("_above_", 1)[0]
-        if base in SERVICE_BASE_FIELDS and parse_threshold(normalized) is not None:
+        if base in TIER_BASE_FIELDS and parse_threshold(normalized) is not None:
             return normalized
     return None
 
@@ -166,6 +166,11 @@ def main():
 
     shard_dir = "crates/oxllm-core/data/prices"
     covered = overlay_coverage(shard_dir)
+    snap_path = os.path.join(shard_dir, "context_tiers_snapshot.json")
+    existing_snapshot = {}
+    if os.path.exists(snap_path):
+        with open(snap_path) as f:
+            existing_snapshot = json.load(f)
     snapshot = {}
 
     for path in sorted(glob.glob(os.path.join(shard_dir, "*.toml"))):
@@ -179,6 +184,10 @@ def main():
         inserts = {}  # line index (after last content line) -> [new lines]
         for model in table:
             if model not in catalog:
+                # Preserve pinned snapshot tiers for shipped models absent from
+                # the upstream JSON catalog (e.g. historical/provider-only aliases).
+                if not service_only and model in existing_snapshot:
+                    snapshot[model] = existing_snapshot[model]
                 continue
             entries = [] if service_only else std_tier_entries(catalog[model])
             svc_entries = service_tier_entries(
