@@ -4008,6 +4008,14 @@ input_cost_per_token_above_272k_tokens = 2.000000e-7
 cache_creation_input_token_cost_above_272k_tokens = 2.500000e-7
 output_cost_per_token_above_272k_tokens = 7.500000e-7
 search_queries_cost_per_query = 1.400000e-02
+cache_creation_input_token_cost_above_272k_tokens_flex = 1.250000e-7
+cache_creation_input_token_cost_flex = 6.250000e-8
+cache_read_input_token_cost_above_272k_tokens_flex = 1.000000e-8
+cache_read_input_token_cost_flex = 5.000000e-9
+input_cost_per_token_above_272k_tokens_flex = 1.000000e-7
+input_cost_per_token_flex = 5.000000e-8
+output_cost_per_token_above_272k_tokens_flex = 3.750000e-7
+output_cost_per_token_flex = 2.500000e-7
 
 ["azure/gpt-6-luna-2026-09-22"]
 input_cost_per_token = 1.000000e-7
@@ -5779,6 +5787,9 @@ mode = "chat"
 cache_read_input_token_cost = 1.000000e-6
 supports_prompt_cache_breakpoint = true
 search_queries_cost_per_query = 1.000000e-02
+input_cost_per_token_above_272k_tokens = 2.000000e-5
+output_cost_per_token_above_272k_tokens = 7.500000e-5
+cache_read_input_token_cost_above_272k_tokens = 2.000000e-6
 
 ["gpt-6-cyber"]
 input_cost_per_token = 2.000000e-5
@@ -5844,6 +5855,222 @@ output_cost_per_token_above_272k_tokens_priority = 1.500000e-5
 output_cost_per_token_batches = 2.500000e-6
 output_cost_per_token_flex = 2.500000e-6
 output_cost_per_token_priority = 1.000000e-5
+
+["gpt-6.2-astra"]
+input_cost_per_token = 8.000000e-6
+output_cost_per_token = 4.000000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 4.000000e-7
+cache_creation_input_token_cost = 1.000000e-5
+input_cost_per_token_above_272k_tokens = 1.600000e-5
+output_cost_per_token_above_272k_tokens = 6.000000e-5
+cache_read_input_token_cost_above_272k_tokens = 8.000000e-7
+cache_creation_input_token_cost_above_272k_tokens = 2.000000e-5
+source = "https://developers.openai.com/api/docs/pricing"
+supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 1.000000e-5
+cache_creation_input_token_cost_above_272k_tokens_priority = 4.000000e-5
+cache_creation_input_token_cost_above_272k_tokens_ultrafast = 6.000000e-5
+cache_creation_input_token_cost_batches = 5.000000e-6
+cache_creation_input_token_cost_priority = 2.000000e-5
+cache_creation_input_token_cost_ultrafast = 3.000000e-5
+cache_read_input_token_cost_above_272k_tokens_batches = 4.000000e-7
+cache_read_input_token_cost_above_272k_tokens_priority = 1.600000e-6
+cache_read_input_token_cost_above_272k_tokens_ultrafast = 2.400000e-6
+cache_read_input_token_cost_batches = 2.000000e-7
+cache_read_input_token_cost_priority = 8.000000e-7
+cache_read_input_token_cost_ultrafast = 1.200000e-6
+input_cost_per_token_above_272k_tokens_batches = 8.000000e-6
+input_cost_per_token_above_272k_tokens_priority = 3.200000e-5
+input_cost_per_token_above_272k_tokens_ultrafast = 4.800000e-5
+input_cost_per_token_batches = 4.000000e-6
+input_cost_per_token_priority = 1.600000e-5
+input_cost_per_token_ultrafast = 2.400000e-5
+output_cost_per_token_above_272k_tokens_batches = 3.000000e-5
+output_cost_per_token_above_272k_tokens_priority = 1.200000e-4
+output_cost_per_token_above_272k_tokens_ultrafast = 1.800000e-4
+output_cost_per_token_batches = 2.000000e-5
+output_cost_per_token_priority = 8.000000e-5
+output_cost_per_token_ultrafast = 1.200000e-4
+
+["gpt-6.2-astra-law"]
+input_cost_per_token = 8.000000e-6
+output_cost_per_token = 4.000000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 4.000000e-7
+cache_creation_input_token_cost = 1.000000e-5
+input_cost_per_token_above_272k_tokens = 1.600000e-5
+output_cost_per_token_above_272k_tokens = 6.000000e-5
+cache_read_input_token_cost_above_272k_tokens = 8.000000e-7
+cache_creation_input_token_cost_above_272k_tokens = 2.000000e-5
+source = "https://developers.openai.com/api/docs/pricing"
+supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.000000e-02
+
+["gpt-6.2-sol"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 1.000000e-7
+cache_creation_input_token_cost = 2.500000e-6
+input_cost_per_token_above_272k_tokens = 4.000000e-6
+output_cost_per_token_above_272k_tokens = 1.500000e-5
+cache_read_input_token_cost_above_272k_tokens = 2.000000e-7
+cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
+source = "https://developers.openai.com/api/docs/pricing"
+supports_prompt_cache_breakpoint = true
+search_queries_cost_per_query = 1.000000e-02
+cache_creation_input_token_cost_above_272k_tokens_batches = 2.500000e-6
+cache_creation_input_token_cost_above_272k_tokens_priority = 1.000000e-5
+cache_creation_input_token_cost_above_272k_tokens_ultrafast = 1.500000e-5
+cache_creation_input_token_cost_batches = 1.250000e-6
+cache_creation_input_token_cost_priority = 5.000000e-6
+cache_creation_input_token_cost_ultrafast = 7.500000e-6
+cache_read_input_token_cost_above_272k_tokens_batches = 1.000000e-7
+cache_read_input_token_cost_above_272k_tokens_priority = 4.000000e-7
+cache_read_input_token_cost_above_272k_tokens_ultrafast = 6.000000e-7
+cache_read_input_token_cost_batches = 5.000000e-8
+cache_read_input_token_cost_priority = 2.000000e-7
+cache_read_input_token_cost_ultrafast = 3.000000e-7
+input_cost_per_token_above_272k_tokens_batches = 2.000000e-6
+input_cost_per_token_above_272k_tokens_priority = 8.000000e-6
+input_cost_per_token_above_272k_tokens_ultrafast = 1.200000e-5
+input_cost_per_token_batches = 1.000000e-6
+input_cost_per_token_priority = 4.000000e-6
+input_cost_per_token_ultrafast = 6.000000e-6
+output_cost_per_token_above_272k_tokens_batches = 7.500000e-6
+output_cost_per_token_above_272k_tokens_priority = 3.000000e-5
+output_cost_per_token_above_272k_tokens_ultrafast = 4.500000e-5
+output_cost_per_token_batches = 5.000000e-6
+output_cost_per_token_priority = 2.000000e-5
+output_cost_per_token_ultrafast = 3.000000e-5
+
+["azure/gpt-6.2-astra"]
+input_cost_per_token = 8.000000e-6
+output_cost_per_token = 4.000000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 4.000000e-7
+cache_creation_input_token_cost = 1.000000e-5
+input_cost_per_token_above_272k_tokens = 1.600000e-5
+output_cost_per_token_above_272k_tokens = 6.000000e-5
+cache_read_input_token_cost_above_272k_tokens = 8.000000e-7
+cache_creation_input_token_cost_above_272k_tokens = 2.000000e-5
+source = "https://techcommunity.microsoft.com/t5/microsoft-foundry-blog/gpt-6-2-astra-and-gpt-6-2-sol-now-generally-available-in/ba-p/4574122"
+search_queries_cost_per_query = 1.400000e-02
+
+["azure/gpt-6.2-sol"]
+input_cost_per_token = 2.000000e-6
+output_cost_per_token = 1.000000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 1.000000e-7
+cache_creation_input_token_cost = 2.500000e-6
+input_cost_per_token_above_272k_tokens = 4.000000e-6
+output_cost_per_token_above_272k_tokens = 1.500000e-5
+cache_read_input_token_cost_above_272k_tokens = 2.000000e-7
+cache_creation_input_token_cost_above_272k_tokens = 5.000000e-6
+source = "https://techcommunity.microsoft.com/t5/microsoft-foundry-blog/gpt-6-2-astra-and-gpt-6-2-sol-now-generally-available-in/ba-p/4574122"
+search_queries_cost_per_query = 1.400000e-02
+
+["azure/us/gpt-6.2-astra"]
+input_cost_per_token = 8.800000e-6
+output_cost_per_token = 4.400000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 4.400000e-7
+cache_creation_input_token_cost = 1.100000e-5
+input_cost_per_token_above_272k_tokens = 1.760000e-5
+output_cost_per_token_above_272k_tokens = 6.600000e-5
+cache_read_input_token_cost_above_272k_tokens = 8.800000e-7
+cache_creation_input_token_cost_above_272k_tokens = 2.200000e-5
+source = "https://techcommunity.microsoft.com/t5/microsoft-foundry-blog/gpt-6-2-astra-and-gpt-6-2-sol-now-generally-available-in/ba-p/4574122"
+search_queries_cost_per_query = 1.400000e-02
+
+["azure/us/gpt-6.2-sol"]
+input_cost_per_token = 2.200000e-6
+output_cost_per_token = 1.100000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 1.100000e-7
+cache_creation_input_token_cost = 2.750000e-6
+input_cost_per_token_above_272k_tokens = 4.400000e-6
+output_cost_per_token_above_272k_tokens = 1.650000e-5
+cache_read_input_token_cost_above_272k_tokens = 2.200000e-7
+cache_creation_input_token_cost_above_272k_tokens = 5.500000e-6
+source = "https://techcommunity.microsoft.com/t5/microsoft-foundry-blog/gpt-6-2-astra-and-gpt-6-2-sol-now-generally-available-in/ba-p/4574122"
+search_queries_cost_per_query = 1.400000e-02
+
+["azure/eu/gpt-6.2-astra"]
+input_cost_per_token = 9.600000e-6
+output_cost_per_token = 4.800000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 4.800000e-7
+cache_creation_input_token_cost = 1.200000e-5
+input_cost_per_token_above_272k_tokens = 1.920000e-5
+output_cost_per_token_above_272k_tokens = 7.200000e-5
+cache_read_input_token_cost_above_272k_tokens = 9.600000e-7
+cache_creation_input_token_cost_above_272k_tokens = 2.400000e-5
+source = "https://techcommunity.microsoft.com/t5/microsoft-foundry-blog/gpt-6-2-astra-and-gpt-6-2-sol-now-generally-available-in/ba-p/4574122"
+search_queries_cost_per_query = 1.400000e-02
+
+["azure/eu/gpt-6.2-sol"]
+input_cost_per_token = 2.400000e-6
+output_cost_per_token = 1.200000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 1.200000e-7
+cache_creation_input_token_cost = 3.000000e-6
+input_cost_per_token_above_272k_tokens = 4.800000e-6
+output_cost_per_token_above_272k_tokens = 1.800000e-5
+cache_read_input_token_cost_above_272k_tokens = 2.400000e-7
+cache_creation_input_token_cost_above_272k_tokens = 6.000000e-6
+source = "https://techcommunity.microsoft.com/t5/microsoft-foundry-blog/gpt-6-2-astra-and-gpt-6-2-sol-now-generally-available-in/ba-p/4574122"
+search_queries_cost_per_query = 1.400000e-02
+
+["azure/apac/gpt-6.2-astra"]
+input_cost_per_token = 9.600000e-6
+output_cost_per_token = 4.800000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 4.800000e-7
+cache_creation_input_token_cost = 1.200000e-5
+input_cost_per_token_above_272k_tokens = 1.920000e-5
+output_cost_per_token_above_272k_tokens = 7.200000e-5
+cache_read_input_token_cost_above_272k_tokens = 9.600000e-7
+cache_creation_input_token_cost_above_272k_tokens = 2.400000e-5
+source = "https://techcommunity.microsoft.com/t5/microsoft-foundry-blog/gpt-6-2-astra-and-gpt-6-2-sol-now-generally-available-in/ba-p/4574122"
+search_queries_cost_per_query = 1.400000e-02
+
+["azure/apac/gpt-6.2-sol"]
+input_cost_per_token = 2.400000e-6
+output_cost_per_token = 1.200000e-5
+max_input_tokens = 922000
+max_output_tokens = 128000
+mode = "chat"
+cache_read_input_token_cost = 1.200000e-7
+cache_creation_input_token_cost = 3.000000e-6
+input_cost_per_token_above_272k_tokens = 4.800000e-6
+output_cost_per_token_above_272k_tokens = 1.800000e-5
+cache_read_input_token_cost_above_272k_tokens = 2.400000e-7
+cache_creation_input_token_cost_above_272k_tokens = 6.000000e-6
+source = "https://techcommunity.microsoft.com/t5/microsoft-foundry-blog/gpt-6-2-astra-and-gpt-6-2-sol-now-generally-available-in/ba-p/4574122"
+search_queries_cost_per_query = 1.400000e-02
 
 ["gpt-image-2.6-flare"]
 input_cost_per_token = 5.000000e-6

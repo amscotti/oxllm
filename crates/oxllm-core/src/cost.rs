@@ -5368,6 +5368,125 @@ input_cost_per_token_above_100k_tokens = 5e-6
     }
 
     #[test]
+    fn gpt_6_2_astra_and_sol_catalog_pricing_and_context_tiers_hold() {
+        let assert_close = |actual: f64, expected: f64, label: &str| {
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "{label}: got {actual}, expected {expected}"
+            );
+        };
+
+        for (model, base_in, base_out, cr, cc) in [
+            ("gpt-6.2-astra", 8e-6, 4e-5, 4e-7, 1e-5),
+            ("gpt-6.2-astra-law", 8e-6, 4e-5, 4e-7, 1e-5),
+            ("gpt-6.2-sol", 2e-6, 1e-5, 1e-7, 2.5e-6),
+        ] {
+            let p = lookup_pricing_with_provider(model, "openai").unwrap();
+            assert_close(p.input_cost_per_token, base_in, model);
+            assert_close(p.output_cost_per_token, base_out, model);
+            assert_eq!(p.cache_read_input_token_cost, Some(cr));
+            assert_eq!(p.cache_creation_input_token_cost, Some(cc));
+            assert_eq!(p.search_queries_cost_per_query, Some(0.01));
+            assert_eq!(p.supports_prompt_cache_breakpoint, Some(true));
+            assert_eq!(p.max_input_tokens, Some(922_000));
+            assert_eq!(p.max_output_tokens, Some(128_000));
+            assert_eq!(p.mode.as_deref(), Some("chat"));
+        }
+
+        // Dated snapshot and multi-segment fallback resolution.
+        assert_eq!(
+            lookup_pricing("gpt-6.2-astra-2026-11-17")
+                .unwrap()
+                .input_cost_per_token,
+            8e-6
+        );
+        assert_eq!(
+            lookup_pricing("openai/gpt-6.2-sol-2026-11-17")
+                .unwrap()
+                .input_cost_per_token,
+            2e-6
+        );
+        assert_eq!(
+            lookup_pricing_with_provider("gpt-6.2-sol", "azure_ai")
+                .unwrap()
+                .input_cost_per_token,
+            2e-6
+        );
+        assert_eq!(
+            lookup_pricing("openrouter/openai/gpt-6.2-sol")
+                .unwrap()
+                .input_cost_per_token,
+            2e-6
+        );
+
+        // Azure global (1.0x), US Data Zone (1.1x), EU/APAC Data Zone (1.2x).
+        for (model, provider, base_in, base_out, mult) in [
+            ("azure/gpt-6.2-astra", "azure", 8e-6, 4e-5, 1.0),
+            ("azure/us/gpt-6.2-astra", "azure", 8e-6, 4e-5, 1.1),
+            ("azure/eu/gpt-6.2-astra", "azure", 8e-6, 4e-5, 1.2),
+            ("azure/apac/gpt-6.2-astra", "azure", 8e-6, 4e-5, 1.2),
+            ("azure/gpt-6.2-sol", "azure", 2e-6, 1e-5, 1.0),
+            ("azure/us/gpt-6.2-sol", "azure", 2e-6, 1e-5, 1.1),
+            ("azure/eu/gpt-6.2-sol", "azure", 2e-6, 1e-5, 1.2),
+            ("azure/apac/gpt-6.2-sol", "azure", 2e-6, 1e-5, 1.2),
+            ("global.openai.gpt-6.2-astra", "bedrock", 8e-6, 4e-5, 1.0),
+            ("us.openai.gpt-6.2-astra", "bedrock", 8e-6, 4e-5, 1.1),
+            ("global.openai.gpt-6.2-sol", "bedrock", 2e-6, 1e-5, 1.0),
+            ("us.openai.gpt-6.2-sol", "bedrock", 2e-6, 1e-5, 1.1),
+            ("openai.gpt-6.2-astra", "bedrock_mantle", 8e-6, 4e-5, 1.1),
+            ("openai.gpt-6.2-sol", "bedrock_mantle", 2e-6, 1e-5, 1.1),
+        ] {
+            let p = lookup_pricing_with_provider(model, provider).unwrap();
+            assert_close(p.input_cost_per_token, base_in * mult, model);
+            assert_close(p.output_cost_per_token, base_out * mult, model);
+            assert_eq!(p.max_input_tokens, Some(922_000));
+            assert_eq!(p.max_output_tokens, Some(128_000));
+            if provider == "azure" {
+                assert_eq!(p.search_queries_cost_per_query, Some(0.014));
+            }
+            if provider == "bedrock_mantle" {
+                assert_eq!(p.mode.as_deref(), Some("responses"));
+                assert_eq!(p.supports_prompt_cache_breakpoint, None);
+            }
+        }
+
+        // Bare Bedrock-style `openai.gpt-6.2-*` keys stay intentionally omitted.
+        let table = price_table();
+        for bare in ["openai.gpt-6.2-astra", "openai.gpt-6.2-sol"] {
+            assert!(!table.contains_key(bare), "{bare} must not be a bare key");
+        }
+
+        // Exclusive 272_000 context boundary: 272_000 bills base rate; 272_001 bills >272k rate.
+        let boundary = UsageSummary {
+            prompt_tokens: 272_000,
+            completion_tokens: 1_000,
+            cache_read_input_tokens: Some(2_000),
+            ..Default::default()
+        };
+        let above = UsageSummary {
+            prompt_tokens: 272_001,
+            completion_tokens: 1_000,
+            cache_read_input_tokens: Some(2_000),
+            ..Default::default()
+        };
+        assert_close(
+            calculate_cost_with_provider("gpt-6.2-sol", &boundary, "openai").unwrap(),
+            270_000.0 * 2e-6 + 2_000.0 * 1e-7 + 1_000.0 * 1e-5,
+            "gpt-6.2-sol at 272_000",
+        );
+        assert_close(
+            calculate_cost_with_provider("gpt-6.2-sol", &above, "openai").unwrap(),
+            270_001.0 * 4e-6 + 2_000.0 * 2e-7 + 1_000.0 * 1.5e-5,
+            "gpt-6.2-sol at 272_001",
+        );
+        assert_close(
+            calculate_cost_with_provider("gpt-6.2-astra", &above, "openai").unwrap(),
+            270_001.0 * 1.6e-5 + 2_000.0 * 8e-7 + 1_000.0 * 6e-5,
+            "gpt-6.2-astra at 272_001",
+        );
+    }
+
+    #[test]
     fn deployment_tier_threshold_counts_standalone_one_hour_cache_creation() {
         let params: crate::deployment::OxllmParams = serde_json::from_value(serde_json::json!({
             "model": "custom", "input_cost_per_token": 0.001,

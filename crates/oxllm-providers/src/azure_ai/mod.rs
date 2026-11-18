@@ -372,7 +372,7 @@ impl ChatProvider for AzureAiProvider {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            if crate::openai::is_gpt_6_1_sol(&model) {
+            if crate::openai::rejects_none_and_minimal_effort(&model) {
                 crate::openai::apply_openai_reasoning_limits(&mut body, &model);
             } else if declares_foundry_reasoning_levels(&resolved) {
                 let drop_params = resolved.oxllm_params.drop_params == Some(true)

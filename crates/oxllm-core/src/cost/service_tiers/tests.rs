@@ -1144,6 +1144,171 @@ mode = "audio_transcription"
 }
 
 #[test]
+fn gpt_6_2_astra_and_sol_service_tier_rates_and_context_thresholds_hold() {
+    let assert_close = |actual: f64, expected: f64, label: &str| {
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "{label}: got {actual}, expected {expected}"
+        );
+    };
+    let assert_tier =
+        |model: &str, provider: &str, tier: Option<&str>, prompt: u64, expected: f64| {
+            let usage = UsageSummary {
+                prompt_tokens: prompt,
+                completion_tokens: 1_000,
+                cache_read_input_tokens: Some(500),
+                cache_creation_input_tokens: Some(200),
+                ..Default::default()
+            };
+            let cost =
+                calculate_cost_for_service_tier(model, &usage, None, provider, tier).unwrap();
+            assert_close(
+                cost,
+                expected,
+                &format!("{provider}/{model}/{tier:?}@{prompt}"),
+            );
+        };
+
+    // gpt-6.2-astra on OpenAI: base 8e-6 / 4e-5, cr 4e-7, cc 1e-5; above 272k: 1.6e-5 / 6e-5 / cr 8e-7 / cc 2e-5.
+    // Prompt = 1_000 -> regular = 500, cr = 500, cc = 200, out = 1_000.
+    // Base bill: 500*8e-6 + 500*4e-7 + 200*1e-5 + 1000*4e-5 = 0.004 + 0.0002 + 0.002 + 0.04 = 0.0462.
+    assert_tier(
+        "gpt-6.2-astra",
+        "openai",
+        Some("batches"),
+        1_000,
+        0.0462 * 0.5,
+    );
+    assert_tier(
+        "gpt-6.2-astra",
+        "openai",
+        Some("priority"),
+        1_000,
+        0.0462 * 2.0,
+    );
+    assert_tier("gpt-6.2-astra", "openai", Some("fast"), 1_000, 0.0462 * 2.0);
+    assert_tier(
+        "gpt-6.2-astra",
+        "openai",
+        Some("ultrafast"),
+        1_000,
+        0.0462 * 3.0,
+    );
+    // No flex override on gpt-6.2: falls back to standard pricing.
+    assert_tier("gpt-6.2-astra", "openai", Some("flex"), 1_000, 0.0462);
+
+    // Above 272k: prompt = 272_000 + cc = 200 -> 272_200 > 272_000.
+    // regular = 271_500, cr = 500, cc = 200, out = 1_000.
+    let astra_above_std = 271_500.0 * 1.6e-5 + 500.0 * 8e-7 + 200.0 * 2e-5 + 1_000.0 * 6e-5;
+    assert_tier(
+        "gpt-6.2-astra",
+        "openai",
+        Some("batches"),
+        272_000,
+        astra_above_std * 0.5,
+    );
+    assert_tier(
+        "gpt-6.2-astra",
+        "openai",
+        Some("priority"),
+        272_000,
+        astra_above_std * 2.0,
+    );
+    assert_tier(
+        "gpt-6.2-astra",
+        "openai",
+        Some("ultrafast"),
+        272_000,
+        astra_above_std * 3.0,
+    );
+
+    // gpt-6.2-sol on OpenAI: base is 0.25x gpt-6.2-astra.
+    let sol_below_std = 0.0462 * 0.25;
+    assert_tier(
+        "gpt-6.2-sol",
+        "openai",
+        Some("batches"),
+        1_000,
+        sol_below_std * 0.5,
+    );
+    assert_tier(
+        "gpt-6.2-sol",
+        "openai",
+        Some("priority"),
+        1_000,
+        sol_below_std * 2.0,
+    );
+    assert_tier(
+        "gpt-6.2-sol",
+        "openai",
+        Some("fast"),
+        1_000,
+        sol_below_std * 2.0,
+    );
+    assert_tier(
+        "gpt-6.2-sol",
+        "openai",
+        Some("ultrafast"),
+        1_000,
+        sol_below_std * 3.0,
+    );
+    assert_tier("gpt-6.2-sol", "openai", Some("flex"), 1_000, sol_below_std);
+
+    let sol_above_std = astra_above_std * 0.25;
+    assert_tier(
+        "gpt-6.2-sol",
+        "openai",
+        Some("priority"),
+        272_000,
+        sol_above_std * 2.0,
+    );
+    assert_tier(
+        "gpt-6.2-sol",
+        "openai",
+        Some("ultrafast"),
+        272_000,
+        sol_above_std * 3.0,
+    );
+
+    // Bedrock: astra carries ultrafast (1.0x global, 1.1x us), while sol omits ultrafast and falls back to standard.
+    assert_tier(
+        "global.openai.gpt-6.2-astra",
+        "bedrock",
+        Some("ultrafast"),
+        1_000,
+        0.0462 * 3.0,
+    );
+    assert_tier(
+        "us.openai.gpt-6.2-astra",
+        "bedrock",
+        Some("ultrafast"),
+        1_000,
+        0.0462 * 1.1 * 3.0,
+    );
+    assert_tier(
+        "us.openai.gpt-6.2-astra",
+        "bedrock",
+        Some("ultrafast"),
+        272_000,
+        astra_above_std * 1.1 * 3.0,
+    );
+    assert_tier(
+        "global.openai.gpt-6.2-sol",
+        "bedrock",
+        Some("ultrafast"),
+        1_000,
+        sol_below_std,
+    );
+    assert_tier(
+        "us.openai.gpt-6.2-sol",
+        "bedrock",
+        Some("ultrafast"),
+        1_000,
+        sol_below_std * 1.1,
+    );
+}
+
+#[test]
 fn every_vendored_service_rate_reaches_the_resolved_price_table() {
     for (model, overlays) in price_overlays() {
         let pricing = crate::cost::price_table()

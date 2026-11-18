@@ -365,7 +365,14 @@ fn tool_reference_parts_are_removed_only_from_tool_messages() {
 
 #[test]
 fn gpt_6_1_sol_drops_refused_effort_levels_on_foundry() {
-    for model in ["gpt-6.1-sol", "gpt-6.1-sol-2026-09-24"] {
+    for model in [
+        "gpt-6.1-sol",
+        "gpt-6.1-sol-2026-09-24",
+        "gpt-6.2-astra",
+        "gpt-6.2-astra-2026-11-17",
+        "gpt-6.2-sol",
+        "gpt-6.2-sol-2026-11-17",
+    ] {
         for effort in ["none", "minimal"] {
             let body = ChatProvider::transform_request(
                 &AzureAiProvider,
@@ -381,6 +388,18 @@ fn gpt_6_1_sol_drops_refused_effort_levels_on_foundry() {
             assert!(body.get("reasoning_effort").is_none(), "{model}: {effort}");
             assert!(body.get("temperature").is_none(), "{model}: {effort}");
             assert!(body.get("top_p").is_none(), "{model}: {effort}");
+        }
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let body = ChatProvider::transform_request(
+                &AzureAiProvider,
+                &json!({
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "reasoning_effort": effort,
+                }),
+                &deployment(model, "https://resource.services.ai.azure.com/models"),
+            )
+            .expect("Foundry request");
+            assert_eq!(body["reasoning_effort"], effort, "{model}: {effort}");
         }
     }
 }

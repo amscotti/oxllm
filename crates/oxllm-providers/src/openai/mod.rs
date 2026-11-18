@@ -180,9 +180,14 @@ fn is_gpt_reasoning_series(leaf: &str) -> bool {
     (leaf.starts_with("gpt-5") || leaf.starts_with("gpt-6")) && !is_gpt_chat_model(leaf)
 }
 
-/// Whether the model has GPT-6.1-Sol's restricted effort-level contract.
-pub(crate) fn is_gpt_6_1_sol(model: &str) -> bool {
-    model_leaf(model).starts_with("gpt-6.1-sol")
+/// Whether the model rejects both `"none"` and `"minimal"` `reasoning_effort`
+/// (`gpt-6.1-sol`, `gpt-6.2-astra`, and `gpt-6.2-sol` families, excluding `-chat`).
+pub(crate) fn rejects_none_and_minimal_effort(model: &str) -> bool {
+    let leaf = model_leaf(model);
+    !is_gpt_chat_model(&leaf)
+        && (leaf.starts_with("gpt-6.1-sol")
+            || leaf.starts_with("gpt-6.2-astra")
+            || leaf.starts_with("gpt-6.2-sol"))
 }
 
 fn leaf_excludes_none(leaf: &str) -> bool {
@@ -276,7 +281,7 @@ fn apply_openai_reasoning_limits_with_host(body: &mut Value, model: &str, is_azu
         .is_some_and(|t| t.as_f64() != Some(1.0))
         && should_strip_temperature_with_host(model, body, is_azure);
     let strip_sampling = should_strip_reasoning_unsupported_with_host(model, body, is_azure);
-    let strip_unsupported_effort = is_gpt_6_1_sol(&leaf)
+    let strip_unsupported_effort = rejects_none_and_minimal_effort(&leaf)
         && effort_level(body).is_some_and(|level| matches!(level, "none" | "minimal"));
     let drop_always = is_o_series_lowered(&leaf) || is_gpt_reasoning_series(&leaf);
     apply_openai_token_limit_alias(body);
@@ -334,8 +339,9 @@ pub(crate) fn apply_openai_token_limit_alias(body: &mut Value) {
 /// Accepting `"none"` is not the same as defaulting to it. gpt-5.1 / 5.2 /
 /// 5.4 default to `"none"`; gpt-5.3-codex (excluding `-spark`), gpt-5.5,
 /// gpt-5.6, gpt-6-luna, gpt-6-sol, and gpt-6.1-terra accept `"none"` on OpenAI
-/// but default to reasoning on. gpt-6-astra and gpt-6.1-sol do not accept
-/// `"none"`; gpt-6.1-sol also rejects `"minimal"`.
+/// but default to reasoning on. gpt-6-astra, gpt-6.1-sol, gpt-6.2-astra, and
+/// gpt-6.2-sol do not accept `"none"`; gpt-6.1-sol, gpt-6.2-astra, and
+/// gpt-6.2-sol also reject `"minimal"`.
 /// Earlier codex models, `-spark`, `-pro`, and `-chat` variants do not accept it.
 fn supports_none_reasoning_effort(model: &str) -> bool {
     supports_none_reasoning_effort_with_host(model, false)

@@ -2510,3 +2510,76 @@ fn gpt_6_1_terra_and_gpt_5_3_codex_accept_none_reasoning_effort_preserving_sampl
     assert!(out_spark.get("temperature").is_none());
     assert!(out_spark.get("top_p").is_none());
 }
+
+#[test]
+fn gpt_6_2_models_reject_none_and_minimal_effort_and_keep_higher_levels() {
+    let models = [
+        "gpt-6.2-astra",
+        "gpt-6.2-astra-2026-11-17",
+        "gpt-6.2-astra-law",
+        "gpt-6.2-sol",
+        "gpt-6.2-sol-2026-11-17",
+    ];
+    for model in models {
+        assert!(!supports_none_reasoning_effort(model), "{model}");
+        assert!(!defaults_to_none_effort(model), "{model}");
+        assert!(supports_explicit_prompt_cache(model), "{model}");
+        assert!(rejects_none_and_minimal_effort(model), "{model}");
+
+        for effort in ["none", "minimal"] {
+            let mut body = json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "reasoning_effort": effort,
+                "temperature": 0.3,
+                "top_p": 0.5,
+                "max_tokens": 512,
+            });
+            apply_openai_reasoning_limits(&mut body, model);
+            assert!(body.get("reasoning_effort").is_none(), "{model} {effort}");
+            assert!(body.get("temperature").is_none(), "{model} {effort}");
+            assert!(body.get("top_p").is_none(), "{model} {effort}");
+            assert!(body.get("max_tokens").is_none(), "{model} {effort}");
+            assert_eq!(body["max_completion_tokens"], 512, "{model} {effort}");
+
+            let mut azure_body = json!({
+                "model": model,
+                "reasoning_effort": effort,
+                "temperature": 0.3,
+                "top_p": 0.5,
+                "max_tokens": 512,
+            });
+            apply_azure_openai_reasoning_limits(&mut azure_body, model);
+            assert!(
+                azure_body.get("reasoning_effort").is_none(),
+                "{model} azure {effort}"
+            );
+            assert!(
+                azure_body.get("temperature").is_none(),
+                "{model} azure {effort}"
+            );
+            assert!(azure_body.get("top_p").is_none(), "{model} azure {effort}");
+            assert_eq!(azure_body["max_completion_tokens"], 512);
+        }
+
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let mut body = json!({"reasoning_effort": effort, "temperature": 1.0});
+            apply_openai_reasoning_limits(&mut body, model);
+            assert_eq!(body["reasoning_effort"], effort, "{model} {effort}");
+            assert_eq!(body["temperature"], 1.0, "{model} {effort}");
+        }
+    }
+
+    for chat_model in ["gpt-6.2-sol-chat-2026-11-17", "gpt-6.2-astra-chat"] {
+        assert!(!rejects_none_and_minimal_effort(chat_model), "{chat_model}");
+        let mut body = json!({
+            "reasoning_effort": "minimal",
+            "temperature": 0.3,
+            "top_p": 0.5,
+        });
+        apply_openai_reasoning_limits(&mut body, chat_model);
+        assert_eq!(body["reasoning_effort"], "minimal");
+        assert_eq!(body["temperature"], 0.3);
+        assert_eq!(body["top_p"], 0.5);
+    }
+}
