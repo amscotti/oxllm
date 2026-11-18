@@ -1038,14 +1038,12 @@ mod tests {
     #[allow(clippy::result_large_err)] // tungstenite fixes the callback error type
     async fn configured_endpoint_and_real_handshake_notification_are_used_by_the_adapter() {
         use std::sync::Arc;
-        use tokio::sync::{Notify, oneshot};
+        use tokio::sync::oneshot;
         use tokio_tungstenite::tungstenite::handshake::client::Request;
 
         let (socket, mut client, server) = client_socket_pair().await;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let release = Arc::new(Notify::new());
-        let peer_release = release.clone();
         let (uri_tx, uri_rx) = oneshot::channel();
         let peer = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -1060,7 +1058,15 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            peer_release.notified().await;
+            // Wait for the adapter's post-disconnect drain before closing the
+            // upstream socket so client disconnect always wins the pump select.
+            while let Some(Ok(TungsteniteMessage::Binary(frame))) = upstream.next().await {
+                let (_, payload) = decode_eventstream_frame(&frame).unwrap();
+                let value: serde_json::Value = serde_json::from_slice(payload).unwrap();
+                if value["event"].get("sessionEnd").is_some() {
+                    break;
+                }
+            }
             upstream.close(None).await.unwrap();
         });
         let mut dep = deployment_with_creds("bedrock/amazon.nova-sonic-v1:0:18k[200k]");
@@ -1091,8 +1097,13 @@ mod tests {
             "/proxy/base/model/amazon.nova-sonic-v1%3A0/invoke-with-bidirectional-stream?"
         ));
         assert!(uri.contains("X-Amz-Signature="));
+        client
+            .send(TungsteniteMessage::Text(
+                r#"{"type":"session.update","session":{}}"#.into(),
+            ))
+            .await
+            .unwrap();
         client.close(None).await.unwrap();
-        release.notify_one();
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(3), session)
             .await
             .unwrap()

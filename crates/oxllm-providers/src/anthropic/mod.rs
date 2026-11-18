@@ -1826,7 +1826,7 @@ fn split_system_messages(messages: &Value, model: &str) -> Result<(Option<Value>
             flush_user_run(&mut run, &mut out, &mut pending_tool_ids)?;
             // Retire the table as well as its ids: re-clearing a once-large
             // table at every subsequent small assistant turn is not linear.
-            pending_tool_ids = HashSet::new();
+            drop(std::mem::take(&mut pending_tool_ids));
         }
         if is_system_role(msg) && !(keep_midturn && past_leading) {
             if msg
